@@ -104,7 +104,8 @@ export class TorBoxClient implements ProviderClient {
   /** The redirecting API URL. Handing this to a player is the A03 anti-pattern. */
   requestUrl(ref: string, redirect: boolean): string {
     const [, tid, fid] = ref.split(":");
-    const q = new URLSearchParams({ torrent_id: tid!, file_id: fid!, redirect: String(redirect) });
+    // TorBox's docs take the key as a `token` query parameter on this route.
+    const q = new URLSearchParams({ token: this.token, torrent_id: tid!, file_id: fid!, redirect: String(redirect) });
     return `${this.base}/v1/api/torrents/requestdl?${q}`;
   }
 

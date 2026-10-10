@@ -179,3 +179,23 @@ are cheap but bounded.
 to test: show the guide card / station slate instantly during the wait (perceived
 latency), and a number-key path (typing "4","2") that should skip the wait once
 the number is complete.
+
+---
+
+## LIVE-001 — Read-only probe of the account holder's own account (pending)
+
+Approved by Zachary on 2026-10-10 ("Yes, read-only"). `experiments/live-probe.ts`,
+run by Zachary on his own device with his own key in an env var. Reads account
+plan facts and one library page, resolves one link for one existing file, reads
+4 × 256 KiB ranges (start / middle / middle again / end), opens and cancels one
+stream, and optionally re-checks the link with 1-byte reads every 15 min
+(`WATCH_MIN`). Media capped at 16 MB. Report has no keys, links or file names.
+
+Dry run against the mock: 3 API calls and ~1.1 MB per provider, report scanned clean
+for secrets and names. **Caveat seen in the dry run:** the client counted 1.1 MB
+but the server sent 2.2 MB, because a cancelled stream keeps flowing until the
+connection closes. Provider-side byte counts can exceed what the player saw; byte
+meters must count from the provider's side of the socket where possible.
+
+Questions it answers: real API latency, link host, stated vs actual link lifetime,
+range/seek support and timing, first-chunk time after a cancel.
