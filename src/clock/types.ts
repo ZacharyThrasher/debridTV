@@ -28,7 +28,15 @@ export interface MediaItem {
   source: { provider: ProviderId; ref: string };
 }
 
-export type Ordering = "cyclic" | "shuffle" | "block-shuffle";
+export type Ordering =
+  | "cyclic"
+  | "shuffle"
+  | "block-shuffle"
+  | "block-cyclic"
+  | "marathon-shuffle"
+  | "marathon-cyclic"
+  | "round-robin-shuffle"
+  | "round-robin-cyclic";
 
 export interface ChannelRevision {
   /** UTC ms. Each revision's timeline is anchored here. */

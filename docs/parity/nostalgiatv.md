@@ -55,7 +55,7 @@ Order follows handoff N-01..N-28; suffix letters are splits; N-29+ are additions
 | N-06a | Kid channel flag; R-rated after-hours restriction | D [N04] | D [N04] | D [N02 mature/kid filtering] | ? | not started |
 | N-06b | PIN-locked restricted channels with scrambling visuals | D [N10 v0.9.12; Pro? ] | D [same] | D [N10 "Docker/web support"] | ? | not started |
 | N-07 | Content groups, order/shuffle, EPG description | D [N06; web remote on desktop browser] | P [N06 silent on mobile/TV creation] | D [N02 Groups tab; N10 Groups browse] | ? | not started |
-| N-08 | Ordering modes | D 8 modes [N03] | D 8 modes [N03] | D 4 modes only [N02] | ? | core only: 3 of 8 (cyclic, shuffle, block-shuffle) in station clock, unit-tested; no UI |
+| N-08 | Ordering modes | D 8 modes [N03] | D 8 modes [N03] | D 4 modes only [N02] | ? | core only: all 8 labels have written, unit-tested DebridTV definitions (`src/clock/ordering.ts`); same intent, not verified identical; no UI |
 | N-09a | Weights (0-100 sliders), time slots w/ weekday recurrence, restricted hours | D [N13, web UI advanced tab] | P [N13 is web UI] | D [N02 weights, time slots, restricted hours] | ? | not started |
 | N-09b | Exclusions | P [N02 lists exclusions for Docker] | ? | D [N02] | ? | not started |
 | N-09c | Premieres (recent additions pinned) | D [N13 premiere config] | P | D [N02] | ? | not started |

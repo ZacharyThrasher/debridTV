@@ -5,7 +5,8 @@
 
 import { writeFileSync, mkdirSync } from "node:fs";
 import { StationClock } from "../src/clock/schedule.ts";
-import type { Channel, MediaItem, Ordering } from "../src/clock/types.ts";
+import type { Channel, MediaItem } from "../src/clock/types.ts";
+import { ORDERINGS } from "../src/clock/ordering.ts";
 import { startMockProviders } from "../src/providers/mock-server.ts";
 import { mulberry32 } from "../src/clock/rng.ts";
 
@@ -24,7 +25,6 @@ const library: MediaItem[] = Array.from({ length: 5000 }, (_, i) => ({
   source: { provider: i % 2 ? "realdebrid" : "torbox", ref: `ref${i}` },
 }));
 
-const orderings: Ordering[] = ["cyclic", "shuffle", "block-shuffle"];
 const channels: Channel[] = Array.from({ length: 100 }, (_, c) => ({
   id: `ch${c}`,
   number: c + 2,
@@ -32,7 +32,7 @@ const channels: Channel[] = Array.from({ length: 100 }, (_, c) => ({
   revisions: [{
     effectiveFromMs: T0 - 90 * DAY,
     seed: `ch${c}`,
-    ordering: orderings[c % 3]!,
+    ordering: ORDERINGS[c % ORDERINGS.length]!,
     itemIds: library.filter((_, i) => i % 100 === c || (i * 7 + c) % 37 === 0).map((m) => m.id),
     slotMs: c % 2 ? 30 * MIN : undefined,
     midBreakMs: 3 * MIN,

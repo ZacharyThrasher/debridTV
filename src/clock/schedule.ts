@@ -7,7 +7,7 @@
 // derived from exact file durations plus break layout, so the position at any
 // instant is found with arithmetic and a binary search — no materialised log.
 
-import { seededShuffle, mulberry32, hash32 } from "./rng.ts";
+import { cycleOrder } from "./ordering.ts";
 import type {
   Airing,
   Channel,
@@ -27,6 +27,8 @@ export interface ExcludedItem {
   itemId: string;
   reason: "not-in-library" | "duration-unknown";
 }
+
+export { cycleOrder };
 
 export class StationClock {
   private readonly library: ReadonlyMap<string, MediaItem>;
@@ -136,7 +138,7 @@ export class StationClock {
     const hit = this.cycles.get(key);
     if (hit) return hit;
     const rev = channel.revisions[ri]!;
-    const order = cycleOrder(rev, k, eligible);
+    const order = cycleOrder(rev, k, eligible, (id) => this.library.get(id));
     const prefix = [0];
     for (const id of order) prefix.push(prefix[prefix.length - 1]! + this.airingLength(rev, id));
     const cyc = { order, prefix };
@@ -173,37 +175,6 @@ export class StationClock {
       .filter((s) => s.startMs < endMs)
       .map((s) => (s.endMs > endMs ? { ...s, endMs } : s));
     return { channelId: channel.id, itemId, startMs, endMs, segments: clipped, truncated };
-  }
-}
-
-/** Ordering definitions — each one is a testable rule, not a label (handoff §3.2). */
-export function cycleOrder(rev: ChannelRevision, k: number, eligible: string[]): string[] {
-  switch (rev.ordering) {
-    case "cyclic":
-      // Library order, repeated. Cycle index does not matter.
-      return eligible.slice();
-    case "shuffle": {
-      // Fresh permutation per cycle; the first airing of a cycle never repeats the
-      // last airing of the previous cycle (when there are at least 3 items).
-      const order = seededShuffle(eligible, `${rev.seed}|${k}`);
-      if (order.length >= 3 && k > 0) {
-        const prev = seededShuffle(eligible, `${rev.seed}|${k - 1}`);
-        if (order[0] === prev[prev.length - 1]) [order[0], order[1]] = [order[1]!, order[0]!];
-      }
-      return order;
-    }
-    case "block-shuffle": {
-      // Split the library order into consecutive blocks of 2–4 items, then shuffle
-      // the blocks. Episode order is preserved inside each block.
-      const rand = mulberry32(hash32(`${rev.seed}|blocks|${k}`));
-      const blocks: string[][] = [];
-      for (let i = 0; i < eligible.length; ) {
-        const size = 2 + Math.floor(rand() * 3);
-        blocks.push(eligible.slice(i, i + size));
-        i += size;
-      }
-      return seededShuffle(blocks, `${rev.seed}|${k}`).flat();
-    }
   }
 }
 

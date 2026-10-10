@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { StationClock, cycleOrder } from "../src/clock/schedule.ts";
-import type { Channel, MediaItem } from "../src/clock/types.ts";
+import { ORDERINGS } from "../src/clock/ordering.ts";
+import type { Channel, MediaItem, Ordering } from "../src/clock/types.ts";
 import { WatchLedger } from "../src/history/watched.ts";
 import { Gates, GateDeniedError } from "../src/gates.ts";
 
@@ -96,13 +97,57 @@ test("shuffle: each cycle is a permutation and never repeats across the cycle se
   }
 });
 
-test("block-shuffle: blocks keep episode order and cover every item once", () => {
-  const ids = Array.from({ length: 20 }, (_, i) => `e${String(i).padStart(2, "0")}`);
-  const order = cycleOrder({ effectiveFromMs: 0, seed: "b", itemIds: ids, ordering: "block-shuffle" }, 3, ids);
-  assert.deepEqual([...order].sort(), ids);
-  let ascendingPairs = 0;
-  for (let i = 1; i < order.length; i++) if (order[i]! > order[i - 1]!) ascendingPairs++;
-  assert.ok(ascendingPairs >= 10, "most neighbours are in-block and ascending");
+// Three shows of very different sizes, listed out of episode order on purpose.
+const showLib: MediaItem[] = [
+  ...Array.from({ length: 20 }, (_, i) => ({ ...ep(100 + i, 22), showId: "big", season: 1, episode: 20 - i })),
+  ...Array.from({ length: 6 }, (_, i) => ({ ...ep(200 + i, 22), showId: "mid", season: 1, episode: 6 - i })),
+  ...Array.from({ length: 3 }, (_, i) => ({ ...ep(300 + i, 44), showId: "small", season: 1, episode: 3 - i })),
+];
+const showMeta = (id: string) => showLib.find((m) => m.id === id);
+const showIds = showLib.map((m) => m.id);
+const epOf = (id: string) => showMeta(id)!.episode!;
+const showOf = (id: string) => showMeta(id)!.showId!;
+const rev = (ordering: Ordering) => ({ effectiveFromMs: 0, seed: "o", itemIds: showIds, ordering });
+
+test("F2: every ordering mode yields a permutation of the eligible items", () => {
+  for (const o of ORDERINGS)
+    for (let k = 0; k < 20; k++)
+      assert.deepEqual([...cycleOrder(rev(o), k, showIds, showMeta)].sort(), [...showIds].sort(), o);
+});
+
+test("F2: cyclic variants keep each show's episodes in order", () => {
+  for (const o of ["block-cyclic", "marathon-cyclic", "round-robin-cyclic"] as const)
+    for (let k = 0; k < 20; k++) {
+      const order = cycleOrder(rev(o), k, showIds, showMeta);
+      for (const show of ["big", "mid", "small"]) {
+        const eps = order.filter((id) => showOf(id) === show).map(epOf);
+        assert.deepEqual(eps, [...eps].sort((a, b) => a - b), `${o} ${show}`);
+      }
+    }
+});
+
+test("F2: block and marathon modes keep runs of one show within their size ranges", () => {
+  for (const [o, lo, hi] of [["block-shuffle", 2, 4], ["marathon-shuffle", 5, 8]] as const) {
+    const order = cycleOrder(rev(o), 1, showIds, showMeta);
+    // Consecutive episodes of the same show form a block (adjacent blocks of one show may merge).
+    let run = 1;
+    const runs: number[] = [];
+    for (let i = 1; i <= order.length; i++) {
+      const same = i < order.length && showOf(order[i]!) === showOf(order[i - 1]!) && epOf(order[i]!) === epOf(order[i - 1]!) + 1;
+      if (same) run++;
+      else (runs.push(run), (run = 1));
+    }
+    // Only the last block of a show may be short.
+    assert.ok(runs.filter((r) => r < lo).length <= 3, `${o}: ${runs}`);
+    assert.ok(runs.every((r) => r <= 2 * hi), `${o}: ${runs}`);
+  }
+});
+
+test("F2: round-robin gives every show a turn before any show gets a second", () => {
+  for (const o of ["round-robin-shuffle", "round-robin-cyclic"] as const) {
+    const first3 = cycleOrder(rev(o), 2, showIds, showMeta).slice(0, 3).map(showOf);
+    assert.deepEqual([...first3].sort(), ["big", "mid", "small"], o);
+  }
 });
 
 test("D8: joining the last two minutes of an hour does not mark it watched", () => {
@@ -124,4 +169,20 @@ test("gates default closed and need a stated basis", () => {
   g.grant({ gate: "tuner-export", grantedAt: "2026-10-10", grantedBy: "Zachary", basis: "LAN-only test" });
   assert.equal(g.isGranted("tuner-export"), true);
   assert.equal(g.isGranted("sharing"), false, "gates are independent");
+});
+
+test("C5: across DST changes, slot-aligned airings stay on local :00/:30 with no gaps", () => {
+  // Slots are UTC-anchored. Whole-hour DST shifts are multiples of 30 min, so the
+  // local grid survives; time-of-day rules (not built yet) must use local time.
+  const clock = new StationClock(library);
+  const fmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", minute: "2-digit" });
+  for (const [from, to] of [
+    [Date.UTC(2026, 2, 7), Date.UTC(2026, 2, 10)], // spring forward 2026-03-08
+    [Date.UTC(2026, 9, 31), Date.UTC(2026, 10, 3)], // fall back 2026-11-01
+  ] as const) {
+    const ch: Channel = { ...channel, revisions: [{ ...channel.revisions[0]!, effectiveFromMs: Date.UTC(2026, 0, 1) }] };
+    const list = clock.airingsBetween(ch, from, to);
+    for (let i = 1; i < list.length; i++) assert.equal(list[i]!.startMs, list[i - 1]!.endMs);
+    for (const a of list.slice(1)) assert.equal(Number(fmt.format(a.startMs)) % 30, 0, fmt.format(a.startMs));
+  }
 });
