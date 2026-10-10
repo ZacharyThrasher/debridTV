@@ -143,3 +143,39 @@ API call per distinct channel.
 the gap: resolve the grant immediately but delay only the media fetch (API calls =
 distinct channels, media = 1 stream); show the channel's guide card/slate during the wait;
 smaller initial buffer goal.
+
+---
+
+## EXP-006 — Resolve early, delay only the video (2026-10-10)
+
+**Hypothesis.** Resolving the grant immediately (cached) and applying the adaptive
+wait only before the media fetch removes the API round-trip from tune latency,
+while media stays at one buffer. API calls rise to one per distinct channel.
+
+**Method correction first.** EXP-002..005 ended on channel 0, a *revisit*. When
+its grant had been cached on the way up, final latency excluded the API call, so
+those final-latency numbers are optimistic. `FINAL=fresh` now ends on a
+never-visited channel. Results: `results/exp002-press*-fresh-dwells0_-1_-2.json`.
+
+| Press interval | cancel + cache | adaptive + cache | adaptive-prefetch + cache |
+|---|---|---|---|
+| 150 ms | 17 / 143 MB / 155 ms | 2 / 117 / 350 | 17 / 117 / **198** |
+| 300 ms | 17 / 199 / 154 | 2 / 117 / 546 | 17 / 118 / **393** |
+| 600 ms | 17 / 309 / 155 | 2 / 120 / 938 | 17 / 122 / **784** |
+| 1000 ms | 17 / 460 / 155 | 2 / 125 / 1,355 | 17 / 127 / **1,205** |
+
+(cells: API calls / media MB / final first byte)
+
+**Verdict.** Confirmed. Prefetch saves exactly the API latency (150 ms here; real
+latency unknown) and keeps media at ~1 buffer, for ≤ 1 API call per distinct
+channel visited — 17 calls for 31 presses, far inside RD's 250/min and TorBox's
+300/min/endpoint, though those budgets are shared with the user's other apps (B7).
+
+**Current default:** `adaptive-prefetch` + grant cache. Media bytes are the
+expensive resource (TorBox's abuse accounting counts bytes, handoff §4.4); API calls
+are cheap but bounded.
+
+**Remaining latency is the wait itself** (1.3 × the viewer's press gap). Next ideas
+to test: show the guide card / station slate instantly during the wait (perceived
+latency), and a number-key path (typing "4","2") that should skip the wait once
+the number is complete.

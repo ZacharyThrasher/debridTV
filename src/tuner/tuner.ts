@@ -5,11 +5,13 @@
 //   dwell  — cancel, and wait `dwellMs` on a channel before contacting a provider
 //   adaptive — like dwell, but the wait follows the viewer's own press rhythm:
 //              1.3 × the last gap between selections, clamped to [min, max]
+//   adaptive-prefetch — resolve the grant at once (cached), apply the adaptive
+//              wait only before the media fetch
 
 import type { ProviderClient } from "../providers/types.ts";
 import { GrantCache } from "./grants.ts";
 
-export type Strategy = "naive" | "cancel" | "dwell" | "adaptive";
+export type Strategy = "naive" | "cancel" | "dwell" | "adaptive" | "adaptive-prefetch";
 
 export interface TuneRequest {
   channelId: string;
@@ -77,7 +79,7 @@ export class Tuner {
   private waitFor(gapMs: number): number {
     const { strategy, dwellMs = 0, adaptiveMinMs = 150, adaptiveMaxMs = 1200 } = this.opts;
     if (strategy === "dwell") return dwellMs;
-    if (strategy !== "adaptive") return 0;
+    if (strategy !== "adaptive" && strategy !== "adaptive-prefetch") return 0;
     // A long pause before this press means a deliberate pick, not surfing.
     if (gapMs > 2 * adaptiveMaxMs) return adaptiveMinMs;
     return Math.min(adaptiveMaxMs, Math.max(adaptiveMinMs, 1.3 * gapMs));
@@ -93,10 +95,14 @@ export class Tuner {
     let holding = false;
     const t0 = performance.now();
     try {
-      if (waitMs > 0) await delay(waitMs, signal);
-      const grant = this.opts.grants
-        ? await this.opts.grants.get(req.client, req.ref, signal)
-        : await req.client.resolve(req.ref, signal);
+      const early = this.opts.strategy === "adaptive-prefetch";
+      if (!early && waitMs > 0) await delay(waitMs, signal);
+      const grantP = this.opts.grants
+        ? this.opts.grants.get(req.client, req.ref, signal)
+        : req.client.resolve(req.ref, signal);
+      grantP.catch(() => {});
+      if (early && waitMs > 0) await delay(waitMs, signal);
+      const grant = await grantP;
       // Let the superseded session finish tearing down first, so two media
       // streams never overlap (EXP-002 saw a peak of 2 without this).
       await prev;

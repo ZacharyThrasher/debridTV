@@ -20,10 +20,15 @@ const BUFFER_TARGET = 112 * MB; // ~30 s of 30 Mb/s video, a typical player buff
 const LINK_BYTES_PER_SEC = 12.5 * MB; // 100 Mb/s home link
 const API_LATENCY_MS = 150;
 
-const files: MockFile[] = Array.from({ length: 16 }, (_, i) =>
+const files: MockFile[] = Array.from({ length: 17 }, (_, i) =>
   i % 2 ? { ref: `rd:${i}`, name: `f${i}.mkv`, bytes: FILE_BYTES } : { ref: `tb:${i}:0`, name: `f${i}.mkv`, bytes: FILE_BYTES },
 );
-const presses = [...Array.from({ length: 16 }, (_, i) => i), ...Array.from({ length: 15 }, (_, i) => 14 - i)];
+// FINAL=fresh ends on a never-visited channel (cold grant), so final latency includes
+// a real resolve. The default ends on channel 0, a revisit, which flattered
+// latency in EXP-002..005 whenever its grant had been cached on the way up.
+const presses = process.env.FINAL === "fresh"
+  ? [...Array.from({ length: 16 }, (_, i) => i), ...Array.from({ length: 14 }, (_, i) => 14 - i), 16]
+  : [...Array.from({ length: 16 }, (_, i) => i), ...Array.from({ length: 15 }, (_, i) => 14 - i)];
 
 interface Variant { name: string; strategy: Strategy; dwellMs?: number; cache: boolean }
 const defaultVariants: Variant[] = [
@@ -33,14 +38,15 @@ const defaultVariants: Variant[] = [
   { name: "dwell500+cache", strategy: "dwell", dwellMs: 500, cache: true },
   { name: "dwell250+cache", strategy: "dwell", dwellMs: 250, cache: true },
 ];
-// DWELLS="0,250,-1" runs cancel+cache (0), dwell+cache (N) and adaptive+cache (-1) variants instead.
+// DWELLS="0,250,-1" runs cancel+cache (0), dwell+cache (N) and adaptive+cache (-1) and adaptive-prefetch+cache (-2) variants instead.
 const variants: Variant[] = process.env.DWELLS
   ? process.env.DWELLS.split(",").map(Number).map((d) =>
       d === 0 ? { name: "cancel+cache", strategy: "cancel" as const, cache: true }
-        : d < 0 ? { name: "adaptive+cache", strategy: "adaptive" as const, cache: true }
+        : d === -1 ? { name: "adaptive+cache", strategy: "adaptive" as const, cache: true }
+        : d === -2 ? { name: "adaptive-prefetch+cache", strategy: "adaptive-prefetch" as const, cache: true }
         : { name: `dwell${d}+cache`, strategy: "dwell" as const, dwellMs: d, cache: true })
   : defaultVariants;
-const tag = process.env.DWELLS ? `-dwells${process.env.DWELLS.replaceAll(",", "_")}` : "";
+const tag = (process.env.FINAL === "fresh" ? "-fresh" : "") + (process.env.DWELLS ? `-dwells${process.env.DWELLS.replaceAll(",", "_")}` : "");
 
 const rows = [];
 for (const v of variants) {
