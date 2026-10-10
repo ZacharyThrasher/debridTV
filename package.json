@@ -1,0 +1,19 @@
+{
+  "name": "debridtv",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Personal pseudo-live television over user-authorized libraries (Real-Debrid, TorBox, local).",
+  "type": "module",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "exp:001": "node experiments/exp001-clock.ts",
+    "exp:002": "node experiments/exp002-surf.ts",
+    "exp:003": "node experiments/exp003-chunk-amplification.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "experiment": "EXP-002",
+  "ranAt": "2026-10-10T19:31:29.540Z",
+  "pressMs": 300,
+  "apiLatencyMs": 150,
+  "linkMbps": 100,
+  "bufferTargetMB": 112,
+  "rows": [
+    {
+      "variant": "naive",
+      "presses": 31,
+      "apiCalls": 31,
+      "mediaRequests": 31,
+      "mediaMB": 3615,
+      "peakConcurrentStreams": 31,
+      "streamsOpenWhileResting": 31,
+      "streamsOpenAfterStop": 0,
+      "finalStatus": "playing",
+      "finalFirstByteMs": 158
+    },
+    {
+      "variant": "cancel",
+      "presses": 31,
+      "apiCalls": 31,
+      "mediaRequests": 31,
+      "mediaMB": 173,
+      "peakConcurrentStreams": 1,
+      "streamsOpenWhileResting": 1,
+      "streamsOpenAfterStop": 0,
+      "finalStatus": "playing",
+      "finalFirstByteMs": 153
+    },
+    {
+      "variant": "cancel+cache",
+      "presses": 31,
+      "apiCalls": 16,
+      "mediaRequests": 31,
+      "mediaMB": 198,
+      "peakConcurrentStreams": 2,
+      "streamsOpenWhileResting": 1,
+      "streamsOpenAfterStop": 0,
+      "finalStatus": "playing",
+      "finalFirstByteMs": 2
+    },
+    {
+      "variant": "dwell500+cache",
+      "presses": 31,
+      "apiCalls": 1,
+      "mediaRequests": 1,
+      "mediaMB": 117,
+      "peakConcurrentStreams": 1,
+      "streamsOpenWhileResting": 1,
+      "streamsOpenAfterStop": 0,
+      "finalStatus": "playing",
+      "finalFirstByteMs": 659
+    },
+    {
+      "variant": "dwell250+cache",
+      "presses": 31,
+      "apiCalls": 31,
+      "mediaRequests": 1,
+      "mediaMB": 117,
+      "peakConcurrentStreams": 1,
+      "streamsOpenWhileResting": 1,
+      "streamsOpenAfterStop": 0,
+      "finalStatus": "playing",
+      "finalFirstByteMs": 405
+    }
+  ]
+}

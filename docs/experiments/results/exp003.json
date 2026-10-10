@@ -1,0 +1,40 @@
+{
+  "experiment": "EXP-003",
+  "ranAt": "2026-10-10T19:27:21.224Z",
+  "tbLimitPerMinPerEndpoint": 300,
+  "rows": [
+    {
+      "variant": "A redirect-url-per-chunk",
+      "chunks": 400,
+      "chunkMiB": 1,
+      "seconds": 6.2,
+      "apiCalls": 400,
+      "rateLimited": 100,
+      "failedChunks": 100,
+      "expiredGrantHits": 0,
+      "reResolves": 0
+    },
+    {
+      "variant": "B cached-grant",
+      "chunks": 400,
+      "chunkMiB": 1,
+      "seconds": 7.9,
+      "apiCalls": 1,
+      "rateLimited": 0,
+      "failedChunks": 0,
+      "expiredGrantHits": 0,
+      "reResolves": 0
+    },
+    {
+      "variant": "C cached-grant, 1.5s expiry, pauses",
+      "chunks": 400,
+      "chunkMiB": 1,
+      "seconds": 15.7,
+      "apiCalls": 11,
+      "rateLimited": 0,
+      "failedChunks": 0,
+      "expiredGrantHits": 10,
+      "reResolves": 10
+    }
+  ]
+}

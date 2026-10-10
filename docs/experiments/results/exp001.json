@@ -1,0 +1,14 @@
+{
+  "experiment": "EXP-001",
+  "ranAt": "2026-10-10T19:20:13.322Z",
+  "node": "v22.22.0",
+  "channels": 100,
+  "libraryItems": 5000,
+  "horizonDays": 30,
+  "airingsRendered": 57801,
+  "guideBuildMs": 265,
+  "meanTuneMicros": 9.7,
+  "restartMismatches": 0,
+  "providerApiCalls": 0,
+  "mediaBytes": 0
+}
