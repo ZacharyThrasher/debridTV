@@ -33,13 +33,14 @@ const defaultVariants: Variant[] = [
   { name: "dwell500+cache", strategy: "dwell", dwellMs: 500, cache: true },
   { name: "dwell250+cache", strategy: "dwell", dwellMs: 250, cache: true },
 ];
-// DWELLS="0,250,500" runs cancel+cache (0) and dwell+cache variants instead.
+// DWELLS="0,250,-1" runs cancel+cache (0), dwell+cache (N) and adaptive+cache (-1) variants instead.
 const variants: Variant[] = process.env.DWELLS
   ? process.env.DWELLS.split(",").map(Number).map((d) =>
       d === 0 ? { name: "cancel+cache", strategy: "cancel" as const, cache: true }
+        : d < 0 ? { name: "adaptive+cache", strategy: "adaptive" as const, cache: true }
         : { name: `dwell${d}+cache`, strategy: "dwell" as const, dwellMs: d, cache: true })
   : defaultVariants;
-const tag = process.env.DWELLS ? `-sweep` : "";
+const tag = process.env.DWELLS ? `-dwells${process.env.DWELLS.replaceAll(",", "_")}` : "";
 
 const rows = [];
 for (const v of variants) {

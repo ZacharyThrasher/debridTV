@@ -35,12 +35,17 @@ export class GrantCache {
     let p = this.inflight.get(key);
     if (!p) {
       this.misses++;
-      p = client.resolve(ref).finally(() => this.inflight.delete(key));
+      // Store the grant when the request completes, even if every caller has
+      // since moved on: the call was paid for, and a revisit should reuse it
+      // (EXP-004 found revisits re-resolving without this).
+      p = client
+        .resolve(ref)
+        .then((g) => (this.entries.set(key, g), g))
+        .finally(() => this.inflight.delete(key));
+      p.catch(() => {}); // callers may all have left; don't crash on an unawaited failure
       this.inflight.set(key, p);
     } else this.hits++;
-    const grant = await abortable(p, signal);
-    this.entries.set(key, grant);
-    return grant;
+    return abortable(p, signal);
   }
 
   /** Call when a grant URL is refused (expired/forbidden) so the next get re-resolves. */

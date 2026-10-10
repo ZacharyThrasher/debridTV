@@ -3,11 +3,13 @@
 //   naive  — every selection starts a fetch; nothing is stopped (models a leaky player)
 //   cancel — a new selection aborts the previous resolve and media fetch
 //   dwell  — cancel, and wait `dwellMs` on a channel before contacting a provider
+//   adaptive — like dwell, but the wait follows the viewer's own press rhythm:
+//              1.3 × the last gap between selections, clamped to [min, max]
 
 import type { ProviderClient } from "../providers/types.ts";
 import { GrantCache } from "./grants.ts";
 
-export type Strategy = "naive" | "cancel" | "dwell";
+export type Strategy = "naive" | "cancel" | "dwell" | "adaptive";
 
 export interface TuneRequest {
   channelId: string;
@@ -19,6 +21,9 @@ export interface TuneRequest {
 export interface TunerOptions {
   strategy: Strategy;
   dwellMs?: number;
+  /** Bounds for the adaptive wait. */
+  adaptiveMinMs?: number;
+  adaptiveMaxMs?: number;
   /** Bytes a player buffers before it stops reading and holds the connection. */
   bufferTargetBytes: number;
   grants?: GrantCache | null;
@@ -42,6 +47,7 @@ export class Tuner {
   private readonly opts: TunerOptions;
   private current: Session | null = null;
   private readonly all: Session[] = [];
+  private lastTuneAt = -Infinity;
 
   constructor(opts: TunerOptions) {
     this.opts = opts;
@@ -50,9 +56,12 @@ export class Tuner {
   tune(req: TuneRequest): Promise<TuneOutcome> {
     const prev = this.opts.strategy !== "naive" ? this.current : null;
     prev?.ctl.abort(new Error("superseded"));
+    const now = performance.now();
+    const wait = this.waitFor(now - this.lastTuneAt);
+    this.lastTuneAt = now;
     const ctl = new AbortController();
     const { promise: released, resolve: release } = Promise.withResolvers<void>();
-    const done = this.run(req, ctl.signal, release, prev?.released);
+    const done = this.run(req, ctl.signal, wait, release, prev?.released);
     const s = { ctl, done, released };
     this.current = s;
     this.all.push(s);
@@ -65,16 +74,26 @@ export class Tuner {
     this.current = null;
   }
 
+  private waitFor(gapMs: number): number {
+    const { strategy, dwellMs = 0, adaptiveMinMs = 150, adaptiveMaxMs = 1200 } = this.opts;
+    if (strategy === "dwell") return dwellMs;
+    if (strategy !== "adaptive") return 0;
+    // A long pause before this press means a deliberate pick, not surfing.
+    if (gapMs > 2 * adaptiveMaxMs) return adaptiveMinMs;
+    return Math.min(adaptiveMaxMs, Math.max(adaptiveMinMs, 1.3 * gapMs));
+  }
+
   private async run(
     req: TuneRequest,
     signal: AbortSignal,
+    waitMs: number,
     release: () => void,
     prev?: Promise<void>,
   ): Promise<TuneOutcome> {
     let holding = false;
     const t0 = performance.now();
     try {
-      if (this.opts.strategy === "dwell" && this.opts.dwellMs) await delay(this.opts.dwellMs, signal);
+      if (waitMs > 0) await delay(waitMs, signal);
       const grant = this.opts.grants
         ? await this.opts.grants.get(req.client, req.ref, signal)
         : await req.client.resolve(req.ref, signal);

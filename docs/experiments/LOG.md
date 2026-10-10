@@ -98,6 +98,48 @@ then test an adaptive rule (dwell = f(recent press interval)).
 
 ---
 
-## EXP-004 — Press interval × dwell sweep (in progress)
+## EXP-004 — Press interval × fixed dwell sweep (2026-10-10)
 
-See `results/exp004-summary.md` when present.
+**Method.** EXP-002 script, presses every 150/300/600/1000 ms × dwell 0/250/500/800/1200 ms
+(run by a Sonnet worker). Full table: [`results/exp004-summary.md`](results/exp004-summary.md).
+
+**Result.** API calls drop to 1 only once dwell > press interval. A dwell at or
+just under the interval was *worse* than none (31 calls vs 16). Latency ≈ dwell + 155 ms.
+Re-run variance: identical API counts, ±15 ms latency.
+
+**Bug found.** The 31-vs-16 anomaly came from `GrantCache`: a resolve whose caller
+had been superseded completed but was never stored, so the revisit paid again.
+Fixed: the grant is cached when the request completes, regardless of who is still
+waiting (and an unawaited failure no longer risks an unhandled rejection).
+
+**Revised hypothesis → EXP-005.** No fixed dwell fits every viewer. A dwell that
+follows the viewer's own rhythm (1.3 × last gap, clamped 150–1200 ms; a pause > 2.4 s
+counts as a deliberate pick) should give ~1 API call at every press speed.
+
+---
+
+## EXP-005 — Adaptive dwell (2026-10-10)
+
+**Method.** `PRESS_MS=<p> DWELLS=0,-1 npm run exp:002`, after the cache fix.
+Results: `results/exp005-press*.json`.
+
+| Press interval | cancel + cache (calls / MB / final ms) | adaptive + cache (calls / MB / final ms) |
+|---|---|---|
+| 150 ms | 16 / 143 / 3 | **1 / 117 / 199** |
+| 300 ms | 16 / 197 / 2 | **1 / 117 / 394** |
+| 600 ms | 16 / 310 / 1 | **1 / 120 / 782** |
+| 1000 ms | 16 / 458 / 2 | **1 / 125 / 1,204** |
+
+**Verdict.** Confirmed: adaptive dwell gives 1 API call and ≈ only the final
+channel's buffer at every press speed. The cache fix brought cancel + cache down to
+16 calls (one per distinct channel) at all speeds.
+
+**What it costs.** Slow surfers wait longest (≈1.2 s at 1-second presses), because
+the tuner can't tell "still surfing" from "settled" until the gap has passed.
+Cancel + cache is near-instant on revisits but wastes 25–340 MB of media and up to one
+API call per distinct channel.
+
+**Open product choice.** Snappy vs frugal tuning — put to Zachary. Ideas to shrink
+the gap: resolve the grant immediately but delay only the media fetch (API calls =
+distinct channels, media = 1 stream); show the channel's guide card/slate during the wait;
+smaller initial buffer goal.
