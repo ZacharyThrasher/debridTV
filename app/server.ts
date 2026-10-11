@@ -22,6 +22,7 @@ import { ProviderError } from "../src/providers/types.ts";
 import { Gates } from "../src/gates.ts";
 import { JsonFile, dataDir } from "./store.ts";
 import { validTimeZone } from "../src/clock/dayparts.ts";
+import { parseVttBlock } from "../src/library/vtt.ts";
 import { RATINGS, normalizeRating, ratingRank } from "../src/clock/ratings.ts";
 import { Library, displayTitle, effectiveRating, fileStatus, plainError, PROVIDER_NAMES, STATUS_ORDER, type Config, type LibItem, type ProviderBases, type RemoteProvider } from "./library.ts";
 import { Lineup, autoRules, cleanLogo, cleanRestricted, cleanSlots, type StationChannel, type CustomChannel } from "./lineup.ts";
@@ -347,20 +348,43 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
   if (!it) return json(res, 404, { error: "unknown item" });
   const start = Math.max(0, Number(url.searchParams.get("start") ?? 0));
   const canDecode = (url.searchParams.get("v") ?? "h264").split(",");
-  const copyVideo = it.video ? canDecode.includes(it.video) : false;
+  // Track choice (N-18a): indexes count within their kind, as ffmpeg's 0:a:N / 0:s:N do.
+  const pick = (name: string, kind: "audio" | "subtitle") => {
+    const raw = url.searchParams.get(name);
+    if (raw == null || raw === "") return { ok: true as const, index: null };
+    const n = Number(raw);
+    const known = it.tracks?.filter((t) => t.kind === kind);
+    if (!Number.isInteger(n) || n < 0 || (known && known.length > 0 && n >= known.length)) return { ok: false as const, index: null };
+    return { ok: true as const, index: n, track: known?.[n] };
+  };
+  const a = pick("a", "audio");
+  const sub = pick("s", "subtitle");
+  if (!a.ok || !sub.ok) return json(res, 400, { error: "No such audio or subtitle track." });
+  const subCodec = sub.index != null ? (sub as { track?: { codec: string } }).track?.codec : undefined;
+  const textSub = sub.index != null && (!subCodec || TEXT_SUBS.has(subCodec));
+  const burn = sub.index != null && !textSub && url.searchParams.get("burn") === "1" && IMAGE_SUBS.has(subCodec ?? "");
+  const copyVideo = !burn && (it.video ? canDecode.includes(it.video) : false);
+  const tok = url.searchParams.get("tok");
+  const subsOut = textSub && tok ? 3 : null;
   const input = it.provider === "local" ? it.ref : `http://${HOST}:${port}/media/${id}?internal=1`;
+  const encode = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p"];
   const args = [
     "-hide_banner", "-loglevel", "error", "-nostdin",
     "-ss", start.toFixed(2), "-i", input,
-    "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn",
-    ...(copyVideo ? ["-c:v", "copy"] : ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p", "-vf", "scale='min(1920,iw)':-2"]),
+    ...(burn
+      ? ["-filter_complex", `[0:v:0][0:s:${sub.index}]overlay=eof_action=pass,scale='min(1920,iw)':-2[v]`, "-map", "[v]", ...encode]
+      : ["-map", "0:v:0", ...(copyVideo ? ["-c:v", "copy"] : [...encode, "-vf", "scale='min(1920,iw)':-2"])]),
+    // An index we couldn't check against the file's track list is optional, so a wrong guess plays without sound rather than failing.
+    "-map", a.index == null ? "0:a:0?" : `0:a:${a.index}${it.tracks?.length ? "" : "?"}`, "-sn", "-dn", "-map_chapters", "-1",
     "-c:a", "aac", "-ac", "2", "-b:a", "192k",
     "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "pipe:1",
+    // Text subtitles ride along as a second output of the same process: no second read.
+    // Shifted by the seek so cue times are file times; /api/livesubs makes them stream-relative.
+    ...(subsOut ? ["-map", `0:s:${sub.index}`, "-c:s", "webvtt", "-output_ts_offset", start.toFixed(3), "-f", "webvtt", `pipe:${subsOut}`] : []),
   ];
   // Copying video can only start on a keyframe, so the picture begins a little
   // before the live position. Find that keyframe (the same seek ffmpeg makes) so the
   // player can skip ahead to the exact station time.
-  const tok = url.searchParams.get("tok");
   if (tok && liveStarts.has(tok)) {
     // The browser often re-requests the same stream; the keyframe is already known.
   } else if (tok && copyVideo && ffprobe) {
@@ -375,7 +399,8 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
     });
     setTimeout(() => p.exitCode == null && p.kill("SIGKILL"), 15_000).unref();
   } else if (tok) liveStarts.set(tok, start * 1000);
-  const child: ChildProcess = spawn(ffmpeg, args, { stdio: ["ignore", "pipe", "pipe"] });
+  const child: ChildProcess = spawn(ffmpeg, args, { stdio: ["ignore", "pipe", "pipe", ...(subsOut ? ["pipe" as const] : [])] });
+  if (subsOut && tok) collectSubs(tok, child.stdio[subsOut] as NodeJS.ReadableStream);
   let err = "";
   child.stderr!.on("data", (d) => (err = (err + d).slice(-2000)));
   res.writeHead(200, { "content-type": "video/mp4", "cache-control": "no-store" });
@@ -389,6 +414,54 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
     res.end();
   });
 }
+
+const TEXT_SUBS = new Set(["srt", "ass", "webvtt", "mov_text", "subrip", "ssa", "text"]);
+const IMAGE_SUBS = new Set(["pgs", "vobsub", "hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle"]);
+
+interface LiveCue {
+  n: number;
+  /** File time. */
+  startMs: number;
+  endMs: number;
+  text: string;
+}
+const liveSubs = new Map<string, { cues: LiveCue[]; done: boolean; next: number }>();
+
+/** Read ffmpeg's WebVTT output as it arrives into cues for one stream token. */
+function collectSubs(tok: string, stream: NodeJS.ReadableStream) {
+  // A re-request of the same stream adds only cues not seen yet, so `n` keeps counting up.
+  const st = liveSubs.get(tok) ?? { cues: [], done: false, next: 1 };
+  st.done = false;
+  liveSubs.delete(tok);
+  liveSubs.set(tok, st);
+  if (liveSubs.size > 20) liveSubs.delete(liveSubs.keys().next().value!);
+  const seen = new Set(st.cues.map((c) => `${c.startMs}|${c.endMs}|${c.text}`));
+  let buf = "";
+  const flush = (final: boolean) => {
+    const blocks = buf.replace(/\r/g, "").split(/\n\n+/);
+    buf = final ? "" : blocks.pop()!;
+    for (const b of blocks) {
+      const c = parseVttBlock(b);
+      if (!c) continue;
+      const key = `${c.startMs}|${c.endMs}|${c.text}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      st.cues.push({ n: st.next++, ...c });
+      if (st.cues.length > 2000) st.cues.shift();
+    }
+  };
+  stream.setEncoding?.("utf8");
+  stream.on("data", (d: string | Buffer) => {
+    buf += String(d);
+    flush(false);
+  });
+  stream.on("end", () => {
+    flush(true);
+    st.done = true;
+  });
+  stream.on("error", () => (st.done = true));
+}
+
 
 const liveStarts = new Map<string, number>();
 
@@ -543,6 +616,19 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       exportedAt: new Date().toISOString(), app: "DebridTV", version: VERSION, watchedThreshold: 0.9,
       note: "Viewing history only. No keys, links or account details.",
       recent: h.recent.map((r) => historyRow(r, h)), spans: h.spans, manual: h.manual ?? {},
+    });
+  }
+  if (p === "/api/livesubs") {
+    // Text subtitles for a compatibility stream, times relative to the stream's start (the /api/livestart zero).
+    const tok = url.searchParams.get("tok") ?? "";
+    const st = liveSubs.get(tok);
+    const zero = liveStarts.get(tok);
+    if (!st) return json(res, 404, { error: "no subtitles for this stream" });
+    if (zero == null) return json(res, 200, { cues: [], done: false, pending: true });
+    const since = Number(url.searchParams.get("since") ?? 0);
+    return json(res, 200, {
+      cues: st.cues.filter((c) => c.n > since).map((c) => ({ n: c.n, startMs: c.startMs - zero, endMs: c.endMs - zero, text: c.text })),
+      done: st.done,
     });
   }
   if (p === "/api/livestart") {

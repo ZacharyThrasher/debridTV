@@ -429,6 +429,7 @@ async function look() {
     ${raw(sw("clock24", "24-hour clock", "Show 21:30 instead of 9:30 PM."))}
     ${raw(sw("calm", "Reduce motion", "Turn off animations."))}
     ${raw(await startupOpts())}
+    ${raw(signOffOpt())}
     <div class="opt"><div><div class="ol">Volume</div></div><input type="range" min="0" max="1" step="0.05" value="${pref("volume")}" data-volume aria-label="Volume"></div>`;
 }
 
@@ -440,6 +441,14 @@ body.addEventListener("change", (e) => {
     if (t.dataset.prefSelect === "guideIdle") render();
   }
 });
+
+/** N-17b: after this long with no key, tap or click, the set asks if you're still watching, then signs off. */
+function signOffOpt() {
+  const cur = Number(pref("signOffHours") ?? 4);
+  const opts = [[0, "Never"], [2, "2 hours"], [3, "3 hours"], [4, "4 hours"], [6, "6 hours"], [8, "8 hours"]];
+  return html`<div class="opt"><div><div class="ol">Sign off after</div><div class="od">With nobody pressing anything, ask "Still watching?" and then stop playing, so a sleeping viewer doesn't stream all night.</div></div>
+    <select class="input" style="width:auto" data-pref-select="signOffHours" data-num="1">${raw(opts.map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`).join(""))}</select></div>`;
+}
 
 const IDLE_FALLBACK = { stay: "Stay open", close: "Close the guide", tune: "Tune to the highlighted channel" };
 
