@@ -28,7 +28,6 @@ export function initPanel(changed) {
     panel.querySelector('[data-tab="sources"]')?.after(b);
   }
   panel.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
-  addStyles();
 }
 
 /** `section` picks a part of a tab: openPanel("library", "ratings") opens the age ratings and focuses its search. */
@@ -333,7 +332,7 @@ async function channels() {
       <span class="n">${c.number}</span>
       <div><div class="t">${c.name}</div><div class="d">${c.items} programs · ${ORDERINGS[c.ordering] ?? c.ordering}</div></div>
       <div class="inline">
-        <button class="btn x-fav" data-fav="${c.id}" data-on="${c.favorite ? "1" : "0"}" aria-pressed="${String(!!c.favorite)}" aria-label="${c.favorite ? "Remove from" : "Add to"} favorites" title="Favorite">${c.favorite ? "★" : "☆"}</button>
+        <button class="btn x-fav" style="${c.favorite ? "color:var(--amber)" : ""}" data-fav="${c.id}" data-on="${c.favorite ? "1" : "0"}" aria-pressed="${String(!!c.favorite)}" aria-label="${c.favorite ? "Remove from" : "Add to"} favorites" title="Favorite">${c.favorite ? "★" : "☆"}</button>
         <button class="btn" data-edit-channel="${c.id}">Edit</button>
         ${custom ? html`<button class="btn danger" data-delete-custom="${c.ruleKey.slice(7)}" aria-label="Delete ${c.name}">Delete</button>` : ""}
         <button class="btn" data-hide="${c.ruleKey}" data-hidden="${c.hidden ? "1" : "0"}">${c.hidden ? "Show" : "Hide"}</button>
@@ -643,43 +642,3 @@ body.addEventListener("change", async (e) => {
     libList();
   }
 });
-
-// Styles for the parts of this panel that the shared stylesheet doesn't cover yet.
-function addStyles() {
-  if (document.getElementById("panel-x-styles")) return;
-  const st = document.createElement("style");
-  st.id = "panel-x-styles";
-  st.textContent = `
-    .panel .linkish { background: none; border: 0; padding: 0; color: var(--cyan); cursor: pointer; font: inherit; font-size: .85em; font-weight: 600; }
-    .panel .linkish:hover { text-decoration: underline; }
-    .panel .x-acts { display: flex; flex-wrap: wrap; gap: .9em; margin-top: .35em; }
-    .panel .x-acct { margin: .6em 0 0; font-size: .92em; line-height: 1.45; }
-    .panel .x-acct.warn { color: var(--warn); } .panel .x-acct.bad { color: var(--bad); }
-    .panel .x-tile { text-align: left; color: inherit; font: inherit; cursor: pointer; }
-    .panel .x-tile:hover { border-color: var(--line-strong); }
-    .panel .x-tile.warn b { color: var(--warn); } .panel .x-tile.bad b { color: var(--bad); }
-    .panel .x-what { margin-top: .8em; font-size: .9em; color: var(--dim); }
-    .panel .x-what summary { cursor: pointer; font-weight: 600; }
-    .panel .x-what ul { margin: .5em 0 0; padding-left: 1.2em; line-height: 1.55; }
-    .panel .x-libbar { display: grid; grid-template-columns: 1fr auto; gap: .5em; margin-bottom: .7em; }
-    .panel .x-libbar select { width: auto; }
-    .panel .x-chips { display: flex; flex-wrap: wrap; gap: .4em; margin-bottom: .8em; }
-    .panel .x-chip { border: 1px solid var(--line-strong); background: transparent; color: var(--dim); border-radius: 99px; padding: .35em .8em; cursor: pointer; font: inherit; font-size: .85em; }
-    .panel .x-chip b { color: var(--ink); margin-left: .25em; }
-    .panel .x-chip[aria-pressed="true"] { background: var(--ink); color: var(--panel, #111); border-color: var(--ink); }
-    .panel .x-chip[aria-pressed="true"] b { color: inherit; }
-    .panel .x-chip.warn b { color: var(--warn); } .panel .x-chip.bad b { color: var(--bad); }
-    .panel .x-chip[aria-pressed="true"].warn b, .panel .x-chip[aria-pressed="true"].bad b { color: inherit; }
-    .panel .x-why.warn { color: var(--warn); } .panel .x-why.bad { color: var(--bad); } .panel .x-why.ok { color: var(--ok); }
-    .panel .x-name { font-family: var(--mono); font-size: .75em; opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34em; }
-    .panel a.btn { text-decoration: none; display: inline-block; }
-    .panel .x-fav[aria-pressed="true"] { color: var(--amber); }
-    @media (max-width: 560px) {
-      .panel .x-file { grid-template-columns: 1fr !important; }
-      .panel .x-file > .badge { order: -1; justify-self: start; }
-      .panel .x-libbar { grid-template-columns: 1fr; }
-      .panel .x-libbar select { width: 100%; }
-    }
-  `;
-  document.head.append(st);
-}
