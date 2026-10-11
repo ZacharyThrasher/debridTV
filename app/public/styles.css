@@ -605,8 +605,8 @@ body.guide-open { background: var(--bg); }
 .ced-cover .bars { display: flex; height: 1.6em; border-radius: .4em; overflow: hidden; gap: 2px; }
 .ced-cover .bars i { display: grid; place-items: center; min-width: 1.8em; font-style: normal; font-size: .72em; color: #000; background: var(--faint); }
 .ced-cover .bars i b { white-space: nowrap; }
-.ced-cover .r-g { background: #6ff2a8; } .ced-cover .r-pg { background: #a6e36f; } .ced-cover .r-pg13 { background: #ffd166; }
-.ced-cover .r-r { background: #ff9a5f; } .ced-cover .r-nc17 { background: #ff6b6b; } .ced-cover .r-unrated { background: repeating-linear-gradient(135deg, #5b638f 0 4px, #3d4470 4px 8px); color: #fff; }
+.ced-cover .bars .r-g { background: #6ff2a8; } .ced-cover .bars .r-pg { background: #a6e36f; } .ced-cover .bars .r-pg13 { background: #ffd166; }
+.ced-cover .bars .r-r { background: #ff9a5f; } .ced-cover .bars .r-nc17 { background: #ff6b6b; } .ced-cover .bars .r-unrated { background: repeating-linear-gradient(135deg, #5b638f 0 4px, #3d4470 4px 8px); color: #fff; }
 .linkish { background: none; border: 0; padding: 0; color: var(--cyan); cursor: pointer; font: inherit; font-weight: 600; justify-self: start; }
 .linkish:hover { text-decoration: underline; }
 @media (max-width: 560px) { .ced-row, .ced-preview { grid-template-columns: 1fr; } }
