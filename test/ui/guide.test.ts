@@ -126,6 +126,32 @@ describe("guide", { skip }, () => {
     await ctx.close();
   });
 
+  it("previews the highlighted channel from the station clock only (N-14), never media", async () => {
+    const { page, ctx, requests } = await open();
+    await page.keyboard.press("g");
+    await page.waitForSelector(".cell.focus");
+    const before = requests.length;
+    const bug = await js(page, `document.getElementById("bug").textContent`);
+    await page.keyboard.press("ArrowDown");
+    await page.waitForSelector(".gp-slate:not([hidden])");
+    const want = await js(page, `document.querySelector(".guide-details .t").textContent`);
+    assert.equal(await js(page, `document.querySelector(".gp-slate .gp-t").textContent`), want);
+    assert.match(await js(page, `document.querySelector(".guide-preview .preview-label").textContent`), /Preview/);
+    // Run past several rows: still no link, media or tune, and the picture stays put.
+    for (const k of ["ArrowDown", "ArrowDown", "ArrowDown", "ArrowRight", "ArrowUp"]) await page.keyboard.press(k);
+    await sleep(400);
+    const after = requests.slice(before);
+    assert.equal(after.filter((p) => p.startsWith("/media") || p === "/api/prefetch" || p === "/api/now").length, 0, after.join(" "));
+    assert.equal(await js(page, `document.getElementById("bug").textContent`), bug);
+    // Back on the channel being watched, the real picture shows again.
+    await page.keyboard.press("Home");
+    for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowUp");
+    await page.waitForFunction(`document.querySelector(".row.current .cell.focus") ? document.querySelector(".gp-slate").hidden : true`);
+    await ctx.close();
+  });
+
   it("Enter tunes the highlighted channel and closes the guide", async () => {
     const { page, ctx } = await open();
     await page.keyboard.press("g");
