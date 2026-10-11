@@ -274,3 +274,47 @@ describe("format chips (N-37)", { skip }, () => {
     await ctx.close();
   });
 });
+
+describe("channel mix and exclusions (N-09, N-10)", { skip }, () => {
+  it("Mix tab saves weights, genres and order settings, and reshuffles", async () => {
+    const { page, ctx, errors } = await open();
+    const id = await js(page, `import("/js/player.js").then((p) => p.tv.channels.find((c) => c.kind !== "show").id)`);
+    await js(page, `Promise.all([import("/js/channel-editor.js"), import("/js/player.js")]).then(([m, p]) => m.openChannelEditor(p.tv.channels.find((c) => c.id === ${JSON.stringify(id)}), { tab: "mix" }))`);
+    await page.waitForSelector(".mix-row");
+    const first = await js(page, `document.querySelector("[data-weight]").dataset.weight`);
+    await js(page, `(() => { const r = document.querySelector("[data-weight]"); r.value = 0; r.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+    assert.equal(await js(page, `document.querySelector(".mix-row .mix-word").textContent`), "Never");
+    const genre = await js(page, `document.querySelector("[data-genre]").dataset.genre`);
+    await page.click(`[data-genre="${genre}"]`);
+    await page.click('[data-set="balance:time"]');
+    await page.click('[data-set="watched:unwatched"]');
+    await page.click("[data-refresh]");
+    await page.waitForSelector("#toast:not([hidden])");
+    assert.match(await js(page, `document.getElementById("toast").textContent`), /New order starts/);
+    await page.click("[data-save]");
+    await page.waitForFunction(`document.querySelector(".ced").hidden`);
+    const s = await (await fetch(`${BASE}/api/channels/${id}/settings`)).json();
+    assert.equal(s.weights[first], 0);
+    assert.deepEqual(s.exclude.genres, [genre]);
+    assert.equal(s.balance, "time");
+    assert.equal(s.watched, "unwatched");
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  it("keeps a show and a genre off every channel", async () => {
+    const { page, ctx } = await open();
+    await js(page, `import("/js/channel-editor.js").then((m) => m.openExclusions())`);
+    await page.waitForSelector(".ex-row");
+    const genre = await js(page, `document.querySelector("[data-ex-genre]").dataset.exGenre`);
+    await page.click(`[data-ex-genre="${genre}"]`);
+    await page.click(".ex-row >> nth=0");
+    assert.equal(await js(page, `document.querySelector(".ex-count").textContent`), "2 kept off");
+    await page.click("[data-ex-save]");
+    const ex = await (await fetch(`${BASE}/api/exclusions`)).json();
+    assert.deepEqual(ex.genres, [genre]);
+    assert.equal(ex.shows.length, 1);
+    await fetch(`${BASE}/api/exclusions`, { method: "POST", headers: { "content-type": "application/json" }, body: '{"shows":[],"genres":[]}' });
+    await ctx.close();
+  });
+});
