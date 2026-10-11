@@ -21,6 +21,7 @@ import { parseName, type Parsed } from "../src/library/parse.ts";
 import { parseNfo, withShow, type NfoMeta } from "../src/library/nfo.ts";
 import { RATINGS, type Rating } from "../src/clock/ratings.ts";
 import { probe, type RangeReader, type Track } from "../src/library/probe.ts";
+import { AUDIO_EXT, probeAudio, tagsFromPath, type AudioTags } from "../src/library/audio.ts";
 import { RealDebridClient, TorBoxClient } from "../src/providers/clients.ts";
 import { ProviderError, providerReady, type AccountInfo, type InventoryFile, type ProviderClient } from "../src/providers/types.ts";
 import { GrantCache } from "../src/tuner/grants.ts";
@@ -75,6 +76,24 @@ export interface LibItem {
   addedAt?: number;
   /** Kodi-style artwork beside a local file (absolute paths; the browser only ever sees /api/art URLs). */
   art?: LocalArt;
+  /** A local film trailer (Kodi "<film>-trailer" or a Trailers folder), for Coming Attractions (N-23c). */
+  trailer?: TrailerFor;
+  /** A local audio file for the music channels (N-23a): tags from the file, else from its folders and name. */
+  track?: AudioTags;
+  /** Tags read from the file itself at scan time (they win over names). */
+  trackTags?: AudioTags;
+}
+
+/** The film a trailer is for, as its name says. */
+export interface TrailerFor {
+  title: string;
+  titleKey: string;
+  year?: number;
+}
+
+/** Local files that air although they aren't episodes or films: trailers (N-23c) and music (N-23a). */
+export function airsAsExtra(i: LibItem): boolean {
+  return i.provider === "local" && !!(i.trailer || i.track);
 }
 
 export type ArtKind = "poster" | "fanart" | "thumb" | "logo";
@@ -333,6 +352,11 @@ export class Library {
         const art = localArt(path, dir, it.parsed.kind, listings);
         if (art) it.art = art;
         else delete it.art;
+        const trailer = localTrailer(path, dir);
+        if (trailer) it.trailer = trailer;
+        else delete it.trailer;
+        if (AUDIO_EXT.has(extname(path).toLowerCase())) it.track = { ...tagsFromPath(name), ...it.trackTags };
+        else delete it.track;
         n++;
       }
     }
@@ -357,7 +381,7 @@ export class Library {
         i.present &&
         i.ready !== false &&
         !i.excluded &&
-        i.parsed.kind !== "other" &&
+        (i.parsed.kind !== "other" || airsAsExtra(i)) &&
         i.durationMs == null &&
         !i.probe?.error &&
         i.availability !== "policy-blocked" &&
@@ -513,6 +537,19 @@ export class Library {
           return buf;
         };
       }
+      const ext = extname(it.ref).toLowerCase();
+      if (it.provider === "local" && AUDIO_EXT.has(ext) && ext !== ".m4a") {
+        // Music (N-23a): MP3, FLAC, Ogg, WAV headers; .m4a is an MP4 and goes the usual way.
+        const a = await probeAudio(read, it.bytes);
+        target.durationMs = a?.durationMs ?? null;
+        target.container = "audio";
+        target.audio = a ? [a.codec] : undefined;
+        if (a && Object.keys(a.tags).length) target.trackTags = a.tags;
+        target.track = { ...tagsFromPath(it.name), ...target.trackTags };
+        target.probe = { at: Date.now(), bytes: a?.bytesRead ?? 0, ...(target.durationMs == null ? { error: "No running time in the file header" } : {}) };
+        this.file.set(state);
+        return target.durationMs == null ? "failed" : "ok";
+      }
       const r = await probe(read, it.bytes);
       if (it.provider !== "local") {
         target.availability = "playable";
@@ -666,13 +703,14 @@ export class Library {
   mediaItems(): MediaItem[] {
     const manual = this.manualRatings();
     return this.items().flatMap((i) => {
-      if (i.parsed.kind === "other") return [];
+      if (i.parsed.kind === "other" && !airsAsExtra(i)) return [];
       return [{
         id: i.id,
         title: displayTitle(i),
-        showId: i.parsed.kind === "episode" ? i.parsed.showKey : undefined,
+        // Music takes turns by artist, as shows do by show.
+        showId: i.parsed.kind === "episode" ? i.parsed.showKey : i.track?.artist ? `artist:${i.track.artist.toLowerCase()}` : undefined,
         season: i.parsed.kind === "episode" ? i.parsed.season : undefined,
-        episode: i.parsed.kind === "episode" ? i.parsed.episode : undefined,
+        episode: i.parsed.kind === "episode" ? i.parsed.episode : i.track?.track,
         durationMs: i.durationMs,
         breakpointsMs: breakpoints(i),
         rating: effectiveRating(i, manual)?.rating,
@@ -786,8 +824,13 @@ function findImage(dir: string, stems: string[], cache: Map<string, Map<string, 
  * folder and never touches the network.
  */
 export function localArt(path: string, root: string, kind: Parsed["kind"], cache = new Map<string, Map<string, string>>()): LocalArt | null {
-  if (kind !== "movie" && kind !== "episode") return null;
   const dir = dirname(path);
+  // An album's cover sits in its folder (never the chosen folder itself, which holds many albums).
+  if (kind === "other" && AUDIO_EXT.has(extname(path).toLowerCase())) {
+    const cover = relative(root, dir) !== "" ? findImage(dir, ["cover", "folder", "front", "album"], cache) : undefined;
+    return cover ? { poster: cover } : null;
+  }
+  if (kind !== "movie" && kind !== "episode") return null;
   const stem = basename(path, extname(path));
   const art: LocalArt = {};
   const put = (k: ArtKind, p: string | undefined) => {
@@ -864,7 +907,7 @@ export function fileStatus(it: LibItem, account?: AccountState): { status: FileS
   if (it.availability === "policy-blocked")
     return { status: "refused", message: `${who} refused this file. DebridTV won't retry it or fetch it from anywhere else.` };
   if (it.excluded) return { status: "excluded", message: "You kept this off the air." };
-  if (it.parsed.kind === "other") return { status: "other", message: "Not recognised as an episode or a movie, so no channel uses it." };
+  if (it.parsed.kind === "other" && !airsAsExtra(it)) return { status: "other", message: "Not recognised as an episode or a movie, so no channel uses it." };
   if (it.ready === false)
     return {
       status: "not-ready",
@@ -892,7 +935,38 @@ export function displayTitle(i: { parsed: Parsed; name: string }): string {
     return `${p.show} · ${ep}`;
   }
   if (p.kind === "movie") return p.year ? `${p.title} (${p.year})` : p.title;
+  const t = (i as { trailer?: TrailerFor }).trailer;
+  if (t) return `${t.title}${t.year ? ` (${t.year})` : ""} · trailer`;
+  const m = (i as { track?: AudioTags }).track;
+  if (m?.title) return m.artist ? `${m.artist} · ${m.title}` : m.title;
   return i.name;
+}
+
+const TRAILER_STEM = /^(.*?)[\s._-]*(?:official[\s._-]*)?(?:trailer|teaser)[\s._-]*\d*$/i;
+const TRAILER_DIR = /^(?:trailers?|teasers?)$/i;
+
+/**
+ * The film a local trailer belongs to, by Kodi's naming: "<film>-trailer.ext"
+ * beside the film, or any video in a Trailers folder inside the film's folder.
+ * Read from names only; nothing is looked up.
+ */
+export function localTrailer(path: string, root: string): TrailerFor | null {
+  const rel = relative(root, path);
+  const parsed = parseName(rel);
+  if (parsed.kind !== "other" || parsed.reason !== "extra") return null;
+  const ext = extname(path);
+  const stem = basename(path, ext);
+  const dir = dirname(rel);
+  const inTrailerDir = TRAILER_DIR.test(basename(dir));
+  const m = TRAILER_STEM.exec(stem);
+  // The film's folder, named like the film ("Heat (1995)"), stands in for its name.
+  const folderGuess = () => {
+    const filmDir = inTrailerDir ? dirname(dir) : dir;
+    return filmDir && filmDir !== "." ? parseName(`${filmDir}${ext}`) : null;
+  };
+  const guess = m?.[1] && !inTrailerDir ? parseName(join(dir, `${m[1]}${ext}`)) : folderGuess();
+  if (guess?.kind !== "movie") return null;
+  return { title: guess.title, titleKey: guess.titleKey, ...(guess.year ? { year: guess.year } : {}) };
 }
 
 export function plainError(e: unknown): string {
@@ -921,7 +995,7 @@ function* walk(dir: string, depth: number): Generator<string> {
   for (const e of entries) {
     const p = join(dir, e.name);
     if (e.isDirectory()) yield* walk(p, depth - 1);
-    else if (e.isFile() && VIDEO_EXT.has(extname(e.name).toLowerCase())) yield p;
+    else if (e.isFile() && (VIDEO_EXT.has(extname(e.name).toLowerCase()) || AUDIO_EXT.has(extname(e.name).toLowerCase()))) yield p;
   }
 }
 

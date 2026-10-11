@@ -50,6 +50,8 @@ test("N-30: browse lists shows by name and films by title; refused, removed and 
   assert.equal(browse(d, "", "movie").shows.length, 0);
   assert.equal(browse(d, "", "show").movies.length, 0);
   assert.deepEqual(browse(d, "lighthouse").shows.map((s) => s.name), ["Alpha Show"], "episode subtitles match");
+  assert.deepEqual(browse(d, "lighthouse").episodes.map((e) => e.label), ["S2 · E1"], "and the episode itself");
+  assert.deepEqual(all.episodes, [], "no search, no episode list");
   assert.deepEqual(browse(d, "zed").movies.map((m) => m.title), ["Zed Movie"]);
 });
 

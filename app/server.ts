@@ -335,14 +335,16 @@ function airingView(a: Airing) {
     start: a.startMs,
     end: a.endMs,
     itemId: a.itemId,
-    title: p?.kind === "episode" ? p.show : p?.kind === "movie" ? p.title : (it?.name ?? "Unknown"),
+    title: p?.kind === "episode" ? p.show : p?.kind === "movie" ? p.title : it?.trailer ? it.trailer.title : it?.track?.title ?? (it?.name ?? "Unknown"),
     episode: p?.kind === "episode" ? (p.absolute ? `Ep. ${p.episode}` : `S${p.season} · E${p.episode}`) : undefined,
-    year: p?.kind === "movie" ? p.year : undefined,
+    year: p?.kind === "movie" ? p.year : it?.trailer?.year ?? it?.track?.year,
     subtitle: it?.subtitle ?? (p?.kind === "episode" ? it?.meta?.title : undefined),
-    genre: it?.genre ?? it?.meta?.genres?.[0],
+    genre: it?.genre ?? it?.meta?.genres?.[0] ?? it?.track?.genre,
     rating: it ? (effectiveRating(it, library.manualRatings())?.rating ?? null) : null,
     description: it?.meta?.plot,
-    kind: p?.kind,
+    kind: it?.trailer ? "trailer" : it?.track ? "track" : p?.kind,
+    ...(it?.trailer ? { trailerFor: trailerFor(it.trailer) } : {}),
+    ...(it?.track ? { artist: it.track.artist ?? null, album: it.track.album ?? null, trackNo: it.track.track ?? null } : {}),
     durationMs: it?.durationMs ?? null,
     ...availabilityView(it),
     provider: it?.provider,
@@ -351,6 +353,12 @@ function airingView(a: Airing) {
     art: artView(it),
     segments: a.segments.map((s) => (s.kind === "program" ? { kind: s.kind, start: s.startMs, end: s.endMs, fileFrom: s.fileFromMs } : { kind: s.kind, start: s.startMs, end: s.endMs, reason: s.reason })),
   };
+}
+
+/** The film a trailer advertises, and its library id when the film itself is here (N-23c). */
+function trailerFor(t: { title: string; titleKey: string; year?: number }) {
+  const film = allItems().find((i) => i.present && i.parsed.kind === "movie" && i.parsed.titleKey === t.titleKey && (!t.year || !i.parsed.year || i.parsed.year === t.year));
+  return { title: t.title, year: t.year ?? null, itemId: film?.id ?? null };
 }
 
 /**
@@ -445,7 +453,8 @@ function sourcesView() {
 
 // ---------------------------------------------------------------- media
 
-const MIME: Record<string, string> = { ".mp4": "video/mp4", ".m4v": "video/mp4", ".mkv": "video/x-matroska", ".webm": "video/webm", ".mov": "video/quicktime", ".ts": "video/mp2t" };
+const MIME: Record<string, string> = { ".mp4": "video/mp4", ".m4v": "video/mp4", ".mkv": "video/x-matroska", ".webm": "video/webm", ".mov": "video/quicktime", ".ts": "video/mp2t",
+  ".mp3": "audio/mpeg", ".flac": "audio/flac", ".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg", ".wav": "audio/wav", ".m4a": "audio/mp4" };
 
 async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, id: string, internal: boolean) {
   const it = itemById(id);
