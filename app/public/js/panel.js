@@ -475,7 +475,7 @@ function seasonalPresets(list) {
     const what = [p.shows && `${p.shows} show${p.shows === 1 ? "" : "s"}`, p.films && `${p.films} film${p.films === 1 ? "" : "s"}`].filter(Boolean).join(" and ") || "nothing yet";
     const when = `${monthDay(p.season.from)} to ${monthDay(p.season.to)}`;
     const state = p.channel ? `On channel ${p.channel.number}${p.season.inSeason ? ", on the air now" : ", waiting for its dates"}` : "";
-    return html`<div class="li x-preset">
+    return html`<div class="li x-preset" style="grid-template-columns:1fr auto">
       <div><div class="t">${p.name} <small class="muted">${when}</small></div>
         <div class="d">${p.description}</div>
         <div class="d">${what} from your library, ${p.hours} h${state ? html` · <b>${state}</b>` : ""}</div></div>
