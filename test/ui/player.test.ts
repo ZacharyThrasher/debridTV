@@ -396,6 +396,28 @@ describe("player", () => {
     await ctx.close();
   });
 
+  it("a device whose pairing was revoked mid-program goes to pairing, not an error card (home network)", async (t) => {
+    if (skip) return t.skip(skip);
+    for (const where of ["stranger", "pc"]) {
+      const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+      await ctx.addInitScript(`localStorage.setItem("debridtv.prefs", ${JSON.stringify(JSON.stringify({ welcomed: true, startup: `ch:${direct!.id}` }))})`);
+      const page = await ctx.newPage();
+      // The server answers a revoked device's media with 401, and hello says "stranger".
+      await page.route("**/media/**", (r: any) => r.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "Pair this device first.", pair: "/pair" }) }));
+      await page.route("**/api/lan/hello", (r: any) => r.fulfill({ contentType: "application/json", body: JSON.stringify({ where }) }));
+      await page.route("**/pair", (r: any) => r.fulfill({ contentType: "text/html", body: "<title>Pair</title>pairing" }));
+      await page.goto(BASE + "/");
+      if (where === "stranger") {
+        await page.waitForURL(/\/pair$/, { timeout: 15_000 });
+      } else {
+        // Still this PC: the usual card, and no trip to pairing.
+        await page.waitForSelector("#card:not([hidden])", { timeout: 15_000 });
+        assert.ok(!page.url().endsWith("/pair"));
+      }
+      await ctx.close();
+    }
+  });
+
   it("a locked channel asks for no link and opens no media until unlocked (N-06b)", async (t) => {
     if (skip) return t.skip(skip);
     // The real server's lock: set a PIN, lock the test channel.
