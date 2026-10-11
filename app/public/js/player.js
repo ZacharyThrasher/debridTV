@@ -224,6 +224,18 @@ async function playMedia(ch, info, my, forced = null, hold = 0) {
     staticOff();
     startWatch(a.itemId, ch.id);
   };
+  // A stall mid-program (Wi-Fi hiccup, slow provider). The browser re-requests on
+  // its own, and reopening ourselves made a hung provider worse in testing, so we
+  // only say what's happening after 7 s.
+  video.onwaiting = () => {
+    if (my !== token || !media || tv.paused || video.currentTime < 0.5) return;
+    const m = media;
+    clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      if (media !== m || my !== token || tv.paused || (!video.paused && video.readyState >= 3)) return;
+      toast("Your provider is slow right now. Still trying…");
+    }, 7000);
+  };
   const onError = async () => {
     if (my !== token) return;
     clearTimeout(stallTimer);
@@ -365,7 +377,7 @@ function stopMedia() {
   captions.stop();
   video.playbackRate = 1;
   media = null;
-  video.onplaying = video.onerror = video.onloadedmetadata = video.onseeked = null;
+  video.onplaying = video.onerror = video.onloadedmetadata = video.onseeked = video.onwaiting = null;
   if (video.getAttribute("src")) {
     video.pause();
     // Dropping the source closes the connection, which the server turns into an
