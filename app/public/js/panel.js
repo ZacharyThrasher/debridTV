@@ -42,6 +42,7 @@ let tabTimer = 0;
 
 /** `section` picks a part of a tab: openPanel("library", "ratings") opens the age ratings and focuses its search. */
 export function openPanel(which = tab, section) {
+  if (which === "sources" && document.documentElement.dataset.where === "device") which = "look"; // Sources is PC only
   if (which === "library" && (section === "ratings" || section === "files")) lib = { ...lib, view: section };
   panel.hidden = false;
   document.body.classList.add("panel-open");
