@@ -349,3 +349,47 @@ Result: `results/exp009.json`.
 than EXP-008's estimate. 15 MB of the run came from the cache instead of the provider;
 no extra API calls. First visits still pay three round trips; filling the head at
 library-probe time would extend the win to them (the probe already reads the head).
+
+### PARITY-001 — App audit against the NostalgiaTV register (2026-10-11)
+
+**Question.** Which NostalgiaTV parity rows does the app actually do, as opposed to
+having code or a guide for them?
+
+**Method.** New `docs/parity/audit/app-audit.mjs`: real app in a throwaway data dir,
+generated local media (VP9/Opus WebM episodes, one AC-3 MKV, one duplicate copy), Chromium
+via Playwright, 27 checks. No provider traffic. Run on the shared branch (`d68292c`) and on a
+local trial merge with the C (`project-thread-y7lgyq`) and B (`project-thread-uy3380`) branches.
+
+**Result.** Shared branch 26/27, trial merge 25/27 (merge clean, `npm test` 130/130).
+- Tuning in lands within **0.1-0.15 s** of station time (direct play); pausing 5 s inside a
+  program and resuming comes back at live, same program, 0.09 s off.
+- Guide browsing 12 h ahead across every row: **0** media and **0** link requests.
+- Watched flips between 85% and 92% seen file time, and the guide shows it.
+- An AC-3 file plays through compatibility mode with the banner saying so.
+- **Fails:** no channel ever has a mid-program break (A17: the clock supports them but no
+  rule turns them on and the probe reads no chapters); after the merge, the new Library
+  settings tab has no renderer (A27).
+
+**Register.** `docs/parity/nostalgiatv.md` v0.2: of 61 rows, 9 verified, 13 partly verified,
+8 partial (unit-tested core or branch only), 1 core-only, 1 gate, 27 not started, 2 N/A.
+Ranked gaps are in the register; top three are the broken Library tab after merge, auto
+sign-off (a sleeping viewer streams all night), and mid-program breaks.
+
+**Next.** Re-run the audit after each merge; add checks as B and C ship (Prevue breaks,
+exclusions, export). Fold the playback checks (A20/A21/A25) into `npm test`.
+
+### PARITY-002 — Audit round 2 (2026-10-11)
+
+**Change to the audit.** Episode 8 of the test show now runs 8 min with a chapter at 4:00.
+The first try put chapters into 90 s files, and A17 still failed. The cause was the
+audit, not the app: breaks are never placed in a program's first or last 3 min
+(`breakpoints()`), so a 90 s file can't hold one. Added A28 (Z cycles picture shape).
+
+**Result.** Shared `cffbc0d` + C `446sg8` `4a73787`: **28/28**, `npm test` 169/169. An earlier
+trial merge (C `6ed75dd` + B `f5aca03`) caught an integration crash: C's settings API
+returns `logo: null`, B's editor read `null.kind`, so the channel editor would not open
+for any channel without a logo. Reported, and B fixed it in `2b17a5c`.
+
+**Register v0.3.** 61 rows: V 14, P/V 18, P 2, C 1, G 1, not started 23, N/A 2 (round 1:
+V 9, P/V 13). Top remaining gaps: auto sign-off, audio/subtitle track choice, and playback
+checks in `npm test` (A); weights/premieres, random marathons, watched-only (C).

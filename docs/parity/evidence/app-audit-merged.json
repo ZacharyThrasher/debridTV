@@ -1,0 +1,376 @@
+{
+  "ranAt": "2026-10-11T08:16:28.431Z",
+  "commit": "68985ad",
+  "node": "v22.22.0",
+  "pass": 28,
+  "total": 28,
+  "results": [
+    {
+      "id": "A01",
+      "rows": [
+        "N-02a"
+      ],
+      "name": "demo lineup on air with no source",
+      "pass": true,
+      "detail": {
+        "demo": true,
+        "channels": [
+          "2 The Half Hour",
+          "3 Prime Hour",
+          "4 Marathon",
+          "5 Feature Presentation",
+          "6 Quarter Hour",
+          "7 Eighties Cinema",
+          "8 Nineties Cinema",
+          "10 Saturday Robots",
+          "11 Harbor Lights",
+          "12 The Night Desk",
+          "13 Mall Rats Anonymous",
+          "14 Kitchen Table",
+          "15 Star Courier",
+          "16 Weathervane Mysteries",
+          "17 Pocket Planet",
+          "20 Northstar",
+          "30 Comedy",
+          "31 Drama",
+          "32 Sci-Fi",
+          "33 Crime",
+          "34 Family"
+        ]
+      }
+    },
+    {
+      "id": "A02",
+      "rows": [
+        "N-13",
+        "N-03"
+      ],
+      "name": "number keys tune to that channel; bug shows number + name",
+      "pass": true,
+      "detail": "4 MARATHON"
+    },
+    {
+      "id": "A03",
+      "rows": [
+        "N-13"
+      ],
+      "name": "channel up then L returns to the previous channel",
+      "pass": true,
+      "detail": {
+        "afterUp": "5\nFEATURE PRESENTATION",
+        "afterLast": "4\nMARATHON"
+      }
+    },
+    {
+      "id": "A04",
+      "rows": [
+        "N-15",
+        "N-37"
+      ],
+      "name": "info banner shows title, times and what's next",
+      "pass": true,
+      "detail": " 4Marathon Harbor Lights S2 · E5“Late Visitor”SitcomPG23 minLIVEDemo picture 8:14 AM 8:00 – 8:30 AM Next at 8:30 AMHarbor Lights "
+    },
+    {
+      "id": "A05",
+      "rows": [
+        "N-15",
+        "N-27b"
+      ],
+      "name": "guide browsing (12 h ahead, all rows) makes no media or link requests",
+      "pass": true,
+      "detail": {
+        "requests": 1,
+        "costly": [],
+        "apiDelta": 0
+      }
+    },
+    {
+      "id": "A06",
+      "rows": [
+        "N-15"
+      ],
+      "name": "guide grid has a row per channel and a now line",
+      "pass": true,
+      "detail": {
+        "rowsShown": 21,
+        "nowLine": 21
+      }
+    },
+    {
+      "id": "A07",
+      "rows": [
+        "N-11a"
+      ],
+      "name": "three built-in themes apply",
+      "pass": true,
+      "detail": [
+        "midnight",
+        "cable92",
+        "daylight"
+      ]
+    },
+    {
+      "id": "A08",
+      "rows": [
+        "N-12",
+        "N-15"
+      ],
+      "name": "look tab offers CRT, static, tuner sounds, 24-hour clock",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "id": "A09",
+      "rows": [
+        "N-08",
+        "N-02b"
+      ],
+      "name": "custom channel builder offers all 8 ordering modes",
+      "pass": true,
+      "detail": {
+        "orders": 8
+      }
+    },
+    {
+      "id": "A10",
+      "rows": [
+        "N-14"
+      ],
+      "name": "reload starts on the last channel watched",
+      "pass": true,
+      "detail": {
+        "lastBefore": "4\nMARATHON",
+        "lastAfter": "4\nMARATHON"
+      }
+    },
+    {
+      "id": "A11",
+      "rows": [
+        "N-03"
+      ],
+      "name": "channel numbers survive a restart",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "id": "A12",
+      "rows": [
+        "N-27b",
+        "N-35"
+      ],
+      "name": "the airing 3 h from now is identical across a restart",
+      "pass": true,
+      "detail": {
+        "item": "Harbor Lights",
+        "offset": 893883
+      }
+    },
+    {
+      "id": "A13",
+      "rows": [
+        "N-01b"
+      ],
+      "name": "local folders become channels after a header scan",
+      "pass": true,
+      "detail": {
+        "files": 11,
+        "channels": [
+          "6 Quarter Hour",
+          "10 Audit Show"
+        ]
+      }
+    },
+    {
+      "id": "A14",
+      "rows": [
+        "N-03"
+      ],
+      "name": "show channel takes the #10+ block; Quarter Hour takes #6",
+      "pass": true,
+      "detail": [
+        "6 Quarter Hour",
+        "10 Audit Show"
+      ]
+    },
+    {
+      "id": "A15",
+      "rows": [
+        "N-01d",
+        "N-05"
+      ],
+      "name": "the same episode in two folders airs once (dedupe)",
+      "pass": true,
+      "detail": {
+        "showItems": 8,
+        "filesSeen": 11
+      }
+    },
+    {
+      "id": "A16",
+      "rows": [
+        "N-22a"
+      ],
+      "name": "slot padding: programs start on the quarter hour, the rest is a break",
+      "pass": true,
+      "detail": "program,break:padding"
+    },
+    {
+      "id": "A17",
+      "rows": [
+        "N-22b"
+      ],
+      "name": "files with chapters get mid-program breaks on a slotted channel",
+      "pass": true,
+      "detail": "Quarter Hour: S1 · E8 program,break:mid,program,break:padding"
+    },
+    {
+      "id": "A18",
+      "rows": [
+        "N-02b",
+        "N-03"
+      ],
+      "name": "custom channels go on air at #50+",
+      "pass": true,
+      "detail": {
+        "direct": 50,
+        "compat": 51
+      }
+    },
+    {
+      "id": "A19",
+      "rows": [
+        "N-03"
+      ],
+      "name": "hiding a channel removes it and keeps other numbers",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "id": "A20",
+      "rows": [
+        "N-35"
+      ],
+      "name": "tuning in joins the program at station time (direct play)",
+      "pass": true,
+      "detail": {
+        "videoMs": 135978,
+        "stationMs": 136079,
+        "item": "Audit Show S1 · E8",
+        "driftMs": -101
+      }
+    },
+    {
+      "id": "A21",
+      "rows": [
+        "N-35"
+      ],
+      "name": "pause for 5 s, resume returns to live (not where you paused)",
+      "pass": true,
+      "detail": {
+        "pausedShown": true,
+        "pausedAtMs": 136149,
+        "videoMs": 143681,
+        "stationMs": 143774,
+        "item": "Audit Show S1 · E8",
+        "driftMs": -93
+      }
+    },
+    {
+      "id": "A22",
+      "rows": [
+        "N-20"
+      ],
+      "name": "playback is reported as seen time in history",
+      "pass": true,
+      "detail": [
+        {
+          "title": "Audit Show · S01E08",
+          "seenMs": 8747,
+          "watched": false
+        },
+        {
+          "title": "Harbor Lights · S02E05",
+          "seenMs": 39972,
+          "watched": false
+        }
+      ]
+    },
+    {
+      "id": "A23",
+      "rows": [
+        "N-20"
+      ],
+      "name": "watched flag flips between 85% and 92% seen and shows in the guide",
+      "pass": true,
+      "detail": {
+        "seenAt85": 76507,
+        "watchedAt85": false,
+        "watchedAt92": true
+      }
+    },
+    {
+      "id": "A24",
+      "rows": [
+        "N-19",
+        "N-37"
+      ],
+      "name": "AC-3 file plays through compatibility mode and the banner says so",
+      "pass": true,
+      "detail": {
+        "liveRequest": true,
+        "playing": true,
+        "ffmpeg": true
+      }
+    },
+    {
+      "id": "A25",
+      "rows": [
+        "N-13"
+      ],
+      "name": "fast surfing (6 presses, 120 ms apart) requests media only for the channel it lands on",
+      "pass": true,
+      "detail": {
+        "mediaRequests": 3,
+        "distinctFiles": 1,
+        "landed": "10 AUDIT SHOW"
+      }
+    },
+    {
+      "id": "A26",
+      "rows": [
+        "N-34"
+      ],
+      "name": "phone-width guide opens without horizontal overflow",
+      "pass": true,
+      "detail": {
+        "overflow": 0
+      }
+    },
+    {
+      "id": "A28",
+      "rows": [
+        "N-17a"
+      ],
+      "name": "Z cycles the picture shape, including 4:3",
+      "pass": true,
+      "detail": {
+        "shapes": [
+          "fill",
+          "4:3",
+          "zoom",
+          "auto"
+        ]
+      }
+    },
+    {
+      "id": "A27",
+      "rows": [],
+      "name": "every settings tab renders",
+      "pass": true,
+      "detail": {
+        "broken": []
+      }
+    }
+  ]
+}
