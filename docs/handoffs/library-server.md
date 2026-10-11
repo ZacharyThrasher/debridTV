@@ -1,7 +1,7 @@
 # Handoff: workstream C, library, accounts and server (2026-10-11, second session)
 
 Branch: `claude/project-thread-446sg8` (contains y7lgyq and a merge of `claude/debridtv-rnd-9768mu` at 2110fe4, so shared fast-forwards onto it).
-Tests: `npm test` = 169 green (`test/server.test.ts` end-to-end vs the mock, `test/library.test.ts`, probe tests). `npm run typecheck` clean.
+Tests: `npm test` = 183 green (`test/server.test.ts` end-to-end vs the mock, `test/library.test.ts`, probe tests). `npm run typecheck` clean.
 Try it: `npm run dev:mock` → http://127.0.0.1:7338 with every file state (keys printed; type `expire`/`renew` to flip premium).
 
 ## What exists now
@@ -32,10 +32,19 @@ Try it: `npm run dev:mock` → http://127.0.0.1:7338 with every file state (keys
 - **Settings GET**: `enforced: true`, `timeZone`, `ratings {total, byRating, unrated, kidSafe}`.
 - `addStyles()` removed from panel.js (B's styles.css has the rules; the favorite star colour is inline).
 
+## Added later in the second session
+
+- **Track choice for compat** (`serveLive`): `a`, `s`, `burn=1`; text subs as a second ffmpeg output (WebVTT on fd 3, `-output_ts_offset start` so cue times are file times) → `/api/livesubs?tok&since` relative to the livestart zero (`src/library/vtt.ts`). Burn-in for pgs/vobsub is untested end to end (no bitmap fixture). `-map_chapters -1`.
+- **Badges** (N-37): probe reads height, HDR (PQ/HLG/DV) and channels; `mediaBadges()` adds `hdr/height/audioChannels/atmos` to airing.codecs with name-tag fallback.
+- **Weighted mixes** (`MixRules` on a revision; `pickMix` in WindowPlan): weights per show/"films", balance by turns or airtime, premieres (first seen < 14 days, `LibItem.addedAt`), marathons (3%/pick, 4 h, then another show). Settings: weights, balance, marathons, premieres, watched (all/unwatched/resume), exclude; `shapeRule`/`mixRules` in lineup.ts. Global exclusions `/api/exclusions` (with options); refresh `/api/channels/:id/refresh` (seed `key~n`).
+- **Backups** (`app/backups.ts`): daily settings export to `<data>/backups`, keep 14 (`backupKeep`), `/api/backups`, `/api/backups/restore`; Privacy tab UI.
+- **Edge cache** (`app/edgecache.ts`, ADR-0003 from A): head 1 MiB + tail 256 KiB of tuned files, LRU 256 MiB in `<data>/cache`; filled only from proxied bytes (not yet from probe reads); meters `bytes.cached` and `cache`.
+- **Panel**: Sign off after (signOffHours), bug corner/opacity, rating card, theme list from theme.js + Customize…, exclusions button, cache stat, backups.
+
 ## Open, in priority order
 
 1. **RD rerun + ETag answers**: waiting on Zachary's run. When the report arrives: record in LOG.md (D owns), and if ETags are stable across links and differ across versions, let a changed ETag reset the running time (today it only counts).
-2. **Ideas not started** (parity rows): weights per show (N-09a weights), premieres (N-09c), balance by duration (N-09d), marathons as random events (N-09e), PIN-locked channels (N-06b, needs B's scramble card), "watched-only" (N-05; would revise a channel every time something is watched, so think about churn first).
+2. **Not started**: PIN-locked channels (N-06b, needs B's scramble card); edge-cache fill from probe reads; a real PGS file check for burn-in.
 3. **Rating changes apply at once**, not at the end of the current program (the clock reads ratings directly). Rarely matters; if it does, bake ratings into the revision at sync.
 4. **Online metadata** (TMDB/OMDb) stays unbuilt until Zachary says yes (new outbound traffic).
 5. Library tests share one `library.json` per test file; filter by name in new tests.
