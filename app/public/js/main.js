@@ -37,6 +37,7 @@ async function bootstrap({ keepChannel = true } = {}) {
   tv.demo = boot.demo;
   document.body.classList.toggle("demo", boot.demo);
   if (wasDemo !== undefined && wasDemo !== boot.demo) toast(boot.demo ? "Showing the demo channels." : "Your library is on the air!");
+  else if (wasDemo === undefined && boot.waiting) toast(waitingText(boot.waiting));
   let target = keepChannel && before ? tv.channels.find((c) => c.id === before) : null;
   if (!target) {
     let saved = null;
@@ -50,6 +51,13 @@ async function bootstrap({ keepChannel = true } = {}) {
   }
   if (!tv.channels.length) return;
   if (!tv.current || tv.current.id !== target.id || wasDemo !== boot.demo) await tune(target);
+}
+
+/** Why the demo is still on although a source is connected. */
+function waitingText(w) {
+  if (w.scanning) return "Your library is connected and being scanned. These are demo channels; yours replace them as soon as the first one is ready.";
+  if (w.needed) return "Your library is connected, but its files need a scan before they can air. These are demo channels; start the scan in Settings.";
+  return "Your library is connected, but nothing in it can fill a channel yet. These are demo channels.";
 }
 
 /** Called after settings change the lineup (connect, scan, hide, new channel). */
@@ -245,7 +253,7 @@ function showWelcome() {
     <div class="brand" style="justify-content:center"><span class="brand-mark"></span>DebridTV</div>
     <h1>Your library,<br><span>always on the air.</span></h1>
     <p>Channels play around the clock, like cable. Flip around, check the guide, and drop into whatever's on.
-      ${demo ? "You're watching demo channels with made-up shows. Connect TorBox, Real-Debrid or a folder in Settings to put your own library on the air." : ""}</p>
+      ${demo ? (boot.waiting ? waitingText(boot.waiting) : "You're watching demo channels with made-up shows. Connect TorBox, Real-Debrid or a folder in Settings to put your own library on the air.") : ""}</p>
     <div class="keys tv-only">
       <div><span class="kk"><kbd>▲</kbd><kbd>▼</kbd></span><span>change channel</span></div>
       <div><span class="kk"><kbd>OK</kbd></span><span>program guide</span></div>
@@ -270,7 +278,7 @@ function showWelcome() {
       <div><span class="kk"><kbd>S</kbd></span><span>settings</span></div>
     </div>
     <button class="btn primary" data-start>Start watching</button>
-    ${demo ? html`<button class="btn" data-sources style="margin-left:.5em">Connect my library</button>` : ""}
+    ${demo ? html`<button class="btn" data-sources style="margin-left:.5em">${boot.waiting ? "See scan progress" : "Connect my library"}</button>` : ""}
   </div>`;
   el.hidden = false;
   el.querySelector("[data-start]").focus();

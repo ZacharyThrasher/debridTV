@@ -215,6 +215,29 @@ test("D1: a Real-Debrid pack opens up into its files during the scan; samples st
   }
 });
 
+test("a first scan times files that are already listed before it opens any pack", async () => {
+  const fx = new Uint8Array(readFileSync(new URL("./fixtures/fixture-h264-aac.mkv", import.meta.url)));
+  const single = (i: number) => ({ ref: `rd:s${i}`, name: `Solo.Show.S01E0${i}.mkv`, bytes: fx.byteLength, content: fx });
+  const packed = (i: number) => ({ ref: `rd:k${i}`, name: `Later.Show.S01E0${i}.mkv`, bytes: fx.byteLength, content: fx, pack: "Later.Show.S01.1080p" });
+  const mock = await startMockProviders({ files: [...[1, 2, 3, 4, 5, 6].map(single), ...[1, 2, 3, 4, 5, 6].map(packed)] });
+  try {
+    const meters = new Meters();
+    let timedWhenPackOpened = -1;
+    const timed = () => lib.items().filter((i) => /^(Solo|Later)./.test(i.name) && i.durationMs).length;
+    const lib: InstanceType<typeof Library> = new Library(() => ({ rdToken: "r".repeat(20), scanPerMinute: 120 }), meters, () => {
+      if (timedWhenPackOpened < 0 && meters.api.calls["rd.torrents.info"]) timedWhenPackOpened = timed();
+    }, { realdebrid: `${mock.baseUrl}/rd` });
+    await lib.refresh("realdebrid");
+    assert.equal(lib.pendingPacks(), 1);
+    await lib.runScan();
+    assert.equal(timedWhenPackOpened, 6, "the six listed files had running times before the pack was opened");
+    assert.equal(timed(), 12, "the pack's files are timed afterwards");
+    assert.equal(lib.scan.done, lib.scan.total);
+  } finally {
+    await mock.close();
+  }
+});
+
 test("N-22b: chapters become mid-program breaks only where they fit the slot", async () => {
   const { midBreakFor } = await import("../app/lineup.ts");
   const { breakpoints } = await import("../app/library.ts");

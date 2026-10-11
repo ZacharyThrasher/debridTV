@@ -133,6 +133,9 @@ export interface Config {
   backupKeep?: number;
 }
 
+/** Files timed before any pack is opened, so a first scan shows real channels early. */
+export const HEAD_START = 24;
+
 export interface ScanState {
   running: boolean;
   done: number;
@@ -434,39 +437,13 @@ export class Library {
     this.scan = { running: true, done: 0, total: this.needsScan() };
     this.changed();
     try {
+      // A head start: time a few files that are already listed before opening packs, so the
+      // first real channels are on the air within a minute instead of after every pack.
+      if (this.pendingPacks() && !(await this.probeQueue(this.scanQueue().slice(0, HEAD_START), gap))) return;
       await this.expandPacks(gap);
       const queue = this.scanQueue();
       this.scan.total = this.scan.done + queue.length;
-      let limitedInARow = 0;
-      for (let i = 0; i < queue.length; i++) {
-        const it = queue[i]!;
-        if (this.scanStop) break;
-        const t0 = Date.now();
-        this.scan.current = it.parsed.kind === "episode" ? it.parsed.show : it.parsed.kind === "movie" ? it.parsed.title : it.name;
-        const outcome = await this.probeOne(it);
-        if (outcome === "rate-limited") {
-          if (++limitedInARow >= 2) {
-            this.scan.stoppedReason = `${PROVIDER_NAMES[it.provider]} asked DebridTV to slow down twice. Try again later or pick a slower pace.`;
-            break;
-          }
-          this.scan.pausedUntil = Date.now() + this.rateLimitPauseMs;
-          this.meters.log("api", `${PROVIDER_NAMES[it.provider]} said slow down; pausing the scan for ${Math.round(this.rateLimitPauseMs / 1000)} s`);
-          this.changed();
-          await this.pause(this.rateLimitPauseMs);
-          this.scan.pausedUntil = undefined;
-          i--; // the same file, once more, after the pause
-          continue;
-        }
-        limitedInARow = 0;
-        if (outcome === "auth") {
-          this.scan.stoppedReason = `${PROVIDER_NAMES[it.provider]} rejected the key`;
-          break;
-        }
-        this.scan.done++;
-        this.changed();
-        if (this.scanStop) break;
-        if (it.provider !== "local") await this.pause(Math.max(0, gap - (Date.now() - t0)));
-      }
+      await this.probeQueue(queue, gap);
     } catch (e) {
       this.scan.lastError = plainError(e);
       if (e instanceof ProviderError && e.kind === "auth") this.scan.stoppedReason = "The provider rejected the key";
@@ -476,6 +453,41 @@ export class Library {
       this.scan.pausedUntil = undefined;
       this.changed();
     }
+  }
+
+  /** Probe these files at the scan's pace. False when the scan must end (stopped, key rejected, told to slow down twice). */
+  private async probeQueue(queue: LibItem[], gap: number): Promise<boolean> {
+    let limitedInARow = 0;
+    for (let i = 0; i < queue.length; i++) {
+      const it = queue[i]!;
+      if (this.scanStop) return false;
+      const t0 = Date.now();
+      this.scan.current = it.parsed.kind === "episode" ? it.parsed.show : it.parsed.kind === "movie" ? it.parsed.title : it.name;
+      const outcome = await this.probeOne(it);
+      if (outcome === "rate-limited") {
+        if (++limitedInARow >= 2) {
+          this.scan.stoppedReason = `${PROVIDER_NAMES[it.provider]} asked DebridTV to slow down twice. Try again later or pick a slower pace.`;
+          return false;
+        }
+        this.scan.pausedUntil = Date.now() + this.rateLimitPauseMs;
+        this.meters.log("api", `${PROVIDER_NAMES[it.provider]} said slow down; pausing the scan for ${Math.round(this.rateLimitPauseMs / 1000)} s`);
+        this.changed();
+        await this.pause(this.rateLimitPauseMs);
+        this.scan.pausedUntil = undefined;
+        i--; // the same file, once more, after the pause
+        continue;
+      }
+      limitedInARow = 0;
+      if (outcome === "auth") {
+        this.scan.stoppedReason = `${PROVIDER_NAMES[it.provider]} rejected the key`;
+        return false;
+      }
+      this.scan.done++;
+      this.changed();
+      if (this.scanStop) return false;
+      if (it.provider !== "local") await this.pause(Math.max(0, gap - (Date.now() - t0)));
+    }
+    return true;
   }
 
   /** A sleep that Stop can cut short. */

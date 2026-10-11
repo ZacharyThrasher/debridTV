@@ -803,6 +803,8 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return json(res, 200, {
       now: Date.now(),
       demo: isDemo(),
+      // Sources are connected but no channel exists yet: the demo is a stand-in while running times are learned.
+      waiting: isDemo() && Object.values(connected()).some(Boolean) ? { scanning: library.scan.running, needed: library.needsScan() } : null,
       channels: lineup().channels().map(channelView),
       ffmpeg: !!ffmpeg,
       connected: connected(),
