@@ -32,6 +32,7 @@ import { demoItems } from "./demo.ts";
 import { backupIfDue, listBackups, readBackup } from "./backups.ts";
 import { EdgeCache } from "./edgecache.ts";
 import { PinLock } from "./pinlock.ts";
+import { OnlineMetadata } from "./metadata/tmdb.ts";
 import { allowedUnder } from "../src/clock/ratings.ts";
 import { browse as onDemandBrowse, continueWatching, show as onDemandShow, type OnDemandDeps } from "./ondemand.ts";
 
@@ -50,6 +51,8 @@ export interface AppOptions {
   ffmpeg?: boolean;
   /** Background timers (periodic lineup refresh). */
   timers?: boolean;
+  /** TMDB API and image bases; tests point these at a recorded mock. */
+  tmdb?: { apiBase?: string; imageBase?: string; spacingMs?: number };
 }
 
 interface HistoryState {
@@ -73,6 +76,8 @@ const liveLineup = new Lineup("lineup.json");
 const demoLineup = new Lineup("lineup-demo.json");
 const demo = demoItems();
 const pin = new PinLock();
+// Online posters and descriptions (off until the viewer enters a TMDB key). Reads its disk cache only, never waits on TMDB.
+const online = new OnlineMetadata({ ...opts.tmdb, log: (d) => meters.log("api", d) });
 /** Which items only locked channels carry; recomputed after every rebuild or lock change. */
 let lockSets: { gen: number; locked: Set<string>; open: Set<string> } | null = null;
 let lockGen = 0;
@@ -145,6 +150,8 @@ function rebuild() {
   const demoClock = new StationClock(demoMedia());
   demoLineup.sync(demoClock, autoRules(demo, demoLineup.custom(), demoLineup.groups()), now, { timeZone, info: itemInfo(demo, now) });
   clock = isDemo() ? demoClock : liveClock;
+  // Fill in posters and descriptions the files lack; skips PIN-locked items. No-op without a TMDB key.
+  if (!isDemo()) void online.sync(liveItems, lockedItem);
 }
 const PREMIERE_DAYS = 14;
 /** Show, genres, watched and "new" per item, for exclusions, watched rules and premieres. */
@@ -289,11 +296,13 @@ function refuseLocked(res: http.ServerResponse, id: string): boolean {
   return true;
 }
 
-/** URLs for a local file's own artwork (N-01c); paths stay on the server. */
+/** URLs for a local file's own artwork (N-01c), then TMDB's for what it lacks (N-01c online); paths stay on the server. */
 function artView(it: LibItem | undefined): Partial<Record<ArtKind, string>> | undefined {
-  if (!it?.art || it.provider !== "local") return undefined;
+  if (!it) return undefined;
+  const kinds = new Set<ArtKind>([...(it.provider === "local" && it.art ? (Object.keys(it.art) as ArtKind[]) : []), ...online.kinds(it)]);
+  if (!kinds.size) return undefined;
   const out: Partial<Record<ArtKind, string>> = {};
-  for (const k of Object.keys(it.art) as ArtKind[]) out[k] = `/api/art/${it.id}/${k}`;
+  for (const k of kinds) out[k] = `/api/art/${it.id}/${k}`;
   return out;
 }
 /** A show channel's clear logo, if its folder has one; the editor can offer it as the channel's logo. */
@@ -301,8 +310,8 @@ function channelArt(c: StationChannel) {
   if (c.meta.kind !== "show") return undefined;
   const ids = c.revisions[c.revisions.length - 1]!.itemIds;
   for (const id of ids.slice(0, 50)) {
-    const it = itemById(id);
-    if (it?.art?.logo || it?.art?.poster) return artView({ ...it, art: { ...(it.art.logo ? { logo: it.art.logo } : {}), ...(it.art.poster ? { poster: it.art.poster } : {}) } });
+    const a = artView(itemById(id));
+    if (a?.logo || a?.poster) return { ...(a.logo ? { logo: a.logo } : {}), ...(a.poster ? { poster: a.poster } : {}) };
   }
   return undefined;
 }
@@ -338,10 +347,10 @@ function airingView(a: Airing) {
     title: p?.kind === "episode" ? p.show : p?.kind === "movie" ? p.title : it?.trailer ? it.trailer.title : it?.track?.title ?? (it?.name ?? "Unknown"),
     episode: p?.kind === "episode" ? (p.absolute ? `Ep. ${p.episode}` : `S${p.season} · E${p.episode}`) : undefined,
     year: p?.kind === "movie" ? p.year : it?.trailer?.year ?? it?.track?.year,
-    subtitle: it?.subtitle ?? (p?.kind === "episode" ? it?.meta?.title : undefined),
+    subtitle: it?.subtitle ?? (p?.kind === "episode" ? (it?.meta?.title ?? online.text(it)?.name) : undefined),
     genre: it?.genre ?? it?.meta?.genres?.[0] ?? it?.track?.genre,
     rating: it ? (effectiveRating(it, library.manualRatings())?.rating ?? null) : null,
-    description: it?.meta?.plot,
+    description: it?.meta?.plot ?? online.text(it)?.overview,
     kind: it?.trailer ? "trailer" : it?.track ? "track" : p?.kind,
     ...(it?.trailer ? { trailerFor: trailerFor(it.trailer) } : {}),
     ...(it?.track ? { artist: it.track.artist ?? null, album: it.track.album ?? null, trackNo: it.track.track ?? null } : {}),
@@ -808,7 +817,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   const art = /^\/api\/art\/([\w-]+)\/(poster|fanart|thumb|logo)$/.exec(p);
   if (art && m === "GET") {
     const it = itemById(art[1]!);
-    const file = it?.provider === "local" ? it.art?.[art[2] as ArtKind] : undefined;
+    const file = (it?.provider === "local" ? it.art?.[art[2] as ArtKind] : undefined) ?? online.imageFile(it, art[2] as ArtKind);
     if (!it || !file) return json(res, 404, { error: "no picture" });
     if (refuseLocked(res, it.id)) return;
     let size = 0;
@@ -909,6 +918,16 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return v == null ? json(res, 404, { pending: true }) : json(res, 200, { startMs: v });
   }
   if (p === "/api/meters") return json(res, 200, meters.snapshot());
+  if (p === "/api/metadata" && m === "GET") return json(res, 200, online.status());
+  if (p === "/api/metadata" && m === "POST") {
+    // { key } checks a TMDB key with TMDB (one request) and keeps it on this PC; { key: null } turns online metadata off.
+    if (!("key" in body)) return json(res, 400, { error: "key missing" });
+    const r = await online.setKey(typeof body.key === "string" ? body.key : null);
+    if (!r.ok) return json(res, 400, { error: r.error });
+    meters.log("api", online.enabled() ? "TMDB key saved; online posters and descriptions are on" : "Online posters and descriptions turned off");
+    if (online.enabled()) rebuild();
+    return json(res, 200, online.status());
+  }
   if (p === "/api/sources" && m === "GET") return json(res, 200, sourcesView());
   if (p === "/api/sources" && m === "POST") {
     const { provider, key, dirs } = body as { provider: string; key?: string; dirs?: string[] };
@@ -1123,6 +1142,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     liveLineup.reset();
     demoLineup.reset();
     rmSync(backupDir(), { recursive: true, force: true });
+    online.forget();
     edge.clear();
     pin.clear();
     meters.cache = { bytes: 0, files: 0 };
@@ -1425,6 +1445,7 @@ function onDemandDeps(): OnDemandDeps {
     locked: (id) => lockedItem(id),
     extra: (it) => ({
       rating: effectiveRating(it, manual)?.rating ?? null,
+      description: it.meta?.plot ?? online.text(it)?.overview,
       ...availabilityView(it),
       art: artView(it),
       codecs: { container: it.container, video: it.video, audio: it.audio, ...mediaBadges(it) },
@@ -1463,6 +1484,7 @@ return {
     if (tick) clearInterval(tick);
     if (rebuildTimer) clearTimeout(rebuildTimer);
     library.stopScan("Shutting down");
+    online.stop();
     return new Promise((r) => {
       server.closeAllConnections();
       server.close(() => r());
