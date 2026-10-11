@@ -297,12 +297,18 @@ function overlay(W, H, fileMs) {
   ctx.textBaseline = "alphabetic";
   const tw = ctx.measureText(tc).width;
   ctx.fillStyle = "rgba(0,0,0,.55)";
-  ctx.fillRect(pad - u * 0.6, pad - u * 2.1, tw + u * 1.2, u * 2.7);
+  // Bottom left, like a VHS counter, so the top-left rating card never sits on it.
+  // The info banner covers that corner, so the counter steps aside while it's up.
+  const bannerUp = document.body.classList.contains("banner-open");
+  const base = H - pad;
+  if (bannerUp) ctx.globalAlpha = 0;
+  ctx.fillRect(pad - u * 0.6, base - u * 2.1, tw + u * 1.2, u * 2.7);
   ctx.fillStyle = "#e8ffe8";
-  ctx.fillText(tc, pad, pad);
+  ctx.fillText(tc, pad, base);
   ctx.font = `600 ${u * 1.05}px Inter, sans-serif`;
   ctx.fillStyle = "rgba(255,255,255,.55)";
-  ctx.fillText("DEMO PROGRAM · NO MEDIA IS STREAMED", pad, pad + u * 1.9);
+  ctx.fillText("DEMO PROGRAM · NO MEDIA IS STREAMED", pad, base - u * 2.7);
+  ctx.globalAlpha = 1;
 
   // Lower third: shown at the top of the program and for a few seconds after tuning in.
   // Lower third: only at the top of a program, like a real broadcast. On tune-in the

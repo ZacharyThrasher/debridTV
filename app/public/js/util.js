@@ -18,10 +18,16 @@ export function setPref(k, v) {
   } catch {}
   applyPrefs();
 }
+const applied = [];
+/** Run fn after every applyPrefs() (custom themes re-apply their colours this way). */
+export function onPrefsApplied(fn) {
+  applied.push(fn);
+}
 export function applyPrefs() {
   document.documentElement.dataset.theme = prefs.theme;
   document.body.classList.toggle("crt", !!prefs.crt);
   document.body.classList.toggle("calm", !!prefs.calm);
+  for (const fn of applied) fn(prefs);
 }
 
 /** Server clock offset so the picture matches the station even if the PC clock drifts. */

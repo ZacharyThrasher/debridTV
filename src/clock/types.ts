@@ -2,6 +2,9 @@
 // separate facts on purpose (handoff §5.4): an item can be on the schedule while
 // its file is currently unavailable, and the timeline must not move because of it.
 
+import type { Dayparts } from "./dayparts.ts";
+import type { Rating } from "./ratings.ts";
+
 export type ProviderId = "realdebrid" | "torbox" | "local" | "demo";
 
 /** What the provider last told us about the file. Never feeds the schedule. */
@@ -48,6 +51,28 @@ export interface ChannelRevision {
   slotMs?: number;
   /** Length of each mid-program break inserted at a trusted breakpoint. */
   midBreakMs?: number;
+  /** Nothing rated above this airs on the channel at all (kid channels). Unrated items never pass. */
+  maxRating?: Rating;
+  /** Wall-clock rules: restricted hours and weekday time slots (see dayparts.ts). */
+  dayparts?: Dayparts;
+  /** Show weights, airtime balance, premieres and marathons (see WindowPlan in schedule.ts). */
+  mix?: MixRules;
+}
+
+/**
+ * Instead of a fixed cycle, each next program comes from the show that is most
+ * behind its share: share = weight, "behind" = turns (or airtime) so far ÷ weight.
+ * Programs without a show count as one group, "films".
+ */
+export interface MixRules {
+  /** Group (show id, or "films") → weight 0–100; missing = 50; 0 = never. */
+  weights?: Record<string, number>;
+  /** Balance by turns taken (default) or by airtime. */
+  balance?: "count" | "duration";
+  /** Chance per pick (0–1) of staying on the picked show for up to maxMs. */
+  marathon?: { chance: number; maxMs: number };
+  /** Items to air first, once, with their show's weight tripled until they have. */
+  premieres?: string[];
 }
 
 export interface Channel {

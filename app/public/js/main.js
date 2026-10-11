@@ -1,6 +1,7 @@
 // DebridTV front end: wires the remote (keyboard, mouse, touch) to the tuner,
 // guide and settings, and keeps the clock ticking.
 
+import "./spatial.js"; // first, so the remote's keys reach it before any other handler
 import { api } from "./api.js";
 import { html, raw, pref, setPref, applyPrefs, syncClock, toast } from "./util.js";
 import { tv, tune, channelStep, lastChannel, byNumber, togglePause, applyVolume } from "./player.js";
@@ -8,9 +9,11 @@ import * as player from "./player.js"; // applyAspect comes from workstream A
 import { openGuide, closeGuide, guideOpen, guideKey } from "./guide.js";
 import { initPanel, openPanel, closePanel, panelOpen } from "./panel.js";
 import { toggleBanner, tickBanner, osd } from "./ui.js";
-import { tickCard } from "./cards.js";
+import { tickCard, pinPromptOpen, pinKey } from "./cards.js";
 import { unlockAudio } from "./static.js";
-import { editorOpen } from "./channel-editor.js";
+import { editorOpen, exclusionsOpen } from "./channel-editor.js";
+import { themeEditorOpen } from "./theme.js";
+import "./bezel.js";
 
 applyPrefs();
 applyVolume();
@@ -82,7 +85,7 @@ addEventListener("keydown", (e) => {
     if (e.key === "Escape") e.target.blur();
     return;
   }
-  if (e.ctrlKey || e.metaKey || e.altKey || editorOpen()) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || editorOpen() || exclusionsOpen() || themeEditorOpen()) return;
   const k = e.key;
   if (!document.getElementById("welcome").hidden) {
     if (k === "Enter" || k === "Escape" || k === " ") closeWelcome();
@@ -102,14 +105,19 @@ addEventListener("keydown", (e) => {
     e.preventDefault();
     return;
   }
+  // A locked channel's PIN pad takes digits, Backspace and Enter; channel keys still work.
+  if (pinPromptOpen() && pinKey(k)) return void e.preventDefault();
+  // A meanwhile chip on an off-air card has focus: Left/Right move between chips, OK tunes.
+  if (chipKey(e)) return void e.preventDefault();
   switch (k) {
-    case "ArrowUp": case "PageUp": case "+": case "=": channelStep(1); break;
-    case "ArrowDown": case "PageDown": case "-": case "_": channelStep(-1); break;
-    case "g": case "G": case "Enter": openGuide(); break;
-    case "s": case "S": openPanel(); break;
-    case "i": case "I": case "ArrowRight": case "ArrowLeft": toggleBanner(); break;
-    case "Backspace": case "l": case "L": lastChannel(); break;
-    case " ": case "k": case "K": togglePause(); break;
+    case "ArrowUp": case "PageUp": case "+": case "=": case "ChannelUp": channelStep(1); break;
+    case "ArrowDown": case "PageDown": case "-": case "_": case "ChannelDown": channelStep(-1); break;
+    case "g": case "G": case "Enter": case "Guide": openGuide(); break;
+    case "s": case "S": case "ContextMenu": case "Settings": openPanel(); break;
+    case "i": case "I": case "Info": toggleBanner(); break;
+    case "ArrowRight": case "ArrowLeft": if (!focusChips(k)) toggleBanner(); break;
+    case "Backspace": case "l": case "L": case "LastChannel": lastChannel(); break;
+    case " ": case "k": case "K": case "MediaPlayPause": case "MediaPlay": case "MediaPause": case "Pause": case "Play": togglePause(); break;
     case "m": case "M": toggleMute(); break;
     case "f": case "F": toggleFull(); break;
     case "z": case "Z": cycleAspect(); break;
@@ -122,6 +130,36 @@ addEventListener("keydown", (e) => {
   }
   e.preventDefault();
 });
+
+// The "Meanwhile, on now" chips on an unavailable or off-air card are buttons; a remote
+// reaches them with Left/Right (which otherwise show the banner) and presses OK to tune.
+const chips = () => [...document.querySelectorAll("#card:not([hidden]) .chip[data-ch]")];
+function focusChips(k) {
+  const list = chips();
+  if (!list.length) return false;
+  (k === "ArrowLeft" ? list.at(-1) : list[0]).focus({ focusVisible: true });
+  return true;
+}
+function chipKey(e) {
+  const list = chips();
+  const i = list.indexOf(document.activeElement);
+  if (i < 0) return false;
+  if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+    const j = i + (e.key === "ArrowRight" ? 1 : -1);
+    if (j < 0 || j >= list.length) document.activeElement.blur();
+    else list[j].focus({ focusVisible: true });
+    return true;
+  }
+  if (e.key === "Enter") {
+    document.activeElement.click();
+    return true;
+  }
+  if (e.key === "Escape" || e.key === "Backspace") {
+    document.activeElement.blur();
+    return true;
+  }
+  return false;
+}
 
 function toggleMute() {
   setPref("muted", !pref("muted"));
@@ -182,7 +220,15 @@ function showWelcome() {
     <h1>Your library,<br><span>always on the air.</span></h1>
     <p>Channels play around the clock, like cable. Flip around, check the guide, and drop into whatever's on.
       ${demo ? "You're watching demo channels with made-up shows. Connect TorBox, Real-Debrid or a folder in Settings to put your own library on the air." : ""}</p>
-    <div class="keys">
+    <div class="keys tv-only">
+      <div><span class="kk"><kbd>▲</kbd><kbd>▼</kbd></span><span>change channel</span></div>
+      <div><span class="kk"><kbd>OK</kbd></span><span>program guide</span></div>
+      <div><span class="kk"><kbd>0-9</kbd></span><span>go to a number</span></div>
+      <div><span class="kk"><kbd>◀</kbd><kbd>▶</kbd></span><span>what's on</span></div>
+      <div><span class="kk"><kbd>Back</kbd></span><span>last channel</span></div>
+      <div><span class="kk"><kbd>▲</kbd></span><span>in the guide: settings</span></div>
+    </div>
+    <div class="keys kb-only">
       <div><span class="kk"><kbd>↑</kbd><kbd>↓</kbd></span><span>change channel</span></div>
       <div><span class="kk"><kbd>G</kbd></span><span>program guide</span></div>
       <div><span class="kk"><kbd>0-9</kbd></span><span>go to a number</span></div>

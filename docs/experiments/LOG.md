@@ -277,3 +277,119 @@ SDK's "1 hour" wording; the 3 h claim is still unconfirmed past 120 min.
 was observed). Expiry is still handled by invalidate-and-re-resolve-once, so a wrong
 guess costs one API call, not a failure. For a 1-hour program that's 1 link request
 instead of 6.
+
+### EXP-008 — The slow-surfer gap, measured in a real browser (2026-10-11)
+
+**Question.** EXP-007 left slow surfers (≈1 press/s) waiting ~0.8 s longer than
+cancel-only tuning. Where does a tune's time actually go in a browser, and can a
+"peek" (open paused, show the live frame, start motion after the dwell) close it?
+
+**Setup.** `experiments/exp008-browser-peek.ts`: Chromium (Playwright) plays VP9/Opus
+WebM (8 Mb/s, 2 s GOP) from a local server shaped like LIVE-001's TorBox: link
+request 370 ms (once per file), media TTFB 200 ms on every range request, 100 Mb/s
+shared link, every byte counted. 6 bursts of 6 presses, ±25 % press jitter
+(seeded), each burst ends on a never-visited channel (cold link). Median / p90 time
+to a picture of the live point on the final channel. Single runs; ±150 ms noise.
+Results: `results/exp008-press*-jitter25*.json`.
+
+**Finding 1 — three round trips per tune.** Chrome opens a Matroska file mid-program
+with three *sequential* range requests: the head (reads 0.7–1.2 MB before hanging
+up), the Cues at the end, then the seek point. Each pays the provider's TTFB, so
+~450 ms of every tune is round trips, whatever the tuning strategy.
+
+**Finding 2 — a head+tail cache removes two of them.** Serving the first 1 MB and
+last 256 KB of each file from memory (`INDEX_CACHE=1`) starts the seek request
+~40 ms after the first instead of ~460 ms:
+
+| Press interval | strategy | MB per surfed press | picture median / p90 (no cache) | with head+tail cache |
+|---|---|---|---|---|
+| 300 ms | adaptive (current) | 0 | 1,463 / 1,527 | **995** / 1,305 |
+| 300 ms | open at once | 0 | 1,333 / 1,680 | 947 / 1,234 |
+| 1000 ms | adaptive (current) | 0.27 (0.74 cached) | 2,058 / 2,261 | 1,571 / 1,795 |
+| 1000 ms | adaptive ×1.0 | 0.42 (1.11) | 1,872 / 2,372 | 1,445 / 1,916 |
+| 1000 ms | **peek at 400 ms** | 1.18 (3.52) | **1,472** / 1,940 | **1,028** / 1,519 |
+| 1000 ms | open at once | 2.26 (4.34) | 1,603 / 1,772 | 1,205 / 1,223 |
+
+(At 300 ms nobody stops long enough to open anything, so every strategy costs ~0 MB
+while surfing. "Open at once" motion timing was unreliable in this harness, so the
+table uses time to picture for all rows.)
+
+**Verdict.** The slow-surfer wait is structural: an adaptive dwell can't know the
+viewer stopped until a press interval has passed. Peeking hides it: at 1 press/s
+the picture arrives **~0.55–0.6 s sooner**, at about the speed of opening at once,
+for ~1 MB per surfed channel (≈1 s of video), half of what opening at once costs.
+Fast surfers are unaffected (their wait is under 700 ms, so no peek happens). The
+head+tail cache is a ~0.45 s win on **every** tune, and saves the repeated head
+reads on revisits.
+
+**Changes.** Player: peek 400 ms after a press when the adaptive wait is ≥ 700 ms
+(`PEEK_AT`, `PEEK_MIN_WAIT` in `player.js`); compat mode still waits the full dwell
+(it starts ffmpeg). Head+tail cache handed to workstream C as a proposal (server).
+ADR-0003 records the decision.
+
+### EXP-009 — The edge cache in the real app (2026-10-11)
+
+**Question.** Does workstream C's head+tail edge cache (ADR-0003, `app/edgecache.ts`)
+give the ~0.45 s per tune that EXP-008 predicted, in the real app rather than a bench?
+
+**Setup.** `experiments/exp009-app-surf.ts` runs the app server (C's branch merged with
+the player) against the mock TorBox shaped like LIVE-001 (link 370 ms, media TTFB
+200 ms, 100 Mb/s) serving real 8 Mb/s VP9/Opus WebM. Eight one-movie channels. Links
+are fetched first, so every tune pays the same for the link. Chromium tunes to each
+channel by number, rests 3.5 s, and does three passes: pass 1 meets a cold cache,
+passes 2–3 a warm one. Time = key press to a decoded frame of the live point.
+Result: `results/exp009.json`.
+
+| | median | range |
+|---|---|---|
+| Cold cache (first visit to a file) | **1,069 ms** | 951–1,142 |
+| Warm cache (revisit) | **556 ms** | 474–917 |
+
+**Verdict.** The cache cuts a revisit's tune time by **~0.5 s (−48 %)**, slightly more
+than EXP-008's estimate. 15 MB of the run came from the cache instead of the provider;
+no extra API calls. First visits still pay three round trips; filling the head at
+library-probe time would extend the win to them (the probe already reads the head).
+
+### PARITY-001 — App audit against the NostalgiaTV register (2026-10-11)
+
+**Question.** Which NostalgiaTV parity rows does the app actually do, as opposed to
+having code or a guide for them?
+
+**Method.** New `docs/parity/audit/app-audit.mjs`: real app in a throwaway data dir,
+generated local media (VP9/Opus WebM episodes, one AC-3 MKV, one duplicate copy), Chromium
+via Playwright, 27 checks. No provider traffic. Run on the shared branch (`d68292c`) and on a
+local trial merge with the C (`project-thread-y7lgyq`) and B (`project-thread-uy3380`) branches.
+
+**Result.** Shared branch 26/27, trial merge 25/27 (merge clean, `npm test` 130/130).
+- Tuning in lands within **0.1-0.15 s** of station time (direct play); pausing 5 s inside a
+  program and resuming comes back at live, same program, 0.09 s off.
+- Guide browsing 12 h ahead across every row: **0** media and **0** link requests.
+- Watched flips between 85% and 92% seen file time, and the guide shows it.
+- An AC-3 file plays through compatibility mode with the banner saying so.
+- **Fails:** no channel ever has a mid-program break (A17: the clock supports them but no
+  rule turns them on and the probe reads no chapters); after the merge, the new Library
+  settings tab has no renderer (A27).
+
+**Register.** `docs/parity/nostalgiatv.md` v0.2: of 61 rows, 9 verified, 13 partly verified,
+8 partial (unit-tested core or branch only), 1 core-only, 1 gate, 27 not started, 2 N/A.
+Ranked gaps are in the register; top three are the broken Library tab after merge, auto
+sign-off (a sleeping viewer streams all night), and mid-program breaks.
+
+**Next.** Re-run the audit after each merge; add checks as B and C ship (Prevue breaks,
+exclusions, export). Fold the playback checks (A20/A21/A25) into `npm test`.
+
+### PARITY-002 — Audit round 2 (2026-10-11)
+
+**Change to the audit.** Episode 8 of the test show now runs 8 min with a chapter at 4:00.
+The first try put chapters into 90 s files, and A17 still failed. The cause was the
+audit, not the app: breaks are never placed in a program's first or last 3 min
+(`breakpoints()`), so a 90 s file can't hold one. Added A28 (Z cycles picture shape).
+
+**Result.** Shared `cffbc0d` + C `446sg8` `4a73787`: **28/28**, `npm test` 169/169. An earlier
+trial merge (C `6ed75dd` + B `f5aca03`) caught an integration crash: C's settings API
+returns `logo: null`, B's editor read `null.kind`, so the channel editor would not open
+for any channel without a logo. Reported, and B fixed it in `2b17a5c`.
+
+**Register v0.3.** 61 rows: V 14, P/V 18, P 2, C 1, G 1, not started 23, N/A 2 (round 1:
+V 9, P/V 13). Top remaining gaps: auto sign-off, audio/subtitle track choice, and playback
+checks in `npm test` (A); weights/premieres, random marathons, watched-only (C).

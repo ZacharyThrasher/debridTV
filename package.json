@@ -13,7 +13,8 @@
     "exp:001": "node experiments/exp001-clock.ts",
     "exp:002": "node experiments/exp002-surf.ts",
     "exp:003": "node experiments/exp003-chunk-amplification.ts",
-    "start": "node app/server.ts"
+    "start": "node app/server.ts",
+    "dev:mock": "node app/dev-mock.ts"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

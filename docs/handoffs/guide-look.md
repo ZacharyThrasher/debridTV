@@ -1,7 +1,7 @@
 # Handoff: workstream B (guide, station breaks, look), 2026-10-11
 
-Branch: push straight to `claude/debridtv-rnd-9768mu` (Zachary said yes on 2026-10-11). Run `git pull --rebase` first and edit only B's files.
-B owns: `app/public/js/{guide,cards,ui,synth,main,channel-editor}.js`, `app/public/styles.css`, `app/public/index.html`, `test/ui/`.
+Branch: B's second session pushed to `claude/project-thread-k2fnes` (it is kept fast-forwardable from the shared branch `claude/debridtv-rnd-9768mu` and merges A and C3). Ask the coordinator which branch to push to. Edit only B's files.
+B owns: `app/public/js/{guide,cards,ui,synth,main,channel-editor,theme,bezel,lock,spatial}.js`, `app/public/styles.css`, `app/public/index.html`, `test/ui/`.
 Others: A = `player.js`/`static.js`, C = server, library and `panel.js`, D = parity docs. Requests to them go through the coordinator.
 
 ## What's done (all on the shared branch)
@@ -10,21 +10,37 @@ Others: A = `player.js`/`static.js`, C = server, library and `panel.js`, D = par
 - **Banner** (`ui.js`): a hatched break at the end of the progress bar and a rating badge. A rating card shows top-left for 6 s at program start (pref `ratingCard`). Prefs `bugPos` (br/bl/tr/tl) and `bugOpacity` control the bug.
 - **Channel editor** (`channel-editor.js`): Identity (name, number with a swap warning, favorite, logo as a badge, a wordmark of 6 letters or fewer in block/outline/pill style, or an image data URL of 200 KB or less, plus a hue), Schedule (weekday slots with a week strip, where overnight slots run into the next day, and a specials toggle when `specialsAvailable > 0`), and Audience (kid flag, daytime rating limit, rating coverage bar, and a link to `openPanel("library","ratings")`). It runs on C's `GET`/`POST /api/channels/:id/settings`, normalises nulls, and keeps `enforced`/`timeZone`/`ratings`/`specialsAvailable` out of the saved body. C's Channels tab opens it with `openChannelEditor(ch, { onSaved })`.
 - **Remote** (`main.js`): prefs `startup` ("last" | "guide" | "ch:<id>") and `guideIdle` ("stay" | "close" | "tune", after `guideIdleMin`, default 2). Z cycles `aspect` and calls `player.applyAspect?.()`. A and C call `player.cycleAudio?.()` and `cycleCaptions?.()`. Welcome hints appear only for functions that exist.
-- **Tests**: `test/ui/guide.test.ts` (6 Chromium tests in demo mode; they skip without Playwright).
+- **Themes (N-11b)** (`theme.js`): editor with 8 colour slots (bg, panel, ink, accent, highlight, accent2, cell, osd) plus cell strength, a live preview, contrast checks, and starters (Prevue, Teletext, Phosphor, VHS, Saturday). Import/export as `{format:"debridtv-theme", version:1, name, colors, cellStrength}` through a file, the clipboard or drag and drop. Stored in prefs `customThemes`, selected as `theme: "custom:<id>"`, applied as inline vars on `<html>` with `data-theme="custom"` and `data-tone="light|dark"`. Light-only CSS keys on `[data-tone="light"]`, not on the daylight theme name.
+- **Format chips (N-37)** (`ui.js formatChips(a)`): 4K/1080p/720p/SD, Dolby Vision/HDR10+/HDR10/HLG, Atmos, and the codec with its channel count. Shown in the banner and guide details.
+- **Mix tab (N-09, N-10)** (`channel-editor.js`): weight sliders, genre chips, balance, marathons, premieres, watched, and Reshuffle (`POST /api/channels/:id/refresh`). `openExclusions()` is the "Keep off the air" dialog on `/api/exclusions`.
+- **TV set (N-12)** (`bezel.js`): pref `bezel` off|classic|wood. The VHF dial follows `debridtv:channel`, which `ui.bug()` dispatches.
+- **Station ident (N-21)**: the second break slide.
+- **Locked channels (N-06b)** (`lock.js`, `cards.lockedCard`): a scrambled picture with a PIN pad, redacted guide/banner/breaks/crawl (`isRedacted(a)`), the lock section in the editor's Audience tab (set or change the PIN, "also on" list), and `withPin()` for writes refused with 403 `pinRequired`. An unlock dispatches `debridtv:unlocked`.
+- **Artwork (N-01c)** (`ui.js artOf/artImg`): only `/api/art/` URLs, never for redacted airings. Episodes show a still in the banner, movies a poster. Guide details get a fanart backdrop and a poster. Breaks get fanart (Ken Burns, still when calm) and a poster on the hero slide. The editor offers the show's logo or poster (`channel.art`) as an image logo, scaled into a data URL of 200 KB or less. A picture that fails to load removes itself (`data-art`) and its box's `has-art`. Image logos now show everywhere wordmarks did (`hasLogo`).
+- **Remote and TV mode (10-foot)** (`spatial.js`, imported first by main.js): inside any open layer (top `[aria-modal]` dialog, then `#welcome`, then `#panel`) the arrows move focus to the nearest control by geometry; Left/Right stay on the same line; controls scrolled out of a list are skipped unless focus is already in that list. Text fields keep Left/Right until the caret is at an edge; range inputs keep Left/Right; Left/Right on a select steps its choices (a chevron shows on focus). OK presses checkboxes, switches, chips and `[role]` controls. Back (`GoBack`, `BrowserBack`, keyCode 461 webOS, 10009 Tizen) leaves a text field, else is re-sent from `document.body` as Escape (layer or guide open) or Backspace (stage, = last channel). Backspace means Back inside a layer, except while typing and on the PIN dialog. `keepFocus(box, redraw)` restores focus by id/data attributes, else the nearest control; panel.js `render()` and the PIN dialog use it. `html.remote` (last input was a key) draws a thicker ring with a glow. `html.tv` (pref `tv` auto|on|off, `?tv=1`, TV user agents, or no hover/pointer at ≥960 px) raises `--u` to 1.32vw and keeps the banner, bug, OSD, rating card, toast, break card, guide and settings sheet inside a 3.5vw × 4vh safe area. Guide: Up from the top row reaches a Now / Settings toolbar; digits jump the highlight to a channel number. Stage: ChannelUp/Down, MediaPlayPause, Info, Guide, ContextMenu keys; Left/Right reach the meanwhile chips on a dead-end card. The welcome card shows remote keys in TV mode.
+- **A11y**: axe-core is clean on B's surfaces and Settings in 3 themes. `--faint` was brightened.
+- **Tests**: `test/ui/guide.test.ts` (Chromium in demo mode; it skips without Playwright).
 
-## Open (from the coordinator, in priority order)
-1. **Theme editing and import/export (N-11b).** Themes are CSS variable sets on `[data-theme]` in `styles.css` (midnight, cable92, daylight). The idea is a custom theme built from a few user-picked colours stored in prefs and applied as inline `--var`s on `:root`, plus JSON export and import. The UI controls belong in panel.js (C), so send C the spec.
-2. **HDR and audio-format badges in the banner (N-37).** This waits on C adding fields to airingView (for example `hdr`, `audioFormat`). Badges go in `renderBanner` in `ui.js`.
-3. **Later:** UI for show and genre exclusions (N-09b) and per-channel "refresh schedule" (N-10). The shapes will come from C through the coordinator. They probably belong in channel-editor.js.
-4. **Prefs that still need controls in panel.js (C):** `startup`, `guideIdle`, `guideIdleMin`, `ratingCard`, `bugPos`, `bugOpacity`. These specs were already sent for startup and idle.
+## Open
+1. **On a real TV**: check which key codes its remote sends (Back, OK, colour keys) and whether `auto` turns TV mode on; adjust `TV_UA` and `isBackKey` in spatial.js. Break slides' channel lists are still click-only (digits cover them).
+2. The A/C key hints stay hidden until `player.cycleAudio`/`cycleCaptions` exist.
+3. A's `test/ui/player.test.ts` "a locked channel asks for no link" fails after merging C3. The stub sets `o.locked`, but C3 now sends `channel.locked:false`, which wins through `??`. A has to fix this; it was reported to the coordinator.
+4. Done: Look & feel has controls for `startup`, `guideIdle`, `guideIdleMin`, `ratingCard`, `bugPos`, `bugOpacity`, `bezel` and `tv`.
 
 ## How to check visuals
 - The screenshot harness is `/mnt/project-files/debridTV/tools/shots.mjs`. Run `BASE=http://127.0.0.1:7340 node shots.mjs <out> [w h] [scenario…]`. It adds `?at=` to `/api/now` and offsets JSON `now` to land inside a break. `DECOR=1` stubs logos and favorites, and `PREFS='{"theme":"cable92"}'` sets a theme. To step through break slides, use `page.clock.install()` plus `runFor`.
 - Start a demo server with `PORT=7340 DEBRIDTV_HOME=<tmp> node app/server.ts`. Kill it in a separate shell call.
-- Screenshots so far: `/mnt/project-files/debridTV/screens/guide-look/1…7`.
+- Screenshots so far: `/mnt/project-files/debridTV/screens/guide-look/1…26` (21–26: TV mode and remote focus).
+- Remote walkthroughs: drive keys with Playwright and log `document.activeElement` after each; `test/ui/guide.test.ts` "remote (10-foot)" has three.
+- Art: there is no local art in demo mode. Stub it in Playwright by rewriting `/api/{now,guide,boot}` JSON to add `art` and by routing `/api/art/**` to sample images.
 
 ## Gotchas
 - Re-rendering the guide during a touch gesture kills the gesture, because a detached target gets no more touch events. Render on release.
 - The `.banner` third column has an inline `display:grid`. Hiding it on phones needs `!important`.
 - `channel-editor.js` imports `player.js`, and `ui.js`, `cards.js` and `guide.js` import `channel-editor.js`. These cycles are fine because nothing is used at top level.
 - `--row` is set inline by `fitRows()` and re-fit whenever `.grid-rows` height changes.
+- The `html` template drops `false`, so wrap ARIA booleans in `String()`. Use `raw()` for strings that are already HTML.
+- `applyPrefs()` calls `onPrefsApplied` listeners (util.js). Tests that change prefs should call it rather than reload, because the init script resets prefs on reload.
+- `.card` gets `hidden`, not a class change, so wait for `.card.locked:not([hidden])`.
+- Editors and dialogs swallow keys with capture listeners and `stopImmediatePropagation`. main.js also ignores keys while any of them is open. spatial.js runs before all of them and only calls preventDefault on arrows and OK, so sign-off's activity clock still sees them.
+- `document.querySelector(".ced")` is ambiguous: the PIN dialog and exclusions share the class. Use `[aria-label="Edit channel"]`.

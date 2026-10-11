@@ -1,0 +1,43 @@
+{
+  "experiment": "EXP-009",
+  "ranAt": "2026-10-11T08:38:30.282Z",
+  "apiLatencyMs": 370,
+  "mediaTtfbMs": 200,
+  "linkMbps": 100,
+  "fileMbps": 8,
+  "coldMedianMs": 1069,
+  "warmMedianMs": 556,
+  "cold": [
+    1027,
+    1103,
+    1069,
+    1122,
+    951,
+    1003,
+    1142,
+    1142
+  ],
+  "warm": [
+    474,
+    508,
+    809,
+    841,
+    546,
+    556,
+    552,
+    550,
+    558,
+    553,
+    589,
+    892,
+    627,
+    607,
+    917,
+    502
+  ],
+  "bytes": {
+    "upstreamMB": 534,
+    "cachedMB": 15.4
+  },
+  "apiCalls": 0
+}

@@ -5,9 +5,12 @@
 import { api } from "./api.js";
 import { html, raw, fmtTime, fmtDur, now, clamp, toast, pref } from "./util.js";
 import { tv, tune } from "./player.js";
-import { logoHtml } from "./channel-editor.js";
+import { logoHtml, hasLogo } from "./channel-editor.js";
+import { formatChips, artOf, artImg } from "./ui.js";
+import { isLocked, isRedacted } from "./lock.js";
+import { openPanel } from "./panel.js";
 
-const wordmark = (c) => (c.logo?.kind === "text" && c.logo.text ? raw(logoHtml(c, "sm")) : null);
+const wordmark = (c) => (hasLogo(c) ? raw(logoHtml(c, "sm")) : null);
 
 const MIN = 60_000;
 const root = document.getElementById("guide");
@@ -15,6 +18,8 @@ const grid = document.getElementById("grid");
 const details = document.getElementById("guide-details");
 const dateEl = document.getElementById("guide-date");
 const clockEl = document.getElementById("guide-clock");
+const jumpEl = document.getElementById("guide-jump");
+const tools = () => [...root.querySelectorAll(".guide-tools button")];
 
 let data = null; // { from, to, rows }
 let viewFrom = 0;
@@ -42,6 +47,8 @@ export async function openGuide() {
 }
 
 export function closeGuide() {
+  if (root.contains(document.activeElement)) document.activeElement.blur();
+  root.classList.remove("in-tools");
   root.hidden = true;
   document.body.classList.remove("guide-open");
   clearInterval(refreshTimer);
@@ -117,20 +124,23 @@ function render() {
         if (ri === row && focus && a.start === focus.start) cls.push("focus");
         let head = a.title;
         let sub = [a.episode, a.subtitle, a.year].filter(Boolean).join(" · ");
+        const locked = isLocked(ch) || isRedacted(a); // a locked channel's listings stay hidden until the PIN is typed
+        if (locked) cls.push("locked");
         // A run of short episodes of one show: lead with the episode, not the same title again.
-        if (i > 0 && shown[i - 1].title === a.title && a.episode && right - left < 14) {
+        if (locked) (head = "Locked"), (sub = "");
+        else if (i > 0 && shown[i - 1].title === a.title && a.episode && right - left < 14) {
           head = a.subtitle || a.episode;
           sub = a.subtitle ? a.episode : a.title;
         }
         return html`<div class="${cls.join(" ")}" style="left:calc(${left}% + 2px);width:calc(${right - left}% - 4px)${a.start <= t && t < a.end ? `;--p:${(((t - Math.max(a.start, viewFrom)) / (Math.min(a.end, viewTo) - Math.max(a.start, viewFrom))) * 100).toFixed(1)}%` : ""}" data-row="${ri}" data-start="${a.start}" role="gridcell"
-          aria-label="${a.title}, ${fmtTime(a.start)}">
+          aria-label="${locked ? "Locked program" : a.title}, ${fmtTime(a.start)}">
           ${a.start < viewFrom ? raw('<span class="cont">◂</span>') : ""}
           ${a.watched ? raw('<span class="watched" title="Watched">✓</span>') : ""}
           ${raw(breakTail(a))}<div class="ct">${head}</div>${sub ? html`<div class="cs">${sub}</div>` : ""}</div>`;
       });
     const nowLine = t >= viewFrom && t < viewTo ? raw(`<div class="now-line" style="left:${pct(t)}%"></div>`) : "";
     return html`<div class="row ${tv.current?.id === ch.id ? "current" : ""}" style="--h:${ch.hue}" role="row">
-      <div class="row-label" data-tune="${ri}"><span class="n">${ch.number}</span><span class="nm">${ch.favorite ? raw('<b class="fav" title="Favorite">★</b>') : ""}${wordmark(ch) ?? ch.name}<span class="tg">${ch.tagline}</span></span></div>
+      <div class="row-label" data-tune="${ri}"><span class="n">${ch.number}</span><span class="nm">${ch.favorite ? raw('<b class="fav" title="Favorite">★</b>') : ""}${isLocked(ch) ? raw('<b class="lk" title="Locked">🔒</b>') : ""}${wordmark(ch) ?? ch.name}<span class="tg">${ch.tagline}</span></span></div>
       <div class="row-track">${raw(cells.join(""))}${nowLine}</div></div>`;
   });
 
@@ -171,25 +181,36 @@ function rowPx() {
 
 function renderDetails(ch, a) {
   if (!ch || !a) return void (details.innerHTML = "");
+  if (isLocked(ch) || isRedacted(a)) {
+    details.style.setProperty("--h", ch.hue);
+    details.innerHTML = html`<div class="when">${fmtTime(a.start)} – ${fmtTime(a.end)}<span class="on-ch"><b>${ch.number}</b>${ch.name}</span></div>
+      <div class="t">🔒 Locked</div><div class="desc">This channel is locked. Tune to it and type the PIN to see what's on.</div>
+      <div class="act"><kbd>OK</kbd> tune to this channel</div>`.html;
+    return;
+  }
   const t = now();
   const state = a.end <= t ? "Ended" : a.start <= t ? `On now · ${Math.round((a.end - t) / MIN)} min left` : `Starts in ${fmtDur(a.start - t)}`;
   const bits = [a.episode && html`<span>${a.episode}</span>`, a.year && html`<span>${a.year}</span>`, a.genre && html`<span>${a.genre}</span>`,
     a.rating && html`<span class="rating">${a.rating}</span>`,
-    a.durationMs && html`<span>${fmtDur(a.durationMs)}</span>`, a.watched && raw('<span class="badge ok">✓ Watched</span>'),
+    a.durationMs && html`<span>${fmtDur(a.durationMs)}</span>`, formatChips(a), a.watched && raw('<span class="badge ok">✓ Watched</span>'),
     a.availability === "policy-blocked" && raw('<span class="badge bad">Refused by provider</span>'),
     a.availability === "unavailable" && raw('<span class="badge warn">Unavailable</span>'),
     a.availability === "playable" && a.provider !== "demo" && raw('<span class="badge ok">Plays</span>')].filter(Boolean);
   const pad = a.segments?.find((x) => x.kind === "break" && x.reason === "padding" && x.end - x.start >= 2 * MIN);
   const onNow = a.start <= t && t < a.end;
   const pct = onNow ? clamp((t - a.start) / (a.end - a.start), 0, 1) * 100 : 0;
+  // Local files may bring art (N-01c): a backdrop behind the text and a poster beside it.
+  const back = artOf(a, "fanart", "thumb");
+  const poster = artOf(a, "poster");
   details.style.setProperty("--h", ch.hue);
-  details.innerHTML = html`<div class="when">${fmtTime(a.start)} – ${fmtTime(a.end)}<span class="on-ch"><b>${ch.number}</b>${ch.name}</span></div>
+  details.innerHTML = html`${raw(artImg(back, "gd-back"))}${poster ? html`<div class="gd-poster" data-art-box>${raw(artImg(poster, ""))}</div>` : ""}
+    <div class="when">${fmtTime(a.start)} – ${fmtTime(a.end)}<span class="on-ch"><b>${ch.number}</b>${ch.name}</span></div>
     <div class="t">${a.title}</div>
     <div class="s">${raw(bits.join(""))}</div>
     ${a.description ? html`<div class="plot">${a.description}</div>` : ""}
     <div class="desc">${a.subtitle ? html`“${a.subtitle}”. ` : ""}${state}.${pad ? ` Ends at ${fmtTime(pad.start)}, then a station break until ${fmtTime(pad.end)}.` : ""}</div>
     ${onNow ? raw(`<div class="prog"><i style="width:${pct.toFixed(1)}%"></i></div>`) : ""}
-    <div class="act"><kbd>Enter</kbd> ${onNow ? "watch now" : "tune to this channel"}</div>`;
+    <div class="act"><kbd>OK</kbd> ${onNow ? "watch now" : "tune to this channel"}</div>`;
 }
 
 // ------------------------------------------------------------------ input
@@ -197,6 +218,22 @@ function renderDetails(ch, a) {
 export function guideKey(e) {
   if (!data) return false;
   const k = e.key;
+  // The toolbar (Now, Settings): a remote reaches it with Up from the top row.
+  const tl = tools();
+  const ti = tl.indexOf(document.activeElement);
+  if (ti >= 0) {
+    if (k === "ArrowLeft" || k === "ArrowRight") tl[clamp(ti + (k === "ArrowRight" ? 1 : -1), 0, tl.length - 1)].focus();
+    else if (k === "ArrowDown") leaveTools();
+    else if (k === "Enter") document.activeElement.click();
+    else if (k !== "ArrowUp") return false;
+    return true;
+  }
+  if (k === "ArrowUp" && row === 0) {
+    root.classList.add("in-tools");
+    tl.at(-1)?.focus({ focusVisible: true });
+    return true;
+  }
+  if (/^[0-9]$/.test(k)) return jumpKey(k), true;
   const list = data.rows[row]?.airings ?? [];
   const cur = airingAt(row, at);
   const idx = list.indexOf(cur);
@@ -225,6 +262,48 @@ export function guideKey(e) {
   } else return false;
   render();
   return true;
+}
+
+function leaveTools() {
+  document.activeElement?.blur();
+  root.classList.remove("in-tools");
+}
+
+root.querySelector(".guide-tools").addEventListener("click", (e) => {
+  const act = e.target.closest("[data-gt]")?.dataset.gt;
+  if (act === "settings") {
+    closeGuide();
+    openPanel();
+  } else if (act === "now") {
+    leaveTools();
+    guideKey({ key: "Home" });
+  }
+});
+
+// Digits jump the highlight to a channel number, like typing it on a cable box guide.
+let jump = "";
+let jumpTimer = 0;
+function jumpKey(d) {
+  jump = (jump + d).slice(-3);
+  jumpEl.textContent = jump.padEnd(2, "-");
+  jumpEl.classList.add("on");
+  clearTimeout(jumpTimer);
+  const n = Number(jump);
+  const go = () => {
+    const r = data.rows.findIndex((x) => x.channel.number === n);
+    jump = "";
+    if (r < 0) {
+      jumpEl.textContent = `No ${n}`;
+      jumpTimer = setTimeout(() => jumpEl.classList.remove("on"), 1200);
+      return;
+    }
+    jumpEl.classList.remove("on");
+    row = r;
+    render();
+  };
+  const longer = data.rows.some((x) => String(x.channel.number).startsWith(jump) && x.channel.number !== n);
+  if (!longer && data.rows.some((x) => x.channel.number === n)) return go();
+  jumpTimer = setTimeout(go, 1200);
 }
 
 function pick(r, a) {

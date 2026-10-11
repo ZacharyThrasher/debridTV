@@ -1,0 +1,71 @@
+{
+  "experiment": "EXP-008",
+  "ranAt": "2026-10-11T08:14:50.178Z",
+  "pressMs": 1000,
+  "apiLatencyMs": 370,
+  "mediaTtfbMs": 200,
+  "linkMbps": 100,
+  "fileMbps": 8,
+  "jitter": 0.25,
+  "indexCache": null,
+  "bursts": 6,
+  "burst": 6,
+  "rows": [
+    {
+      "variant": "adaptive@1.3",
+      "pressMs": 1000,
+      "apiCalls": 36,
+      "mediaRequests": 41,
+      "surfedMBPerPress": 0.27,
+      "cachedMB": 0,
+      "peakStreams": 1,
+      "pictureMedianMs": 2058,
+      "pictureP90Ms": 2261,
+      "motionMedianMs": 2251,
+      "finalsWithMotion": "6/6",
+      "surfedPictures": 0
+    },
+    {
+      "variant": "adaptive@1.0",
+      "pressMs": 1000,
+      "apiCalls": 36,
+      "mediaRequests": 49,
+      "surfedMBPerPress": 0.42,
+      "cachedMB": 0,
+      "peakStreams": 2,
+      "pictureMedianMs": 1872,
+      "pictureP90Ms": 2372,
+      "motionMedianMs": 2055,
+      "finalsWithMotion": "5/6",
+      "surfedPictures": 0
+    },
+    {
+      "variant": "peek:400",
+      "pressMs": 1000,
+      "apiCalls": 36,
+      "mediaRequests": 109,
+      "surfedMBPerPress": 1.18,
+      "cachedMB": 0,
+      "peakStreams": 2,
+      "pictureMedianMs": 1472,
+      "pictureP90Ms": 1940,
+      "motionMedianMs": 1623,
+      "finalsWithMotion": "4/6",
+      "surfedPictures": 0
+    },
+    {
+      "variant": "now",
+      "pressMs": 1000,
+      "apiCalls": 36,
+      "mediaRequests": 116,
+      "surfedMBPerPress": 2.26,
+      "cachedMB": 0,
+      "peakStreams": 2,
+      "pictureMedianMs": 1603,
+      "pictureP90Ms": 1772,
+      "motionMedianMs": null,
+      "finalsWithMotion": "0/6",
+      "surfedPictures": 1
+    }
+  ]
+}

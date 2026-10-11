@@ -4,10 +4,13 @@
 // Channel numbers, once given, stay put (N-03).
 
 import { StationClock } from "../src/clock/schedule.ts";
-import type { Channel, Ordering } from "../src/clock/types.ts";
+import type { Channel, ChannelRevision, Ordering } from "../src/clock/types.ts";
+import type { Dayparts, DaypartRule } from "../src/clock/dayparts.ts";
+import { KID_MAX, RATINGS as RATING_SCALE, type Rating } from "../src/clock/ratings.ts";
 import { hash32 } from "../src/clock/rng.ts";
+import { ORDERINGS } from "../src/clock/ordering.ts";
 import { JsonFile } from "./store.ts";
-import type { LibItem } from "./library.ts";
+import { breakpoints, type LibItem } from "./library.ts";
 
 const MIN = 60_000;
 
@@ -34,7 +37,78 @@ interface LineupState {
   numbers: Record<string, number>;
   custom: CustomChannel[];
   hidden: string[];
+  /** The viewer's own touches per channel (by rule key), kept across rebuilds. */
+  settings?: Record<string, ChannelSettings>;
+  /** Shows and genres kept off every channel (N-09b). */
+  exclude?: Exclusions;
 }
+
+export interface Exclusions {
+  /** Show keys (as in "show:<key>" rule keys). */
+  shows?: string[];
+  /** Genre names, matched without regard to case or punctuation. */
+  genres?: string[];
+}
+
+/** What sync needs to know about an item to apply exclusions and watched rules. */
+export interface ItemInfo {
+  showKey?: string;
+  genres?: string[];
+  watched?: boolean;
+  /** Added to the library recently enough to premiere. */
+  recent?: boolean;
+}
+
+export type ChannelLogo =
+  | { kind: "badge" | "text"; text: string; hue?: number; style?: "block" | "outline" | "pill" }
+  | { kind: "image"; url: string };
+
+export interface RestrictedHours {
+  from: string;
+  to: string;
+  maxRating: (typeof RATINGS)[number];
+}
+export interface TimeSlot {
+  /** Mon=1 … Sun=7. */
+  days: number[];
+  from: string;
+  /** to <= from means the slot runs overnight. */
+  to: string;
+  /** Rule key whose programs fill this slot. */
+  source: string;
+}
+
+export interface ChannelSettings {
+  name?: string;
+  favorite?: boolean;
+  logo?: ChannelLogo;
+  /** Only programs rated PG or lower air; unrated ones don't (gate D7). */
+  kid?: boolean;
+  restrictedHours?: RestrictedHours[];
+  slots?: TimeSlot[];
+  /** Air season-0 specials too (after the regular seasons). Off by default (N-05). */
+  specials?: boolean;
+  /** Share of turns per show (show key, or "films"): 0–100, default 50, 0 = never (N-09a). */
+  weights?: Record<string, number>;
+  /** Even out turns (default) or airtime (N-09d). */
+  balance?: "episodes" | "time";
+  /** Now and then stay on one show for up to four hours (N-09e). */
+  marathons?: boolean;
+  /** Recently added programs air first (N-09c). */
+  premieres?: boolean;
+  /** all (default), unwatched only, or resume each show after its last watched episode (N-05). */
+  watched?: "all" | "unwatched" | "resume";
+  /** Shows and genres kept off this channel (N-09b). */
+  exclude?: Exclusions;
+  /** Bumped by "refresh schedule": a new shuffle from the end of the current program (N-10). */
+  reshuffle?: number;
+  /** Needs the parental PIN to watch (N-06b). Has no effect while no PIN is set. */
+  locked?: boolean;
+}
+
+const WEIGHT_KEYS = /^[\w:. -]{1,200}$/;
+
+export const RATINGS = RATING_SCALE;
 
 export interface Rule {
   key: string;
@@ -46,6 +120,8 @@ export interface Rule {
   slotMs?: number;
   midBreakMs?: number;
   preferredNumber?: number;
+  /** Season-0 specials among itemIds; they stay off unless the channel's settings ask for them. */
+  specialIds?: string[];
 }
 
 export class Lineup {
@@ -92,13 +168,147 @@ export class Lineup {
     });
   }
 
+  exclusions(): Exclusions {
+    return this.file.get().exclude ?? {};
+  }
+
+  setExclusions(ex: Exclusions): void {
+    this.file.update((s) => {
+      s.exclude = ex.shows?.length || ex.genres?.length ? ex : undefined;
+    });
+  }
+
+  settingsFor(ruleKey: string): ChannelSettings {
+    return this.file.get().settings?.[ruleKey] ?? {};
+  }
+
+  /**
+   * Rename, renumber, favorite or brand a channel. A number already in use is
+   * refused (no silent shuffling of other channels, N-03); `null` clears a field.
+   */
+  updateSettings(
+    ruleKey: string,
+    patch: { name?: string | null; number?: number; favorite?: boolean; logo?: ChannelLogo | null; kid?: boolean; restrictedHours?: RestrictedHours[]; slots?: TimeSlot[]; specials?: boolean; locked?: boolean } & Partial<Pick<ChannelSettings, "weights" | "balance" | "marathons" | "premieres" | "watched" | "exclude">> & { reshuffle?: boolean },
+  ): { ok: true; swappedWith?: string } | { ok: false; error: string } {
+    const s = this.file.get();
+    const ch = s.channels.find((c) => c.meta.ruleKey === ruleKey);
+    if (!ch) return { ok: false, error: "no such channel" };
+    let swappedWith: string | undefined;
+    if (patch.number !== undefined && patch.number !== ch.number) {
+      if (!Number.isInteger(patch.number) || patch.number < 1 || patch.number > 9999) return { ok: false, error: "Channel numbers run from 1 to 9999." };
+      // Asking for a taken number swaps the two channels: explicit, and nothing else moves.
+      const holder = s.channels.find((c) => c.number === patch.number);
+      const freedKey = Object.entries(s.numbers).find(([k, n]) => n === patch.number && k !== ruleKey)?.[0];
+      if (holder) {
+        holder.number = ch.number;
+        s.numbers[holder.meta.ruleKey] = ch.number;
+        swappedWith = holder.name;
+      } else if (freedKey) s.numbers[freedKey] = ch.number; // a channel that's off the air keeps a number too
+      ch.number = patch.number;
+      s.numbers[ruleKey] = patch.number;
+    }
+    const cur = { ...s.settings?.[ruleKey] };
+    if (patch.name !== undefined) {
+      const n = (patch.name ?? "").trim().slice(0, 40);
+      if (n) cur.name = n;
+      else delete cur.name;
+    }
+    if (patch.favorite !== undefined) cur.favorite = patch.favorite || undefined;
+    if (patch.logo !== undefined) {
+      if (patch.logo === null) delete cur.logo;
+      else cur.logo = patch.logo;
+    }
+    if (patch.kid !== undefined) cur.kid = patch.kid || undefined;
+    if (patch.restrictedHours !== undefined) cur.restrictedHours = patch.restrictedHours.length ? patch.restrictedHours : undefined;
+    if (patch.slots !== undefined) cur.slots = patch.slots.length ? patch.slots : undefined;
+    if (patch.specials !== undefined) cur.specials = patch.specials || undefined;
+    if (patch.weights !== undefined) cur.weights = Object.keys(patch.weights).length ? patch.weights : undefined;
+    if (patch.balance !== undefined) cur.balance = patch.balance === "time" ? "time" : undefined;
+    if (patch.marathons !== undefined) cur.marathons = patch.marathons || undefined;
+    if (patch.premieres !== undefined) cur.premieres = patch.premieres || undefined;
+    if (patch.watched !== undefined) cur.watched = patch.watched === "all" ? undefined : patch.watched;
+    if (patch.exclude !== undefined) cur.exclude = patch.exclude.shows?.length || patch.exclude.genres?.length ? patch.exclude : undefined;
+    if (patch.reshuffle) cur.reshuffle = (cur.reshuffle ?? 0) + 1;
+    if (patch.locked !== undefined) cur.locked = patch.locked || undefined;
+    s.settings = { ...s.settings, [ruleKey]: cur };
+    if (cur.name) ch.name = cur.name;
+    this.file.set(s);
+    return { ok: true, ...(swappedWith ? { swappedWith } : {}) };
+  }
+
+  /** What a settings export carries: choices, not library facts or credentials. */
+  exportSettings(): { numbers: Record<string, number>; custom: CustomChannel[]; hidden: string[]; settings: Record<string, ChannelSettings>; exclude: Exclusions } {
+    const s = this.file.get();
+    return { numbers: { ...s.numbers }, custom: s.custom.slice(), hidden: s.hidden.slice(), settings: { ...s.settings }, exclude: s.exclude ?? {} };
+  }
+
+  /**
+   * Bring back exported choices. Custom channels and hidden flags are merged by id;
+   * a remembered number is only taken if nothing here already uses it.
+   */
+  importSettings(x: { numbers?: unknown; custom?: unknown; hidden?: unknown; settings?: unknown; exclude?: unknown }): { custom: number; hidden: number } {
+    let custom = 0;
+    let hidden = 0;
+    this.file.update((s) => {
+      if (Array.isArray(x.custom))
+        for (const c of x.custom as CustomChannel[]) {
+          if (!c || typeof c.id !== "string" || typeof c.name !== "string" || !Array.isArray(c.showKeys) || !Array.isArray(c.movieIds)) continue;
+          s.custom = [...s.custom.filter((y) => y.id !== c.id), {
+            id: c.id.slice(0, 20), name: c.name.slice(0, 40), showKeys: c.showKeys.map(String), movieIds: c.movieIds.map(String),
+            ordering: ORDERINGS.includes(c.ordering) ? c.ordering : "block-shuffle", slotMinutes: typeof c.slotMinutes === "number" ? c.slotMinutes : 30,
+          }];
+          custom++;
+        }
+      if (Array.isArray(x.hidden))
+        for (const k of x.hidden) if (typeof k === "string" && !s.hidden.includes(k)) (s.hidden.push(k), hidden++);
+      if (x.settings && typeof x.settings === "object")
+        for (const [k, v] of Object.entries(x.settings as Record<string, unknown>)) {
+          const c = cleanSettings(v);
+          if (c) s.settings = { ...s.settings, [k]: c };
+        }
+      const ex = cleanExclusions(x.exclude);
+      if (ex && (ex.shows?.length || ex.genres?.length))
+        s.exclude = { shows: [...new Set([...(s.exclude?.shows ?? []), ...(ex.shows ?? [])])], genres: [...new Set([...(s.exclude?.genres ?? []), ...(ex.genres ?? [])])] };
+      if (x.numbers && typeof x.numbers === "object") {
+        const used = new Set(Object.values(s.numbers));
+        for (const [k, n] of Object.entries(x.numbers as Record<string, unknown>))
+          if (typeof n === "number" && Number.isInteger(n) && n > 0 && !(k in s.numbers) && !used.has(n)) (s.numbers[k] = n), used.add(n);
+      }
+    });
+    return { custom, hidden };
+  }
+
+  /** Rule keys of channels marked locked (whether or not a PIN makes that count). */
+  lockedKeys(): string[] {
+    return Object.entries(this.file.get().settings ?? {}).filter(([, v]) => v.locked).map(([k]) => k);
+  }
+
+  /** Removing the PIN unlocks every channel for good, so a new PIN starts with none locked. */
+  clearLocks(): number {
+    const keys = this.lockedKeys();
+    if (keys.length) this.file.update((s) => {
+      for (const k of keys) if (s.settings?.[k]) delete s.settings[k]!.locked;
+    });
+    return keys.length;
+  }
+
+  /** Forget channels, numbers and choices. */
+  reset(): void {
+    this.file.set({ channels: [], numbers: {}, custom: [], hidden: [] });
+  }
+
   /**
    * Bring channels in line with the rules. New channels start on a past slot
    * boundary so they look like they've been on air all along; existing channels
    * change only at the end of what is airing now.
    */
-  sync(clock: StationClock, rules: Rule[], now: number): { added: number; revised: number; removed: number } {
+  sync(clock: StationClock, rulesIn: Rule[], now: number, opts: { timeZone?: string; info?: (id: string) => ItemInfo | undefined } = {}): { added: number; revised: number; removed: number } {
     const s = this.file.get();
+    const timeZone = opts.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const info = opts.info ?? (() => undefined);
+    const audience = (r: Rule) => ({ ...scheduleRules(s.settings?.[r.key] ?? {}, byKey, timeZone), ...mixRules(s.settings?.[r.key] ?? {}, r, info) });
+    const rules = rulesIn.flatMap((r) => shapeRule(r, s.settings?.[r.key] ?? {}, s.exclude ?? {}, info) ?? []);
+    const byKey = new Map(rules.map((r) => [r.key, r]));
     let added = 0;
     let revised = 0;
     const live = new Set(rules.map((r) => r.key));
@@ -117,30 +327,209 @@ export class Lineup {
         s.channels.push({
           id: `ch-${hash32(r.key).toString(36)}`,
           number,
-          name: r.name,
-          revisions: [{ effectiveFromMs: anchor, seed: r.key, itemIds: r.itemIds, ordering: r.ordering, slotMs: r.slotMs, midBreakMs: r.midBreakMs }],
+          name: s.settings?.[r.key]?.name ?? r.name,
+          revisions: [{ effectiveFromMs: anchor, itemIds: r.itemIds, ordering: r.ordering, slotMs: r.slotMs, midBreakMs: r.midBreakMs, ...audience(r) }],
           meta: { ruleKey: r.key, kind: r.kind, hue: hash32(r.key) % 360, tagline: r.tagline },
         });
         added++;
         continue;
       }
-      existing.name = r.name;
+      existing.name = s.settings?.[r.key]?.name ?? r.name;
       existing.meta.tagline = r.tagline;
       const cur = existing.revisions[existing.revisions.length - 1]!;
+      const aud = audience(r);
       const same =
+        cur.seed === aud.seed &&
+        JSON.stringify(cur.mix) === JSON.stringify(aud.mix) &&
+        cur.maxRating === aud.maxRating &&
+        JSON.stringify(cur.dayparts) === JSON.stringify(aud.dayparts) &&
         cur.ordering === r.ordering &&
         cur.slotMs === r.slotMs &&
         cur.midBreakMs === r.midBreakMs &&
         cur.itemIds.length === r.itemIds.length &&
         cur.itemIds.every((id, i) => id === r.itemIds[i]);
       if (same) continue;
-      const next = clock.revise(existing, now, { itemIds: r.itemIds, ordering: r.ordering, slotMs: r.slotMs, midBreakMs: r.midBreakMs });
+      // Kid, restricted-hours and slot changes also wait for the end of what's on (C7).
+      const next = clock.revise(existing, now, { itemIds: r.itemIds, ordering: r.ordering, slotMs: r.slotMs, midBreakMs: r.midBreakMs, ...aud });
       existing.revisions = next.revisions.slice(-6); // keep a short history
       revised++;
     }
     this.file.set(s);
     return { added, revised, removed };
   }
+}
+
+/**
+ * A rule's programs after the viewer's choices: specials (N-05), exclusions
+ * (N-09b, global and per channel) and watched rules. If exclusions or "unwatched"
+ * would leave nothing, the channel keeps its full list rather than going dark.
+ */
+export function shapeRule(r: Rule, st: ChannelSettings, global: Exclusions, info: (id: string) => ItemInfo | undefined): Rule | null {
+  let ids = r.itemIds;
+  if (r.specialIds?.length && !st.specials) {
+    const sp = new Set(r.specialIds);
+    ids = ids.filter((id) => !sp.has(id));
+  }
+  // Kept off everywhere: a channel left with nothing (say, the excluded show's own) goes away.
+  const gShows = new Set(global.shows ?? []);
+  const gGenres = new Set((global.genres ?? []).map(slug));
+  if (gShows.size || gGenres.size) {
+    ids = ids.filter((id) => {
+      const i = info(id);
+      return !(i?.showKey && gShows.has(i.showKey)) && !i?.genres?.some((g) => gGenres.has(slug(g)));
+    });
+    if (!ids.length) return null;
+  }
+  const shows = new Set(st.exclude?.shows ?? []);
+  const genres = new Set((st.exclude?.genres ?? []).map(slug));
+  if (shows.size || genres.size) {
+    const kept = ids.filter((id) => {
+      const i = info(id);
+      return !(i?.showKey && shows.has(i.showKey)) && !i?.genres?.some((g) => genres.has(slug(g)));
+    });
+    if (kept.length) ids = kept;
+  }
+  if (st.watched === "unwatched") {
+    const kept = ids.filter((id) => !info(id)?.watched);
+    if (kept.length) ids = kept;
+  } else if (st.watched === "resume") ids = resumeOrder(ids, info);
+  return ids === r.itemIds ? r : { ...r, itemIds: ids };
+}
+
+/** Each show's episodes rotated to start after its last watched one, in the same slots of the list. */
+function resumeOrder(ids: string[], info: (id: string) => ItemInfo | undefined): string[] {
+  const groups = new Map<string, number[]>();
+  ids.forEach((id, i) => {
+    const k = info(id)?.showKey ?? `__${id}`;
+    groups.set(k, [...(groups.get(k) ?? []), i]);
+  });
+  const out = ids.slice();
+  for (const pos of groups.values()) {
+    const eps = pos.map((i) => ids[i]!);
+    let last = -1;
+    eps.forEach((id, i) => info(id)?.watched && (last = i));
+    const start = last + 1 >= eps.length ? 0 : last + 1;
+    pos.forEach((p, i) => (out[p] = eps[(start + i) % eps.length]!));
+  }
+  return out;
+}
+
+/** Weights, balance, marathons, premieres and reshuffles as the clock takes them. */
+export function mixRules(st: ChannelSettings, r: Rule, info: (id: string) => ItemInfo | undefined): Pick<ChannelRevision, "mix" | "seed"> {
+  const seed = st.reshuffle ? `${r.key}~${st.reshuffle}` : r.key;
+  const premieres = st.premieres ? r.itemIds.filter((id) => info(id)?.recent) : [];
+  if (!st.weights && !st.balance && !st.marathons && !premieres.length) return { seed, mix: undefined };
+  return {
+    seed,
+    mix: {
+      ...(st.weights ? { weights: st.weights } : {}),
+      ...(st.balance === "time" ? { balance: "duration" as const } : {}),
+      ...(st.marathons ? { marathon: { chance: 0.03, maxMs: 4 * 60 * MIN } } : {}),
+      ...(premieres.length ? { premieres } : {}),
+    },
+  };
+}
+
+/**
+ * What a channel's audience and schedule settings mean for the clock. Kid channels
+ * get a standing PG limit. Time slots borrow another channel's programs and
+ * running order; a slot whose source channel no longer exists is left out.
+ * Slots are listed first, so where two overlap the earlier one wins.
+ */
+export function scheduleRules(st: ChannelSettings, rules: ReadonlyMap<string, Rule>, timeZone: string): Pick<ChannelRevision, "maxRating" | "dayparts"> {
+  const out: Pick<ChannelRevision, "maxRating" | "dayparts"> = { maxRating: st.kid ? KID_MAX : undefined, dayparts: undefined };
+  const dr: DaypartRule[] = [];
+  for (const sl of st.slots ?? []) {
+    const src = rules.get(sl.source);
+    if (!src || !src.itemIds.length) continue;
+    dr.push({ days: sl.days, from: sl.from, to: sl.to, program: { key: src.key, itemIds: src.itemIds, ordering: src.ordering, ...(src.slotMs ? { slotMs: src.slotMs } : {}) } });
+  }
+  for (const rh of st.restrictedHours ?? []) dr.push({ from: rh.from, to: rh.to, maxRating: rh.maxRating as Rating });
+  if (dr.length) out.dayparts = { timeZone, rules: dr } satisfies Dayparts;
+  return out;
+}
+
+/** Accept only well-formed settings; image logos must be inline (no outside requests). */
+export function cleanSettings(v: unknown): ChannelSettings | null {
+  if (!v || typeof v !== "object") return null;
+  const x = v as Record<string, unknown>;
+  const out: ChannelSettings = {};
+  if (typeof x.name === "string" && x.name.trim()) out.name = x.name.trim().slice(0, 40);
+  if (x.favorite === true) out.favorite = true;
+  const logo = cleanLogo(x.logo);
+  if (logo) out.logo = logo;
+  if (x.kid === true) out.kid = true;
+  const rh = cleanRestricted(x.restrictedHours);
+  if (rh?.length) out.restrictedHours = rh;
+  const sl = cleanSlots(x.slots);
+  if (sl?.length) out.slots = sl;
+  if (x.specials === true) out.specials = true;
+  const w = cleanWeights(x.weights);
+  if (w && Object.keys(w).length) out.weights = w;
+  if (x.balance === "time") out.balance = "time";
+  if (x.marathons === true) out.marathons = true;
+  if (x.premieres === true) out.premieres = true;
+  if (x.watched === "unwatched" || x.watched === "resume") out.watched = x.watched;
+  const ex = cleanExclusions(x.exclude);
+  if (ex && (ex.shows?.length || ex.genres?.length)) out.exclude = ex;
+  if (typeof x.reshuffle === "number" && Number.isInteger(x.reshuffle) && x.reshuffle > 0) out.reshuffle = x.reshuffle;
+  if (x.locked === true) out.locked = true;
+  return out;
+}
+
+export function cleanWeights(v: unknown): Record<string, number> | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const out: Record<string, number> = {};
+  for (const [k, n] of Object.entries(v as Record<string, unknown>).slice(0, 500)) {
+    if (!WEIGHT_KEYS.test(k) || typeof n !== "number" || !Number.isFinite(n) || n < 0 || n > 100) return null;
+    if (Math.round(n) !== 50) out[k] = Math.round(n);
+  }
+  return out;
+}
+
+export function cleanExclusions(v: unknown): Exclusions | null {
+  if (!v || typeof v !== "object") return null;
+  const x = v as Record<string, unknown>;
+  const list = (a: unknown) => (Array.isArray(a) && a.every((s) => typeof s === "string") ? [...new Set((a as string[]).map((s) => s.trim().slice(0, 200)).filter(Boolean))].slice(0, 500) : a === undefined ? [] : null);
+  const shows = list(x.shows);
+  const genres = list(x.genres);
+  if (!shows || !genres) return null;
+  return { ...(shows.length ? { shows } : {}), ...(genres.length ? { genres } : {}) };
+}
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function cleanRestricted(v: unknown): RestrictedHours[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: RestrictedHours[] = [];
+  for (const r of v.slice(0, 8))
+    if (r && HHMM.test(r.from) && HHMM.test(r.to) && RATINGS.includes(r.maxRating)) out.push({ from: r.from, to: r.to, maxRating: r.maxRating });
+    else return null;
+  return out;
+}
+
+export function cleanSlots(v: unknown): TimeSlot[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: TimeSlot[] = [];
+  for (const t of v.slice(0, 50)) {
+    const days = Array.isArray(t?.days) ? [...new Set<number>(t.days.filter((d: unknown) => Number.isInteger(d) && (d as number) >= 1 && (d as number) <= 7))].sort() : [];
+    if (!days.length || !HHMM.test(t.from) || !HHMM.test(t.to) || typeof t.source !== "string" || !t.source) return null;
+    out.push({ days, from: t.from, to: t.to, source: t.source.slice(0, 200) });
+  }
+  return out;
+}
+
+export function cleanLogo(v: unknown): ChannelLogo | null {
+  if (!v || typeof v !== "object") return null;
+  const l = v as Record<string, unknown>;
+  if ((l.kind === "badge" || l.kind === "text") && typeof l.text === "string" && l.text.trim()) {
+    const hue = typeof l.hue === "number" && Number.isFinite(l.hue) ? Math.round(((l.hue % 360) + 360) % 360) : undefined;
+    const style = l.style === "block" || l.style === "outline" || l.style === "pill" ? l.style : undefined;
+    return { kind: l.kind, text: l.text.trim().slice(0, 6), ...(hue != null ? { hue } : {}), ...(style ? { style } : {}) };
+  }
+  if (l.kind === "image" && typeof l.url === "string" && /^data:image\/(png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(l.url) && l.url.length <= 300_000)
+    return { kind: "image", url: l.url };
+  return null;
 }
 
 function nextNumber(numbers: Record<string, number>, preferred?: number): number {
@@ -154,7 +543,9 @@ function nextNumber(numbers: Record<string, number>, preferred?: number): number
 /** Automatic rules. Without genre metadata, channels are built from what is known for sure. */
 export function autoRules(items: LibItem[], custom: CustomChannel[]): Rule[] {
   const usable = dedupe(
-    items.filter((i) => i.present && i.durationMs && i.parsed.kind !== "other" && i.availability !== "policy-blocked"),
+    items.filter(
+      (i) => i.present && i.ready !== false && !i.excluded && i.durationMs && i.parsed.kind !== "other" && i.availability !== "policy-blocked",
+    ),
   );
   const rules: Rule[] = [];
   const eps = usable.filter((i) => i.parsed.kind === "episode");
@@ -219,7 +610,87 @@ export function autoRules(items: LibItem[], custom: CustomChannel[]): Rule[] {
       rules.push({ key: `custom:${c.id}`, name: c.name, kind: "custom", tagline: "Your channel", itemIds: ids, ordering: c.ordering,
         slotMs: c.slotMinutes ? c.slotMinutes * MIN : undefined, preferredNumber: 50 });
   }
+  rules.push(...metadataRules(usable));
+
+  // Mid-program breaks where the files have chapters, sized so no program spills into an extra slot.
+  const byId = new Map(usable.map((i) => [i.id, i]));
+  for (const r of rules) {
+    const sp = r.itemIds.filter((id) => { const p = byId.get(id)?.parsed; return p?.kind === "episode" && p.season === 0; });
+    if (sp.length) r.specialIds = sp;
+  }
+  for (const r of rules) if (r.slotMs && r.kind !== "movies") r.midBreakMs = midBreakFor(r.itemIds.map((id) => byId.get(id)!), r.slotMs);
   return rules;
+}
+
+const HOURS = 3_600_000;
+
+/**
+ * Network, genre and collection channels from metadata the viewer's own files
+ * carry (.nfo, parity N-04 / N-01c). Nothing is looked up online.
+ *
+ *   network     3+ shows from one studio/network, shows taking turns in short runs   (#20+)
+ *   genre       2+ titles and 8+ hours in one genre, shows and films mixed           (#30+)
+ *   collection  3+ films in one set, in release order                                (#40+)
+ */
+export function metadataRules(usable: LibItem[]): Rule[] {
+  const rules: Rule[] = [];
+  const titleOf = (i: LibItem) => (i.parsed.kind === "episode" ? `s:${i.parsed.showKey}` : i.id);
+  const hours = (list: LibItem[]) => list.reduce((n, i) => n + (i.durationMs ?? 0), 0) / HOURS;
+
+  const groups = (pick: (i: LibItem) => string[] | undefined) => {
+    const out = new Map<string, { name: string; items: LibItem[] }>();
+    for (const i of usable)
+      for (const name of pick(i) ?? []) {
+        const key = slug(name);
+        if (!key) continue;
+        const g = out.get(key) ?? { name, items: [] };
+        g.items.push(i);
+        out.set(key, g);
+      }
+    return [...out.entries()];
+  };
+  const showCount = (list: LibItem[]) => new Set(list.filter((i) => i.parsed.kind === "episode").map(titleOf)).size;
+
+  for (const [key, g] of groups((i) => (i.parsed.kind === "episode" ? i.meta?.studios?.slice(0, 1) : undefined)).sort((a, b) => b[1].items.length - a[1].items.length).slice(0, 12)) {
+    const shows = showCount(g.items);
+    if (shows < 3) continue;
+    rules.push({ key: `network:${key}`, name: g.name, kind: "mix", tagline: `${shows} ${g.name} shows, taking turns`,
+      itemIds: sortEpisodes(g.items).map((i) => i.id), ordering: "block-cyclic", slotMs: 30 * MIN, preferredNumber: 20 });
+  }
+
+  const genreOf = (i: LibItem) => i.meta?.genres ?? (i.genre ? [i.genre] : undefined);
+  for (const [key, g] of groups(genreOf).sort((a, b) => hours(b[1].items) - hours(a[1].items)).slice(0, 12)) {
+    const titles = new Set(g.items.map(titleOf)).size;
+    if (titles < 2 || hours(g.items) < 8) continue;
+    const eps = g.items.filter((i) => i.parsed.kind === "episode");
+    const films = g.items.filter((i) => i.parsed.kind === "movie");
+    const what = eps.length && films.length ? "shows and films" : films.length ? "films" : "shows";
+    rules.push({ key: `genre:${key}`, name: g.name, kind: films.length && !eps.length ? "movies" : "mix", tagline: `${g.name} ${what}`,
+      itemIds: [...sortEpisodes(eps).map((i) => i.id), ...films.map((i) => i.id).sort()], ordering: "block-shuffle", slotMs: 30 * MIN, preferredNumber: 30 });
+  }
+
+  for (const [key, g] of groups((i) => (i.parsed.kind === "movie" && i.meta?.collection ? [i.meta.collection] : undefined))) {
+    if (g.items.length < 3) continue;
+    const year = (i: LibItem) => i.meta?.year ?? (i.parsed.kind === "movie" ? i.parsed.year : undefined) ?? 9999;
+    const sorted = g.items.slice().sort((a, b) => year(a) - year(b) || a.id.localeCompare(b.id));
+    const name = /collection$/i.test(g.name) ? g.name : `${g.name} Collection`;
+    rules.push({ key: `collection:${key}`, name, kind: "movies", tagline: `${g.items.length} films, in order`,
+      itemIds: sorted.map((i) => i.id), ordering: "cyclic", slotMs: 30 * MIN, preferredNumber: 40 });
+  }
+  return rules;
+}
+
+function slug(s: string): string {
+  return s.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+}
+
+/** Longest break (2, 1.5 or 1 min) that keeps every program within the slots it takes anyway. */
+export function midBreakFor(items: LibItem[], slotMs: number): number | undefined {
+  const withBps = items.map((i) => ({ d: i.durationMs!, n: breakpoints(i).length }));
+  if (!withBps.some((x) => x.n > 0)) return undefined;
+  for (const mb of [120_000, 90_000, 60_000])
+    if (withBps.every(({ d, n }) => Math.ceil((d + n * mb) / slotMs) === Math.ceil(d / slotMs))) return mb;
+  return undefined;
 }
 
 /**
@@ -247,7 +718,9 @@ function sortEpisodes(list: LibItem[]): LibItem[] {
   return list.slice().sort((a, b) => {
     const pa = a.parsed, pb = b.parsed;
     if (pa.kind !== "episode" || pb.kind !== "episode") return 0;
-    return pa.showKey.localeCompare(pb.showKey) || pa.season - pb.season || pa.episode - pb.episode || a.id.localeCompare(b.id);
+    // Season 0 (specials) sorts after the regular seasons.
+    const sa = pa.season === 0 ? 1e6 : pa.season, sb = pb.season === 0 ? 1e6 : pb.season;
+    return pa.showKey.localeCompare(pb.showKey) || sa - sb || pa.episode - pb.episode || a.id.localeCompare(b.id);
   });
 }
 

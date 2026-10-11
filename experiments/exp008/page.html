@@ -1,0 +1,132 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>EXP-008 tuner page</title>
+<style>html,body{margin:0;background:#000}video{width:640px;height:360px}</style>
+<video id="v" playsinline muted></video>
+<script type="module">
+// Same timing logic as app/public/js/player.js, with the media step swappable so
+// EXP-008 can compare strategies in a real browser against a metered server.
+const video = document.getElementById("v");
+const MIN_WAIT = 150, MAX_WAIT = 1200;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+
+let token = 0, lastPressAt = 0, lastGap = Infinity, visit = 0;
+const marks = [];
+let cfg = { strategy: "adaptive", peekAfterMs: 0, peekMinWaitMs: 0, k: 1.3, maxWait: MAX_WAIT };
+
+function adaptiveWait() {
+  const t = performance.now();
+  const gap = t - lastPressAt;
+  lastPressAt = t;
+  const wait = gap > 2 * MAX_WAIT ? MIN_WAIT : clamp(cfg.k * Math.min(gap, lastGap * 2), MIN_WAIT, cfg.maxWait);
+  lastGap = gap > 2 * MAX_WAIT ? Infinity : gap;
+  return wait;
+}
+
+function stop() {
+  video.onloadedmetadata = video.onplaying = video.onseeked = null;
+  video.pause();
+  if (video.getAttribute("src")) {
+    video.removeAttribute("src");
+    video.load();
+  }
+}
+
+// Live point for a channel: each channel is mid-program, and the station clock keeps running.
+const T0 = performance.now();
+const liveSec = (ch) => 40 + ((ch * 37) % 120) + (performance.now() - T0) / 1000;
+
+// Picture: a decoded frame at the live point is on screen (not frame 0 of a
+// header-only open). Motion: playback has advanced 150 ms past where it started.
+function watchFrames(m) {
+  const tick = () => {
+    if (m.my !== token) return;
+    if (video.readyState >= 2 && !video.seeking && video.currentTime > 1) m.picture ??= performance.now() - m.t0;
+    if (m.playStarted && video.currentTime > m.playFrom + 0.15) return void (m.motion ??= performance.now() - m.t0);
+    setTimeout(tick, 10);
+  };
+  tick();
+}
+
+async function resolve(ch) {
+  await fetch(`/api/resolve?ch=${ch}`);
+}
+
+// mode: "play" opens and plays; "peek" opens paused and shows the frame where the
+// program will be when the wait ends; "meta" opens paused and reads only headers.
+function open(ch, m, { mode, aheadMs = 0 }) {
+  const paused = mode !== "play";
+  const v = ++visit;
+  video.preload = paused ? "metadata" : "auto";
+  video.src = `/m/${ch}.webm?visit=${v}`;
+  m.opened = performance.now() - m.t0;
+  watchFrames(m);
+  video.onloadedmetadata = () => {
+    if (m.my !== token) return;
+    if (mode === "meta") return;
+    video.currentTime = liveSec(ch) + aheadMs / 1000;
+    if (!paused) play(ch, m);
+  };
+  video.load();
+}
+
+function play(ch, m) {
+  // Rejoin the station: if a peek already shows a frame, jump to where the
+  // program is now, which is at most the wait later.
+  const live = liveSec(ch);
+  if (Math.abs(video.currentTime - live) > 1) video.currentTime = live;
+  m.playFrom = video.currentTime;
+  m.playStarted = true;
+  video.play().catch(() => {});
+}
+
+window.press = async (ch) => {
+  const my = ++token;
+  const m = { ch, my, t0: performance.now() };
+  marks.push(m);
+  const wait = adaptiveWait();
+  stop();
+  const s = cfg.strategy;
+  if (s === "now") {
+    await resolve(ch);
+    if (my !== token) return;
+    return open(ch, m, { mode: "play" });
+  }
+  await sleep(Math.min(MIN_WAIT, wait));
+  if (my !== token) return;
+  const r = resolve(ch);
+  if ((s === "peek" || s === "meta") && wait >= cfg.peekMinWaitMs) {
+    await sleep(Math.max(0, cfg.peekAfterMs - MIN_WAIT));
+    if (my !== token) return;
+    await r;
+    if (my !== token) return;
+    open(ch, m, { mode: s, aheadMs: Math.max(0, wait - (performance.now() - m.t0)) });
+    const left = wait - (performance.now() - m.t0);
+    if (left > 0) await sleep(left);
+    if (my !== token) return;
+    if (video.readyState >= 1) play(ch, m);
+    else video.onloadedmetadata = () => {
+      if (m.my !== token) return;
+      play(ch, m);
+    };
+    return;
+  }
+  if (wait > MIN_WAIT) await sleep(wait - MIN_WAIT);
+  await r;
+  if (my !== token) return;
+  open(ch, m, { mode: "play" });
+};
+
+window.configure = (c) => {
+  cfg = { ...cfg, ...c };
+  token++;
+  stop();
+  marks.length = 0;
+  lastPressAt = 0;
+  lastGap = Infinity;
+};
+window.results = () => marks.map(({ ch, opened, picture, motion, playStarted, playFrom }) => ({ ch, opened, picture, motion, playStarted, playFrom }));
+window.state = () => ({ t: video.currentTime, paused: video.paused, rs: video.readyState, ns: video.networkState, seeking: video.seeking, err: video.error?.message, src: video.getAttribute("src") });
+window.stopAll = () => (token++, stop());
+</script>

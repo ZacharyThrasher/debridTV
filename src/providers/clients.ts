@@ -3,7 +3,7 @@
 // nothing has been exercised against a live account (that waits for an explicit
 // go-ahead). Every call is counted so API usage is measurable from the client side.
 
-import { classify, type InventoryFile, type PlaybackGrant, type ProviderClient } from "./types.ts";
+import { classify, type AccountInfo, type InventoryFile, type PlaybackGrant, type ProviderClient } from "./types.ts";
 
 export class CallCounter {
   readonly calls: Record<string, number> = {};
@@ -44,7 +44,8 @@ export class RealDebridClient implements ProviderClient {
       for (const r of rows)
         out.push({
           provider: "realdebrid",
-          ref: r.links.length === 1 ? r.links[0]! : `pack:${r.id}`,
+          // Not finished at RD: listed so the viewer can see it, never resolved or expanded.
+          ref: r.status !== "downloaded" ? `torrent:${r.id}` : r.links.length === 1 ? r.links[0]! : `pack:${r.id}`,
           name: r.filename,
           bytes: r.bytes,
           providerState: r.status,
@@ -86,10 +87,28 @@ export class RealDebridClient implements ProviderClient {
     return { url: body.download, expiresAtMs: null, obtainedAtMs: Date.now() };
   }
 
+  /** GET /user: one call. Keeps the plan type and premium end, nothing personal. */
+  async account(signal?: AbortSignal): Promise<AccountInfo> {
+    this.counter.add("rd.user");
+    const res = await fetch(`${this.base}/rest/1.0/user`, { headers: this.auth(), signal });
+    if (!res.ok) throw classify(res.status, await res.text());
+    const u = (await res.json()) as { type?: string; premium?: number; expiration?: string | null };
+    const until = u.expiration ? Date.parse(u.expiration) : NaN;
+    return {
+      plan: u.type ?? null,
+      premiumUntilMs: Number.isFinite(until) ? until : null,
+      premium: u.type === "premium" && (u.premium ?? 1) > 0,
+      checkedAtMs: Date.now(),
+    };
+  }
+
   private auth() {
     return { authorization: `Bearer ${this.token}` };
   }
 }
+
+// TorBox plan codes as used by its SDK (inferred; unknown codes are shown as-is).
+const TB_PLANS: Record<number, string> = { 0: "Free", 1: "Essential", 2: "Pro", 3: "Standard" };
 
 export class TorBoxClient implements ProviderClient {
   readonly id = "torbox" as const;
@@ -130,6 +149,22 @@ export class TorBoxClient implements ProviderClient {
     const body = (await res.json()) as { data: string };
     // SDK text conflicts on 1h vs 3h link windows (handoff §5.2): do not trust either.
     return { url: body.data, expiresAtMs: null, obtainedAtMs: Date.now() };
+  }
+
+  /** GET /user/me: one call. Plan and premium end only. */
+  async account(signal?: AbortSignal): Promise<AccountInfo> {
+    this.counter.add("tb.user");
+    const res = await fetch(`${this.base}/v1/api/user/me`, { headers: this.auth(), signal });
+    if (!res.ok) throw classify(res.status, await res.text());
+    const d = ((await res.json()) as { data?: { plan?: number; premium_expires_at?: string | null } }).data ?? {};
+    const until = d.premium_expires_at ? Date.parse(d.premium_expires_at) : NaN;
+    const untilMs = Number.isFinite(until) ? until : null;
+    return {
+      plan: typeof d.plan === "number" ? (TB_PLANS[d.plan] ?? `Plan ${d.plan}`) : null,
+      premiumUntilMs: untilMs,
+      premium: d.plan !== 0 && (untilMs == null || untilMs > Date.now()),
+      checkedAtMs: Date.now(),
+    };
   }
 
   /** The redirecting API URL. Handing this to a player is the A03 anti-pattern. */
