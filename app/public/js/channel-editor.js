@@ -230,7 +230,7 @@ root.addEventListener("click", async (e) => {
   else if (d.save !== undefined) return save();
   else if (d.ratings !== undefined) {
     closeChannelEditor();
-    return import("./panel.js").then((m) => m.openPanel("library"));
+    return import("./panel.js").then((m) => m.openPanel("library", "ratings"));
   }
   else return;
   render();
