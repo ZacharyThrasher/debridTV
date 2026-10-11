@@ -13,6 +13,7 @@ import { breakCard, offAirCard, unavailableCard, messageCard, hideCard } from ".
 import * as cards from "./cards.js"; // lockedCard comes from workstream B
 import { osd, osdHide, bug, setBanner, showBanner } from "./ui.js";
 import { initSignOff, signedOff } from "./signoff.js";
+import { musicShow, musicHide } from "./music.js";
 import { tracksFor, selectionFor, needsCompat, selectionQuery, audioTracks, subTracks, defaultAudio, isText, trackLabel, Captions } from "./tracks.js";
 
 const video = document.getElementById("video");
@@ -162,8 +163,16 @@ function render(ch, info, my, silent, hold = 0) {
     tv.route = "card";
     staticOff();
     unavailableCard(ch, a, { policy: true });
+  } else if (a.provider === "demo" && a.kind === "track") {
+    // A demo music channel: the music screen with stand-in levels, no sound.
+    tv.route = "demo";
+    synthStop();
+    musicShow(a, ch, { posMs: filePos, demo: true });
+    staticOff();
+    startWatch(a.itemId, ch.id);
   } else if (a.provider === "demo") {
     tv.route = "demo";
+    musicHide();
     synthStart(a, info.fileOffsetMs + (now() - info.now));
     staticOff();
     startWatch(a.itemId, ch.id);
@@ -207,6 +216,8 @@ const aacOk = !!probeEl.canPlayType('audio/mp4; codecs="mp4a.40.2"');
 function chooseRoute(a) {
   const c = a.codecs || {};
   const audio = Array.isArray(c.audio) ? c.audio[0] : c.audio;
+  // A music track (N-23a) has no picture; any container the browser can open will do.
+  if (a.kind === "track") return !audio || AUDIO_OK.has(audio) || !tv.ffmpeg ? "direct" : "live";
   const containerOk = c.container === "mp4" || c.container === "matroska" || !c.container || c.container === "unknown";
   const mkvNative = c.container !== "matroska" || !!video.canPlayType("video/x-matroska") || /Chrome\//.test(navigator.userAgent);
   const ok = containerOk && mkvNative && canVideo(c.video) && (!audio || AUDIO_OK.has(audio));
@@ -233,6 +244,7 @@ async function playMedia(ch, info, my, forced = null, hold = 0) {
   tv.route = route;
   const offsetAt = () => info.fileOffsetMs + (now() - info.now);
   media = { itemId: a.itemId, route, liveStart: 0, ch, info, sel, my };
+  if (a.kind === "track") musicShow(a, ch, { posMs: filePos });
   applyVolume();
   const onPlaying = () => {
     if (my !== token) return;
@@ -408,6 +420,7 @@ function autoplayHint() {
 
 function stopMedia() {
   flushWatch(true);
+  musicHide();
   captions.stop();
   video.playbackRate = 1;
   media = null;
