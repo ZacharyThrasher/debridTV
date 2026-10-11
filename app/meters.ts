@@ -12,8 +12,38 @@ export interface MeterEvent {
   detail: string;
 }
 
+/** Published request limits (handoff §5.1, §5.3). Changeable, so shown as context, not as a target. */
+export const LIMITS = {
+  realdebrid: { perMinute: 250, scope: "all requests together" },
+  torbox: { perMinute: 300, scope: "per endpoint" },
+} as const;
+
+/** Counts calls and remembers when they happened, so the busiest minute can be shown. */
+class RateCounter extends CallCounter {
+  private readonly times: Array<[number, string]> = [];
+  readonly peak: Record<string, number> = {};
+
+  override add(name: string): void {
+    super.add(name);
+    const now = Date.now();
+    this.times.push([now, name]);
+    while (this.times.length && now - this.times[0]![0] > 60_000) this.times.shift();
+    // RD's limit counts every endpoint together; TorBox's counts each endpoint.
+    const bucket = name.startsWith("rd.") ? "realdebrid" : name;
+    const inWindow = this.times.filter(([, n]) => (bucket === "realdebrid" ? n.startsWith("rd.") : n === name)).length;
+    this.peak[bucket] = Math.max(this.peak[bucket] ?? 0, inWindow);
+  }
+
+  lastMinute(): Record<string, number> {
+    const now = Date.now();
+    const out: Record<string, number> = {};
+    for (const [t, n] of this.times) if (now - t <= 60_000) out[n] = (out[n] ?? 0) + 1;
+    return out;
+  }
+}
+
 export class Meters {
-  readonly api = new CallCounter();
+  readonly api = new RateCounter();
   readonly bytes: Record<ByteKind, number> = { playback: 0, probe: 0 };
   streamsOpened = 0;
   streamsCancelled = 0;
@@ -50,6 +80,12 @@ export class Meters {
       since: this.since,
       api: { ...this.api.calls },
       apiTotal: this.api.total,
+      apiLastMinute: this.api.lastMinute(),
+      // Busiest minute so far, against each provider's published limit.
+      apiPeak: Object.entries(this.api.peak).map(([bucket, peak]) => {
+        const provider = bucket === "realdebrid" || bucket.startsWith("rd.") ? "realdebrid" : "torbox";
+        return { bucket, peak, limit: LIMITS[provider].perMinute, scope: LIMITS[provider].scope };
+      }),
       bytes: { ...this.bytes },
       streamsOpened: this.streamsOpened,
       streamsCancelled: this.streamsCancelled,

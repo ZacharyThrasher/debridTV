@@ -444,6 +444,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     if (!it) return json(res, 404, {});
     return json(res, 200, {
       id: it.id, title: displayTitle(it), provider: it.provider, container: it.container, video: it.video, audio: it.audio,
+      tracks: it.tracks ?? [], chaptersMs: it.chaptersMs ?? [],
       durationMs: it.durationMs, ...availabilityView(it), seenMs: ledger.seenMs(it.id), watched: isWatched(it.id, it.durationMs),
     });
   }

@@ -5,20 +5,42 @@ export interface ProbeResult {
   durationMs: number | null;
   video?: string;
   audio?: string[];
+  /** Every track in file order. `index` counts within its kind (ffmpeg's 0:a:N / 0:s:N). */
+  tracks?: Track[];
+  /** Chapter start times in file time (Matroska only, when chapters precede the first cluster). */
+  chaptersMs?: number[];
   bytesRead: number;
+}
+
+export interface Track {
+  kind: "video" | "audio" | "subtitle";
+  index: number;
+  codec: string;
+  /** ISO 639-2 or BCP 47 as stored in the file; "und" when the file doesn't say. */
+  lang: string;
+  name?: string;
+  default?: boolean;
+  forced?: boolean;
 }
 export type RangeReader = (start: number, length: number) => Promise<Uint8Array>; // may return fewer bytes
 
 export const HEAD_BYTES = 256 * 1024;
 export const MAX_PROBE_BYTES = 3 * 1024 * 1024;
 
-type Info = { durationMs: number | null; video?: string; audio?: string[] };
+type Info = { durationMs: number | null; video?: string; audio?: string[]; tracks?: Track[]; chaptersMs?: number[] };
 
-function finish(durationMs: number | null, video: string | undefined, audio: string[]): Info {
+function finish(durationMs: number | null, video: string | undefined, audio: string[], tracks: Track[] = [], chapters: number[] = []): Info {
   const out: Info = { durationMs };
   if (video !== undefined) out.video = video;
   if (audio.length > 0) out.audio = audio;
+  if (tracks.length > 0) out.tracks = tracks;
+  if (chapters.length > 0) out.chaptersMs = [...new Set(chapters)].sort((a, b) => a - b);
   return out;
+}
+
+function addTrack(list: Track[], kind: Track["kind"], t: Omit<Track, "kind" | "index">): void {
+  const index = list.filter((x) => x.kind === kind).length;
+  list.push({ kind, index, ...t });
 }
 
 // ---------------------------------------------------------------------------
@@ -33,6 +55,15 @@ const ID_TRACK_ENTRY = 0xae;
 const ID_TRACK_TYPE = 0x83;
 const ID_CODEC_ID = 0x86;
 const ID_CLUSTER = 0x1f43b675;
+const ID_LANGUAGE = 0x22b59c;
+const ID_LANGUAGE_BCP47 = 0x22b59d;
+const ID_NAME = 0x536e;
+const ID_FLAG_DEFAULT = 0x88;
+const ID_FLAG_FORCED = 0x55aa;
+const ID_CHAPTERS = 0x1043a770;
+const ID_EDITION = 0x45b9;
+const ID_CHAPTER_ATOM = 0xb6;
+const ID_CHAPTER_START = 0x91;
 
 const MKV_CODECS: [RegExp, string][] = [
   [/^V_MPEG4\/ISO\/AVC/, "h264"],
@@ -48,6 +79,11 @@ const MKV_CODECS: [RegExp, string][] = [
   [/^A_TRUEHD/, "truehd"],
   [/^A_FLAC/, "flac"],
   [/^A_MPEG\/L3/, "mp3"],
+  [/^S_TEXT\/UTF8/, "srt"],
+  [/^S_TEXT\/(ASS|SSA)/, "ass"],
+  [/^S_TEXT\/WEBVTT/, "webvtt"],
+  [/^S_HDMV\/PGS/, "pgs"],
+  [/^S_VOBSUB/, "vobsub"],
 ];
 
 function mkvCodecName(id: string): string {
@@ -98,7 +134,9 @@ interface MkvState {
   sawCluster: boolean;
   video?: string;
   audio: string[];
-  cur?: { type?: number; codec?: string };
+  tracks: Track[];
+  chapters: number[];
+  cur?: { type?: number; codec?: string; lang?: string; bcp47?: string; name?: string; def?: boolean; forced?: boolean };
   done: boolean;
 }
 
@@ -116,10 +154,22 @@ function mkvWalk(b: Uint8Array, start: number, end: number, st: MkvState): void 
       case ID_SEGMENT:
       case ID_INFO:
       case ID_TRACKS:
+      case ID_CHAPTERS:
+      case ID_EDITION:
+        // Keep walking past Info and Tracks to the first Cluster: Chapters usually sit between.
         mkvWalk(b, dataStart, clipped, st);
         if (idr.id === ID_INFO) st.sawInfo = true;
         if (idr.id === ID_TRACKS) st.sawTracks = true;
-        if (st.sawInfo && st.sawTracks) st.done = true;
+        break;
+      case ID_CHAPTER_ATOM: {
+        // Only top-level atoms of each edition; nested atoms are sub-chapters.
+        const inner = { ...st, chapters: [] as number[], done: false };
+        mkvWalk(b, dataStart, clipped, inner);
+        if (inner.chapters.length) st.chapters.push(inner.chapters[0]!);
+        break;
+      }
+      case ID_CHAPTER_START:
+        if (dataEnd <= b.length && szr.size > 0 && szr.size <= 8) st.chapters.push(Math.round(readUint(b, dataStart, dataEnd) / 1_000_000));
         break;
       case ID_TRACK_ENTRY: {
         st.cur = {};
@@ -128,11 +178,35 @@ function mkvWalk(b: Uint8Array, start: number, end: number, st: MkvState): void 
         st.cur = undefined;
         if (cur.codec !== undefined) {
           const name = mkvCodecName(cur.codec);
+          const kind = cur.type === 1 ? "video" : cur.type === 2 ? "audio" : cur.type === 0x11 ? "subtitle" : null;
           if (cur.type === 1) st.video ??= name;
           else if (cur.type === 2) st.audio.push(name);
+          // Matroska's defaults: language "eng" when absent, FlagDefault 1, FlagForced 0.
+          if (kind) addTrack(st.tracks, kind, { codec: name, lang: cur.bcp47 ?? cur.lang ?? "eng", ...(cur.name ? { name: cur.name } : {}),
+            default: cur.def ?? true, forced: cur.forced ?? false });
         }
         break;
       }
+      case ID_LANGUAGE:
+      case ID_LANGUAGE_BCP47:
+      case ID_NAME:
+        if (st.cur && dataEnd <= b.length && szr.size > 0 && szr.size < 512) {
+          let e = dataEnd;
+          while (e > dataStart && b[e - 1] === 0) e--;
+          const text = new TextDecoder(idr.id === ID_NAME ? "utf-8" : "latin1").decode(b.subarray(dataStart, e));
+          if (idr.id === ID_LANGUAGE) st.cur.lang = text;
+          else if (idr.id === ID_LANGUAGE_BCP47) st.cur.bcp47 = text;
+          else st.cur.name = text;
+        }
+        break;
+      case ID_FLAG_DEFAULT:
+      case ID_FLAG_FORCED:
+        if (st.cur && dataEnd <= b.length && szr.size > 0 && szr.size <= 8) {
+          const v = readUint(b, dataStart, dataEnd) === 1;
+          if (idr.id === ID_FLAG_DEFAULT) st.cur.def = v;
+          else st.cur.forced = v;
+        }
+        break;
       case ID_CLUSTER:
         st.sawCluster = true;
         st.done = true;
@@ -165,7 +239,7 @@ function mkvWalk(b: Uint8Array, start: number, end: number, st: MkvState): void 
 }
 
 function mkvParse(head: Uint8Array): Info & { sawCluster: boolean } {
-  const st: MkvState = { scale: 1_000_000, duration: null, sawInfo: false, sawTracks: false, sawCluster: false, audio: [], done: false };
+  const st: MkvState = { scale: 1_000_000, duration: null, sawInfo: false, sawTracks: false, sawCluster: false, audio: [], tracks: [], chapters: [], done: false };
   try {
     mkvWalk(head, 0, head.length, st);
   } catch {
@@ -175,7 +249,8 @@ function mkvParse(head: Uint8Array): Info & { sawCluster: boolean } {
   if (st.duration !== null && Number.isFinite(st.duration) && st.duration >= 0) {
     ms = Math.round((st.duration * st.scale) / 1_000_000);
   }
-  return { ...finish(ms, st.video, st.audio), sawCluster: st.sawCluster };
+  // Without a Cluster in the buffer, Info and Tracks are still enough to stop reading.
+  return { ...finish(ms, st.video, st.audio, st.tracks, st.chapters), sawCluster: st.sawCluster || (st.sawInfo && st.sawTracks) };
 }
 
 export function parseMatroska(head: Uint8Array): { durationMs: number | null; video?: string; audio?: string[] } {
@@ -227,6 +302,7 @@ function* children(b: Uint8Array, start: number, end: number): Generator<Box> {
 const MP4_CODECS: Record<string, string> = {
   avc1: "h264", avc3: "h264", hvc1: "hevc", hev1: "hevc", av01: "av1", vp09: "vp9",
   mp4a: "aac", "ac-3": "ac3", "ec-3": "eac3", Opus: "opus", fLaC: "flac", ".mp3": "mp3",
+  tx3g: "mov_text", wvtt: "webvtt", stpp: "ttml",
 };
 
 interface Mp4State {
@@ -235,18 +311,28 @@ interface Mp4State {
   fragDuration: number | null;
   video?: string;
   audio: string[];
+  tracks: Track[];
 }
 
 function parseTrak(b: Uint8Array, box: Box, end: number, st: Mp4State): void {
   const trakEnd = Math.min(end, box.at + box.size);
   let handler = "";
   let codec = "";
+  let lang = "und";
   const walk = (start: number, stop: number, path: string[]): void => {
     for (const c of children(b, start, stop)) {
       const cend = Math.min(stop, c.at + c.size);
       const bodyStart = c.at + c.header;
       if (c.type === "mdia" || c.type === "minf" || c.type === "stbl") {
         walk(bodyStart, cend, [...path, c.type]);
+      } else if (c.type === "mdhd" && bodyStart + 24 <= cend) {
+        // Packed ISO 639-2: three 5-bit letters after the times (version 0: +20, version 1: +32).
+        const at = bodyStart + (b[bodyStart] === 1 ? 32 : 20);
+        if (at + 2 <= cend) {
+          const v = (b[at]! << 8) | b[at + 1]!;
+          const l = String.fromCharCode(((v >> 10) & 31) + 96, ((v >> 5) & 31) + 96, (v & 31) + 96);
+          if (/^[a-z]{3}$/.test(l)) lang = l;
+        }
       } else if (c.type === "hdlr" && bodyStart + 12 <= cend) {
         handler = fourcc(b, bodyStart + 8);
       } else if (c.type === "stsd" && bodyStart + 16 <= cend && u32(b, bodyStart + 4) > 0) {
@@ -259,6 +345,8 @@ function parseTrak(b: Uint8Array, box: Box, end: number, st: Mp4State): void {
   if (codec === "") return;
   if (handler === "vide") st.video ??= codec;
   else if (handler === "soun") st.audio.push(codec);
+  const kind = handler === "vide" ? "video" : handler === "soun" ? "audio" : ["sbtl", "subt", "text"].includes(handler) ? "subtitle" : null;
+  if (kind) addTrack(st.tracks, kind, { codec, lang });
 }
 
 function parseMoov(b: Uint8Array, box: Box, st: Mp4State): void {
@@ -294,12 +382,12 @@ function mp4Info(st: Mp4State): Info {
   let units = st.duration;
   if ((units === null || units === 0) && st.fragDuration) units = st.fragDuration;
   const ms = units !== null && st.timescale > 0 && (units > 0 || st.duration === 0) ? Math.round((units * 1000) / st.timescale) : null;
-  return finish(ms, st.video, st.audio);
+  return finish(ms, st.video, st.audio, st.tracks);
 }
 
 /** `boxes` starts at a top-level box boundary located at `fileOffset` in the file. */
 export function parseMp4(boxes: Uint8Array, fileOffset: number): { durationMs: number | null; video?: string; audio?: string[]; moovAt?: number } {
-  const st: Mp4State = { timescale: 0, duration: null, fragDuration: null, audio: [] };
+  const st: Mp4State = { timescale: 0, duration: null, fragDuration: null, audio: [], tracks: [] };
   let moovAt: number | undefined;
   try {
     for (const box of children(boxes, 0, boxes.length)) {

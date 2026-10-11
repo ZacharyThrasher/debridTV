@@ -186,3 +186,43 @@ test("Stop ends a scan promptly, even mid-pause", async () => {
     await mock.close();
   }
 });
+
+test("D1: a Real-Debrid pack opens up into its files during the scan; samples stay off the air", async () => {
+  const fx = new Uint8Array(readFileSync(new URL("./fixtures/fixture-h264-aac.mkv", import.meta.url)));
+  const ep = (i: number) => ({ ref: `rd:e${i}`, name: `Pack.Show.S01E0${i}.mkv`, bytes: fx.byteLength, content: fx, pack: "Pack.Show.S01.1080p" });
+  const mock = await startMockProviders({ files: [...[1, 2, 3, 4, 5, 6].map(ep), { ref: "rd:smp", name: "Sample/pack.show.sample.mkv", bytes: 500, pack: "Pack.Show.S01.1080p" }] });
+  try {
+    const meters = new Meters();
+    const lib = new Library(() => ({ rdToken: "r".repeat(20), scanPerMinute: 120 }), meters, () => {}, { realdebrid: `${mock.baseUrl}/rd` });
+    await lib.refresh("realdebrid");
+    assert.equal(lib.pendingPacks(), 1);
+    const mine = () => lib.items().filter((i) => i.packId || /pack/i.test(i.name));
+    assert.equal(mine().length, 0, "nothing per-file until the pack is opened");
+    await lib.runScan();
+    assert.equal(meters.api.calls["rd.torrents.info"], 1, "one request to open the pack");
+    assert.equal(lib.pendingPacks(), 0);
+    assert.equal(mine().length, 7);
+    const rules = autoRules(mine(), []);
+    const show = rules.find((r) => r.key === "show:pack show")!;
+    assert.equal(show.itemIds.length, 6);
+    assert.ok(mine().some((i) => i.parsed.kind === "other" && !show.itemIds.includes(i.id)), "the sample is listed but not aired");
+    // A refresh keeps the opened files present while the pack is still listed.
+    await lib.refresh("realdebrid");
+    assert.ok(mine().every((i) => i.present));
+  } finally {
+    await mock.close();
+  }
+});
+
+test("N-22b: chapters become mid-program breaks only where they fit the slot", async () => {
+  const { midBreakFor } = await import("../app/lineup.ts");
+  const { breakpoints } = await import("../app/library.ts");
+  assert.deepEqual(breakpoints({ durationMs: 22 * MIN, chaptersMs: [0, 1 * MIN, 7 * MIN, 9 * MIN, 14 * MIN, 21 * MIN] }), [7 * MIN, 14 * MIN]);
+  const eps = show("Chap Show", 6, { chaptersMs: [0, 7 * MIN, 14 * MIN] });
+  assert.equal(midBreakFor(eps, 30 * MIN), 120_000, "22 min + 2 breaks of 2 min fits a half hour");
+  const tight = show("Tight Show", 6, { durationMs: 28 * MIN, chaptersMs: [0, 9 * MIN, 18 * MIN] });
+  assert.equal(midBreakFor(tight, 30 * MIN), 60_000, "28 min leaves room for two 1-minute breaks only");
+  assert.equal(midBreakFor(show("Plain Show", 6), 30 * MIN), undefined, "no chapters, no invented breaks");
+  const rule = autoRules(eps, []).find((r) => r.key === "show:chap show")!;
+  assert.equal(rule.midBreakMs, 120_000);
+});

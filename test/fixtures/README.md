@@ -27,3 +27,15 @@ ffmpeg -y $V $A -t 7.5 -c:v libx264 -preset ultrafast -crf 40 -c:a aac -b:a 16k 
 | fixture-vp9-opus.mkv | matroska | vp9 | opus | 4.408 s |
 | fixture-h264-aac-moov-end.mp4 | mp4 (moov last) | h264 | aac | 7.500 s |
 | fixture-h264-aac-faststart.mp4 | mp4 (moov first) | h264 | aac | 7.500 s |
+
+`fixture-tracks-chapters.mkv` (tracks and chapters; 8.023 s): two audio tracks (eng, spa titled "Español", not
+default), one forced English SRT subtitle, chapters at 0 / 2 / 5 s.
+
+```sh
+printf ';FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=2000\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=2000\nEND=5000\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=5000\nEND=8000\n' > ch.txt
+printf '1\n00:00:00,500 --> 00:00:02,000\nHello\n' > s.srt
+ffmpeg -y $V $A -f lavfi -i sine=frequency=660 -i s.srt -i ch.txt -t 8 -map 0:v -map 1:a -map 2:a -map 3:s \
+  -map_metadata 4 -map_chapters 4 -c:v libx264 -preset ultrafast -crf 40 -c:a aac -b:a 16k -c:s srt \
+  -metadata:s:a:0 language=eng -metadata:s:a:1 language=spa -metadata:s:a:1 title=Español \
+  -metadata:s:s:0 language=eng -disposition:a:1 0 -disposition:s:0 forced fixture-tracks-chapters.mkv
+```

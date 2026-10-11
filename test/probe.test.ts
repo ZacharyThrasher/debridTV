@@ -246,3 +246,23 @@ test("probe: reads counted and bounded for an ordinary mkv", async () => {
   assert.equal(reads[0][0], 0);
   assert.equal(r.bytesRead, data.length);
 });
+
+test("N-18a / N-22b: track list with languages and flags, and chapter starts (Matroska)", async () => {
+  // fixture-tracks-chapters.mkv: h264, aac eng, aac spa "Español" (not default), srt eng forced, chapters at 0/2/5 s.
+  const r = await probe(memoryReader(fx("fixture-tracks-chapters.mkv")).read, fx("fixture-tracks-chapters.mkv").byteLength);
+  close(r.durationMs, 8023);
+  assert.deepEqual(r.tracks?.map((t) => [t.kind, t.index, t.codec, t.lang]), [
+    ["video", 0, "h264", "und"], ["audio", 0, "aac", "eng"], ["audio", 1, "aac", "spa"], ["subtitle", 0, "srt", "eng"],
+  ]);
+  assert.equal(r.tracks?.[2]?.name, "Español");
+  assert.equal(r.tracks?.[3]?.forced, true);
+  assert.deepEqual(r.chaptersMs, [0, 2000, 5000]);
+  assert.deepEqual(r.audio, ["aac", "aac"], "the old summary fields are unchanged");
+});
+
+test("MP4 tracks carry their language from mdhd", async () => {
+  const data = fx("fixture-h264-aac-faststart.mp4");
+  const r = await probe(memoryReader(data).read, data.byteLength);
+  assert.deepEqual(r.tracks?.map((t) => [t.kind, t.codec]), [["video", "h264"], ["audio", "aac"]]);
+  assert.ok(r.tracks?.every((t) => /^[a-z]{3}$/.test(t.lang)));
+});

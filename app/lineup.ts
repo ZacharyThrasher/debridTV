@@ -8,7 +8,7 @@ import type { Channel, Ordering } from "../src/clock/types.ts";
 import { hash32 } from "../src/clock/rng.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
 import { JsonFile } from "./store.ts";
-import type { LibItem } from "./library.ts";
+import { breakpoints, type LibItem } from "./library.ts";
 
 const MIN = 60_000;
 
@@ -261,7 +261,19 @@ export function autoRules(items: LibItem[], custom: CustomChannel[]): Rule[] {
       rules.push({ key: `custom:${c.id}`, name: c.name, kind: "custom", tagline: "Your channel", itemIds: ids, ordering: c.ordering,
         slotMs: c.slotMinutes ? c.slotMinutes * MIN : undefined, preferredNumber: 50 });
   }
+  // Mid-program breaks where the files have chapters, sized so no program spills into an extra slot.
+  const byId = new Map(usable.map((i) => [i.id, i]));
+  for (const r of rules) if (r.slotMs && r.kind !== "movies") r.midBreakMs = midBreakFor(r.itemIds.map((id) => byId.get(id)!), r.slotMs);
   return rules;
+}
+
+/** Longest break (2, 1.5 or 1 min) that keeps every program within the slots it takes anyway. */
+export function midBreakFor(items: LibItem[], slotMs: number): number | undefined {
+  const withBps = items.map((i) => ({ d: i.durationMs!, n: breakpoints(i).length }));
+  if (!withBps.some((x) => x.n > 0)) return undefined;
+  for (const mb of [120_000, 90_000, 60_000])
+    if (withBps.every(({ d, n }) => Math.ceil((d + n * mb) / slotMs) === Math.ceil(d / slotMs))) return mb;
+  return undefined;
 }
 
 /**

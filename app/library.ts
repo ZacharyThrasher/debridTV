@@ -18,7 +18,7 @@ import { readdirSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { join, relative, extname } from "node:path";
 import type { Availability, MediaItem, ProviderId } from "../src/clock/types.ts";
 import { parseName, type Parsed } from "../src/library/parse.ts";
-import { probe, type RangeReader } from "../src/library/probe.ts";
+import { probe, type RangeReader, type Track } from "../src/library/probe.ts";
 import { RealDebridClient, TorBoxClient } from "../src/providers/clients.ts";
 import { ProviderError, providerReady, type AccountInfo, type InventoryFile, type ProviderClient } from "../src/providers/types.ts";
 import { GrantCache } from "../src/tuner/grants.ts";
@@ -42,6 +42,10 @@ export interface LibItem {
   container?: string;
   video?: string;
   audio?: string[];
+  /** Every track (audio/subtitle languages for the track picker). */
+  tracks?: Track[];
+  /** Chapter starts from the file header, in file time. */
+  chaptersMs?: number[];
   probe?: { at: number; bytes: number; error?: string };
   availability: Availability;
   availabilityReason?: string;
@@ -488,6 +492,8 @@ export class Library {
       target.container = r.container;
       target.video = r.video;
       target.audio = r.audio;
+      target.tracks = r.tracks;
+      target.chaptersMs = r.chaptersMs;
       target.probe = { at: Date.now(), bytes: r.bytesRead, ...(r.durationMs == null ? { error: "No running time in the file header" } : {}) };
       if (r.durationMs == null) outcome = "failed";
       this.meters.log("probe", `${r.container} ${r.durationMs ? Math.round(r.durationMs / 60000) + " min" : "no duration"}, ${Math.round(r.bytesRead / 1024)} KB`);
@@ -598,10 +604,30 @@ export class Library {
         season: i.parsed.kind === "episode" ? i.parsed.season : undefined,
         episode: i.parsed.kind === "episode" ? i.parsed.episode : undefined,
         durationMs: i.durationMs,
+        breakpointsMs: breakpoints(i),
         source: { provider: i.provider, ref: i.ref },
       }];
     });
   }
+}
+
+/**
+ * Where a station break may go inside a program: chapter starts from the file
+ * itself, never guessed (handoff §6.1). Not in the first or last 3 minutes, at
+ * least 5 minutes apart, at most 3 per program.
+ */
+export function breakpoints(i: { durationMs: number | null; chaptersMs?: number[] }): number[] {
+  const d = i.durationMs;
+  if (!d || !i.chaptersMs?.length) return [];
+  const MIN3 = 3 * 60_000;
+  const out: number[] = [];
+  for (const c of i.chaptersMs) {
+    if (c < MIN3 || c > d - MIN3) continue;
+    if (out.length && c - out[out.length - 1]! < 5 * 60_000) continue;
+    out.push(c);
+    if (out.length === 3) break;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- status

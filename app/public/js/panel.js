@@ -373,6 +373,12 @@ async function meters() {
       <div class="stat"><b>${m.activeStreams}</b><span>open now</span></div>
       <div class="stat"><b>${m.peakStreams}</b><span>most at once</span></div>
     </div>
+    ${m.apiPeak?.length ? html`<h3>Busiest minute</h3>
+      <p class="lead">Your providers publish request limits. Other apps using the same key count too, so DebridTV should stay far below them.</p>
+      <div class="list">${m.apiPeak.map((p) => html`<div class="li" style="grid-template-columns:1fr auto">
+        <div><div class="t">${p.bucket === "realdebrid" ? "Real-Debrid" : p.bucket}</div><div class="d">limit ${p.limit} a minute, ${p.scope}</div>
+          <div class="progressbar" style="max-width:16em"><i style="width:${Math.min(100, (p.peak / p.limit) * 100).toFixed(1)}%"></i></div></div>
+        <b>${p.peak} / ${p.limit}</b></div>`)}</div>` : ""}
     ${api_.length ? html`<h3>Calls by type</h3><div class="list">${raw(api_.map(([k, v]) => html`<div class="li" style="grid-template-columns:1fr auto"><span>${k}</span><b>${v}</b></div>`).join(""))}</div>` : ""}
     <h3>Recent events</h3>
     <div class="events">${m.events.length ? raw(m.events.slice().reverse().map((e) => html`<div class="${e.kind}">${new Date(e.at).toLocaleTimeString()} · ${e.kind} · ${e.detail}</div>`).join("")) : raw("<div>No provider traffic yet.</div>")}</div>`;

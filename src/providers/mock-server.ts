@@ -20,6 +20,8 @@ export interface MockFile {
   policy?: boolean;
   /** ETag the media host sends for this file. Default: derived from ref and size. */
   etag?: string;
+  /** Real-Debrid: files sharing a pack name are listed as one multi-file torrent. */
+  pack?: string;
 }
 
 export interface MockAccount {
@@ -93,6 +95,19 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
     return w.length > perMinute;
   };
 
+  const rdLink = (f: MockFile) => `https://real-debrid.example/d/${f.ref.slice(3)}`;
+  /** RD view of the library: one torrent per file, or per pack. */
+  const rdTorrents = () => {
+    const out: Array<{ id: string; name: string; status: string; files: MockFile[] }> = [];
+    for (const f of list.filter((x) => x.ref.startsWith("rd:"))) {
+      const status = f.state === "downloading" ? "downloading" : f.state === "magnet_error" ? "magnet_error" : "downloaded";
+      const t = f.pack ? out.find((x) => x.id === `pack-${f.pack}`) : undefined;
+      if (t) t.files.push(f);
+      else out.push({ id: f.pack ? `pack-${f.pack}` : f.ref.slice(3), name: f.pack ?? f.name, status, files: [f] });
+    }
+    return out;
+  };
+
   const issueGrant = (ref: string): string => {
     const token = `g${++seq}`;
     grants.set(token, { ref, expiresAt: Date.now() + ttl });
@@ -132,12 +147,18 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
 
     if (p === "/rd/rest/1.0/torrents") {
       return void api(req, res, "rd.torrents", "rd", rdLimit, () =>
-        json(res, 200, list.filter((f) => f.ref.startsWith("rd:")).map((f) => ({
-          id: f.ref.slice(3), filename: f.name, bytes: f.bytes,
-          status: f.state === "downloading" ? "downloading" : f.state === "magnet_error" ? "magnet_error" : "downloaded",
-          links: f.state && f.state !== "ready" ? [] : [`https://real-debrid.example/d/${f.ref.slice(3)}`],
-        }))),
+        json(res, 200, rdTorrents().map((t) => ({ id: t.id, filename: t.name, bytes: t.files.reduce((n, f) => n + f.bytes, 0), status: t.status,
+          links: t.status === "downloaded" ? t.files.map(rdLink) : [] }))),
       );
+    }
+    const info = /^\/rd\/rest\/1\.0\/torrents\/info\/(.+)$/.exec(p);
+    if (info) {
+      return void api(req, res, "rd.torrents.info", "rd", rdLimit, () => {
+        const t = rdTorrents().find((x) => x.id === decodeURIComponent(info[1]!));
+        if (!t) return json(res, 404, { error: "unknown_ressource", error_code: 20 });
+        json(res, 200, { id: t.id, filename: t.name, status: t.status,
+          files: t.files.map((f, i) => ({ id: i + 1, path: `/${f.name}`, bytes: f.bytes, selected: 1 })), links: t.files.map(rdLink) });
+      });
     }
     if (p === "/rd/rest/1.0/unrestrict/link" && req.method === "POST") {
       return void api(req, res, "rd.unrestrict", "rd", rdLimit, (_u, body) => {
