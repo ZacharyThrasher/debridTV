@@ -501,6 +501,37 @@ body.guide-open { background: var(--bg); }
 .events { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: .78em; color: var(--dim); max-height: 18em; overflow-y: auto; border: 1px solid var(--line); border-radius: .7em; padding: .6em .8em; line-height: 1.6; }
 .events .cancel { color: var(--warn); } .events .error { color: var(--bad); } .events .stream-open { color: var(--ok); }
 
+/* Settings: library and account pieces (from panel.js, workstream C). */
+.panel .linkish { background: none; border: 0; padding: 0; color: var(--cyan); cursor: pointer; font: inherit; font-size: .85em; font-weight: 600; }
+.panel .linkish:hover { text-decoration: underline; }
+.panel .x-acts { display: flex; flex-wrap: wrap; gap: .9em; margin-top: .35em; }
+.panel .x-acct { margin: .6em 0 0; font-size: .92em; line-height: 1.45; }
+.panel .x-acct.warn { color: var(--warn); } .panel .x-acct.bad { color: var(--bad); }
+.panel .x-tile { text-align: left; color: inherit; font: inherit; cursor: pointer; }
+.panel .x-tile:hover { border-color: var(--line-strong); }
+.panel .x-tile.warn b { color: var(--warn); } .panel .x-tile.bad b { color: var(--bad); }
+.panel .x-what { margin-top: .8em; font-size: .9em; color: var(--dim); }
+.panel .x-what summary { cursor: pointer; font-weight: 600; }
+.panel .x-what ul { margin: .5em 0 0; padding-left: 1.2em; line-height: 1.55; }
+.panel .x-libbar { display: grid; grid-template-columns: 1fr auto; gap: .5em; margin-bottom: .7em; }
+.panel .x-libbar select { width: auto; }
+.panel .x-chips { display: flex; flex-wrap: wrap; gap: .4em; margin-bottom: .8em; }
+.panel .x-chip { border: 1px solid var(--line-strong); background: transparent; color: var(--dim); border-radius: 99px; padding: .35em .8em; cursor: pointer; font: inherit; font-size: .85em; }
+.panel .x-chip b { color: var(--ink); margin-left: .25em; }
+.panel .x-chip[aria-pressed="true"] { background: var(--ink); color: var(--panel-solid); border-color: var(--ink); }
+.panel .x-chip[aria-pressed="true"] b { color: inherit; }
+.panel .x-chip.warn b { color: var(--warn); } .panel .x-chip.bad b { color: var(--bad); }
+.panel .x-chip[aria-pressed="true"].warn b, .panel .x-chip[aria-pressed="true"].bad b { color: inherit; }
+.panel .x-why.warn { color: var(--warn); } .panel .x-why.bad { color: var(--bad); } .panel .x-why.ok { color: var(--ok); }
+.panel .x-name { font-family: var(--mono); font-size: .75em; opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34em; }
+.panel a.btn { text-decoration: none; display: inline-block; }
+@media (max-width: 560px) {
+  .panel .x-file { grid-template-columns: 1fr !important; }
+  .panel .x-file > .badge { order: -1; justify-self: start; }
+  .panel .x-libbar { grid-template-columns: 1fr; }
+  .panel .x-libbar select { width: 100%; }
+}
+
 /* ------------------------------------------------------------------ welcome, toast, dock */
 
 .welcome {
