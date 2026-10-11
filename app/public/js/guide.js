@@ -63,7 +63,7 @@ function render() {
   const s = span();
   const viewTo = viewFrom + s;
   const t = now();
-  const rowsVisible = Math.max(1, Math.floor((grid.clientHeight - (grid.querySelector(".grid-times")?.clientHeight || 0)) / rowPx()) || 6);
+  const rowsVisible = Math.max(1, Math.round((grid.querySelector(".grid-rows")?.clientHeight || grid.clientHeight) / rowPx()) || 6);
   if (row < scrollRow) scrollRow = row;
   if (row >= scrollRow + rowsVisible) scrollRow = row - rowsVisible + 1;
   scrollRow = clamp(scrollRow, 0, Math.max(0, data.rows.length - rowsVisible));
@@ -91,7 +91,7 @@ function render() {
           aria-label="${a.title}, ${fmtTime(a.start)}">
           ${a.start < viewFrom ? raw('<span class="cont">◂</span>') : ""}
           ${a.watched ? raw('<span class="watched" title="Watched">✓</span>') : ""}
-          <div class="ct">${a.title}</div>${sub ? html`<div class="cs">${sub}</div>` : ""}</div>`;
+          ${raw(breakTail(a))}<div class="ct">${a.title}</div>${sub ? html`<div class="cs">${sub}</div>` : ""}</div>`;
       });
     const nowLine = t >= viewFrom && t < viewTo ? raw(`<div class="now-line" style="left:${pct(t)}%"></div>`) : "";
     return html`<div class="row ${tv.current?.id === ch.id ? "current" : ""}" style="--h:${ch.hue}" role="row">
@@ -105,6 +105,28 @@ function render() {
   dateEl.textContent = new Date(viewFrom).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   clockEl.textContent = fmtTime(t);
   renderDetails(data.rows[row]?.channel, focus);
+  if (fitRows()) render();
+}
+
+/** The slot padding after a program, drawn as a hatched tail so long breaks are visible. */
+function breakTail(a) {
+  const pad = a.segments?.filter((x) => x.kind === "break" && x.reason === "padding" && x.end - x.start >= 2 * MIN);
+  if (!pad?.length) return "";
+  const from = Math.min(...pad.map((x) => x.start));
+  const left = ((from - a.start) / (a.end - a.start)) * 100;
+  return `<i class="tail" style="left:${left.toFixed(2)}%" title="Station break"></i>`;
+}
+
+/** Fit a whole number of rows so the last one is never cut in half. */
+let fittedTo = 0;
+function fitRows() {
+  const h = grid.querySelector(".grid-rows")?.clientHeight;
+  if (!h || h === fittedTo) return false;
+  fittedTo = h;
+  grid.style.removeProperty("--row");
+  const n = Math.max(1, Math.round(h / rowPx()));
+  grid.style.setProperty("--row", `${h / n}px`);
+  return true;
 }
 
 function rowPx() {
@@ -121,10 +143,16 @@ function renderDetails(ch, a) {
     a.availability === "policy-blocked" && raw('<span class="badge bad">Refused by provider</span>'),
     a.availability === "unavailable" && raw('<span class="badge warn">Unavailable</span>'),
     a.availability === "playable" && a.provider !== "demo" && raw('<span class="badge ok">Plays</span>')].filter(Boolean);
-  details.innerHTML = html`<div class="when">${fmtTime(a.start)} – ${fmtTime(a.end)}</div>
+  const pad = a.segments?.find((x) => x.kind === "break" && x.reason === "padding" && x.end - x.start >= 2 * MIN);
+  const onNow = a.start <= t && t < a.end;
+  const pct = onNow ? clamp((t - a.start) / (a.end - a.start), 0, 1) * 100 : 0;
+  details.style.setProperty("--h", ch.hue);
+  details.innerHTML = html`<div class="when">${fmtTime(a.start)} – ${fmtTime(a.end)}<span class="on-ch"><b>${ch.number}</b>${ch.name}</span></div>
     <div class="t">${a.title}</div>
     <div class="s">${raw(bits.join(""))}</div>
-    <div class="desc">${a.subtitle ? html`“${a.subtitle}”. ` : ""}${state}. On <b>${ch.number} ${ch.name}</b>: ${ch.tagline}.</div>`;
+    <div class="desc">${a.subtitle ? html`“${a.subtitle}”. ` : ""}${state}.${pad ? ` Ends at ${fmtTime(pad.start)}, then a station break until ${fmtTime(pad.end)}.` : ""}</div>
+    ${onNow ? raw(`<div class="prog"><i style="width:${pct.toFixed(1)}%"></i></div>`) : ""}
+    <div class="act"><kbd>Enter</kbd> ${onNow ? "watch now" : "tune to this channel"}</div>`;
 }
 
 // ------------------------------------------------------------------ input

@@ -165,15 +165,15 @@ function showWelcome() {
     <p>Channels play around the clock, like cable. Flip around, check the guide, and drop into whatever's on.
       ${demo ? "You're watching demo channels with made-up shows. Connect TorBox, Real-Debrid or a folder in Settings to put your own library on the air." : ""}</p>
     <div class="keys">
-      <div><kbd>↑</kbd><kbd>↓</kbd> change channel</div>
-      <div><kbd>G</kbd> program guide</div>
-      <div><kbd>0-9</kbd> go to a number</div>
-      <div><kbd>I</kbd> what's on</div>
-      <div><kbd>L</kbd> last channel</div>
-      <div><kbd>Space</kbd> pause</div>
-      <div><kbd>M</kbd> mute</div>
-      <div><kbd>F</kbd> full screen</div>
-      <div><kbd>S</kbd> settings</div>
+      <div><span class="kk"><kbd>↑</kbd><kbd>↓</kbd></span><span>change channel</span></div>
+      <div><span class="kk"><kbd>G</kbd></span><span>program guide</span></div>
+      <div><span class="kk"><kbd>0-9</kbd></span><span>go to a number</span></div>
+      <div><span class="kk"><kbd>I</kbd></span><span>what's on</span></div>
+      <div><span class="kk"><kbd>L</kbd></span><span>last channel</span></div>
+      <div><span class="kk"><kbd>Space</kbd></span><span>pause</span></div>
+      <div><span class="kk"><kbd>M</kbd></span><span>mute</span></div>
+      <div><span class="kk"><kbd>F</kbd></span><span>full screen</span></div>
+      <div><span class="kk"><kbd>S</kbd></span><span>settings</span></div>
     </div>
     <button class="btn primary" data-start>Start watching</button>
     ${demo ? html`<button class="btn" data-sources style="margin-left:.5em">Connect my library</button>` : ""}
