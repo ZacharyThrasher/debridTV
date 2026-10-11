@@ -4,7 +4,9 @@
 // Channel numbers, once given, stay put (N-03).
 
 import { StationClock } from "../src/clock/schedule.ts";
-import type { Channel, Ordering } from "../src/clock/types.ts";
+import type { Channel, ChannelRevision, Ordering } from "../src/clock/types.ts";
+import type { Dayparts, DaypartRule } from "../src/clock/dayparts.ts";
+import { KID_MAX, RATINGS as RATING_SCALE, type Rating } from "../src/clock/ratings.ts";
 import { hash32 } from "../src/clock/rng.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
 import { JsonFile } from "./store.ts";
@@ -62,13 +64,13 @@ export interface ChannelSettings {
   name?: string;
   favorite?: boolean;
   logo?: ChannelLogo;
-  /** Stored and returned; not yet enforced by the clock (see docs/handoffs/library-server.md). */
+  /** Only programs rated PG or lower air; unrated ones don't (gate D7). */
   kid?: boolean;
   restrictedHours?: RestrictedHours[];
   slots?: TimeSlot[];
 }
 
-export const RATINGS = ["G", "PG", "PG-13", "R", "NC-17"] as const;
+export const RATINGS = RATING_SCALE;
 
 export interface Rule {
   key: string;
@@ -224,8 +226,11 @@ export class Lineup {
    * boundary so they look like they've been on air all along; existing channels
    * change only at the end of what is airing now.
    */
-  sync(clock: StationClock, rules: Rule[], now: number): { added: number; revised: number; removed: number } {
+  sync(clock: StationClock, rules: Rule[], now: number, opts: { timeZone?: string } = {}): { added: number; revised: number; removed: number } {
     const s = this.file.get();
+    const byKey = new Map(rules.map((r) => [r.key, r]));
+    const timeZone = opts.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const audience = (r: Rule) => scheduleRules(s.settings?.[r.key] ?? {}, byKey, timeZone);
     let added = 0;
     let revised = 0;
     const live = new Set(rules.map((r) => r.key));
@@ -245,7 +250,7 @@ export class Lineup {
           id: `ch-${hash32(r.key).toString(36)}`,
           number,
           name: s.settings?.[r.key]?.name ?? r.name,
-          revisions: [{ effectiveFromMs: anchor, seed: r.key, itemIds: r.itemIds, ordering: r.ordering, slotMs: r.slotMs, midBreakMs: r.midBreakMs }],
+          revisions: [{ effectiveFromMs: anchor, seed: r.key, itemIds: r.itemIds, ordering: r.ordering, slotMs: r.slotMs, midBreakMs: r.midBreakMs, ...audience(r) }],
           meta: { ruleKey: r.key, kind: r.kind, hue: hash32(r.key) % 360, tagline: r.tagline },
         });
         added++;
@@ -254,20 +259,43 @@ export class Lineup {
       existing.name = s.settings?.[r.key]?.name ?? r.name;
       existing.meta.tagline = r.tagline;
       const cur = existing.revisions[existing.revisions.length - 1]!;
+      const aud = audience(r);
       const same =
+        cur.maxRating === aud.maxRating &&
+        JSON.stringify(cur.dayparts) === JSON.stringify(aud.dayparts) &&
         cur.ordering === r.ordering &&
         cur.slotMs === r.slotMs &&
         cur.midBreakMs === r.midBreakMs &&
         cur.itemIds.length === r.itemIds.length &&
         cur.itemIds.every((id, i) => id === r.itemIds[i]);
       if (same) continue;
-      const next = clock.revise(existing, now, { itemIds: r.itemIds, ordering: r.ordering, slotMs: r.slotMs, midBreakMs: r.midBreakMs });
+      // Kid, restricted-hours and slot changes also wait for the end of what's on (C7).
+      const next = clock.revise(existing, now, { itemIds: r.itemIds, ordering: r.ordering, slotMs: r.slotMs, midBreakMs: r.midBreakMs, ...aud });
       existing.revisions = next.revisions.slice(-6); // keep a short history
       revised++;
     }
     this.file.set(s);
     return { added, revised, removed };
   }
+}
+
+/**
+ * What a channel's audience and schedule settings mean for the clock. Kid channels
+ * get a standing PG limit. Time slots borrow another channel's programs and
+ * running order; a slot whose source channel no longer exists is left out.
+ * Slots are listed first, so where two overlap the earlier one wins.
+ */
+export function scheduleRules(st: ChannelSettings, rules: ReadonlyMap<string, Rule>, timeZone: string): Pick<ChannelRevision, "maxRating" | "dayparts"> {
+  const out: Pick<ChannelRevision, "maxRating" | "dayparts"> = { maxRating: st.kid ? KID_MAX : undefined, dayparts: undefined };
+  const dr: DaypartRule[] = [];
+  for (const sl of st.slots ?? []) {
+    const src = rules.get(sl.source);
+    if (!src || !src.itemIds.length) continue;
+    dr.push({ days: sl.days, from: sl.from, to: sl.to, program: { key: src.key, itemIds: src.itemIds, ordering: src.ordering, ...(src.slotMs ? { slotMs: src.slotMs } : {}) } });
+  }
+  for (const rh of st.restrictedHours ?? []) dr.push({ from: rh.from, to: rh.to, maxRating: rh.maxRating as Rating });
+  if (dr.length) out.dayparts = { timeZone, rules: dr } satisfies Dayparts;
+  return out;
 }
 
 /** Accept only well-formed settings; image logos must be inline (no outside requests). */
@@ -400,10 +428,74 @@ export function autoRules(items: LibItem[], custom: CustomChannel[]): Rule[] {
       rules.push({ key: `custom:${c.id}`, name: c.name, kind: "custom", tagline: "Your channel", itemIds: ids, ordering: c.ordering,
         slotMs: c.slotMinutes ? c.slotMinutes * MIN : undefined, preferredNumber: 50 });
   }
+  rules.push(...metadataRules(usable));
+
   // Mid-program breaks where the files have chapters, sized so no program spills into an extra slot.
   const byId = new Map(usable.map((i) => [i.id, i]));
   for (const r of rules) if (r.slotMs && r.kind !== "movies") r.midBreakMs = midBreakFor(r.itemIds.map((id) => byId.get(id)!), r.slotMs);
   return rules;
+}
+
+const HOURS = 3_600_000;
+
+/**
+ * Network, genre and collection channels from metadata the viewer's own files
+ * carry (.nfo, parity N-04 / N-01c). Nothing is looked up online.
+ *
+ *   network     3+ shows from one studio/network, shows taking turns in short runs   (#20+)
+ *   genre       2+ titles and 8+ hours in one genre, shows and films mixed           (#30+)
+ *   collection  3+ films in one set, in release order                                (#40+)
+ */
+export function metadataRules(usable: LibItem[]): Rule[] {
+  const rules: Rule[] = [];
+  const titleOf = (i: LibItem) => (i.parsed.kind === "episode" ? `s:${i.parsed.showKey}` : i.id);
+  const hours = (list: LibItem[]) => list.reduce((n, i) => n + (i.durationMs ?? 0), 0) / HOURS;
+
+  const groups = (pick: (i: LibItem) => string[] | undefined) => {
+    const out = new Map<string, { name: string; items: LibItem[] }>();
+    for (const i of usable)
+      for (const name of pick(i) ?? []) {
+        const key = slug(name);
+        if (!key) continue;
+        const g = out.get(key) ?? { name, items: [] };
+        g.items.push(i);
+        out.set(key, g);
+      }
+    return [...out.entries()];
+  };
+  const showCount = (list: LibItem[]) => new Set(list.filter((i) => i.parsed.kind === "episode").map(titleOf)).size;
+
+  for (const [key, g] of groups((i) => (i.parsed.kind === "episode" ? i.meta?.studios?.slice(0, 1) : undefined)).sort((a, b) => b[1].items.length - a[1].items.length).slice(0, 12)) {
+    const shows = showCount(g.items);
+    if (shows < 3) continue;
+    rules.push({ key: `network:${key}`, name: g.name, kind: "mix", tagline: `${shows} ${g.name} shows, taking turns`,
+      itemIds: sortEpisodes(g.items).map((i) => i.id), ordering: "block-cyclic", slotMs: 30 * MIN, preferredNumber: 20 });
+  }
+
+  const genreOf = (i: LibItem) => i.meta?.genres ?? (i.genre ? [i.genre] : undefined);
+  for (const [key, g] of groups(genreOf).sort((a, b) => hours(b[1].items) - hours(a[1].items)).slice(0, 12)) {
+    const titles = new Set(g.items.map(titleOf)).size;
+    if (titles < 2 || hours(g.items) < 8) continue;
+    const eps = g.items.filter((i) => i.parsed.kind === "episode");
+    const films = g.items.filter((i) => i.parsed.kind === "movie");
+    const what = eps.length && films.length ? "shows and films" : films.length ? "films" : "shows";
+    rules.push({ key: `genre:${key}`, name: g.name, kind: films.length && !eps.length ? "movies" : "mix", tagline: `${g.name} ${what}`,
+      itemIds: [...sortEpisodes(eps).map((i) => i.id), ...films.map((i) => i.id).sort()], ordering: "block-shuffle", slotMs: 30 * MIN, preferredNumber: 30 });
+  }
+
+  for (const [key, g] of groups((i) => (i.parsed.kind === "movie" && i.meta?.collection ? [i.meta.collection] : undefined))) {
+    if (g.items.length < 3) continue;
+    const year = (i: LibItem) => i.meta?.year ?? (i.parsed.kind === "movie" ? i.parsed.year : undefined) ?? 9999;
+    const sorted = g.items.slice().sort((a, b) => year(a) - year(b) || a.id.localeCompare(b.id));
+    const name = /collection$/i.test(g.name) ? g.name : `${g.name} Collection`;
+    rules.push({ key: `collection:${key}`, name, kind: "movies", tagline: `${g.items.length} films, in order`,
+      itemIds: sorted.map((i) => i.id), ordering: "cyclic", slotMs: 30 * MIN, preferredNumber: 40 });
+  }
+  return rules;
+}
+
+function slug(s: string): string {
+  return s.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 }
 
 /** Longest break (2, 1.5 or 1 min) that keeps every program within the slots it takes anyway. */

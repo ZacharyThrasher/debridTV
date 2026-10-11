@@ -267,6 +267,36 @@ test("N-03/N-16: rename, renumber (a taken number swaps), favorite, logo, kid an
   await put({ name: null });
 });
 
+test("N-06a: the kid flag is enforced; unrated shows stay off until someone rates them (D7)", async () => {
+  const ch = (await get("/api/bootstrap")).body.channels.find((c: any) => c.kid);
+  const settings = (await get(`/api/channels/${ch.id}/settings`)).body;
+  assert.equal(settings.enforced, true);
+  assert.equal(typeof settings.timeZone, "string");
+  assert.equal(settings.ratings.unrated, settings.ratings.total, "nothing on this channel has a rating yet");
+  assert.equal(settings.ratings.kidSafe, 0);
+  await sleep(400);
+  const from = Date.now() + 3 * 3600_000; // past whatever is on now
+  const rows = async () => (await get(`/api/guide?from=${from}&to=${from + 3 * 3600_000}`)).body.rows.find((r: any) => r.channel.id === ch.id);
+  assert.equal((await rows()).airings.length, 0, "a kid channel with only unrated shows is off the air");
+
+  const ratings = (await get("/api/ratings")).body;
+  const testShow = ratings.shows.find((x: any) => x.name === "Test Show");
+  assert.deepEqual([testShow.rating, testShow.from], [null, null]);
+  assert.equal((await post("/api/ratings", { showKey: testShow.key, rating: "X-ish" })).status, 400);
+  const r = await post("/api/ratings", { showKey: testShow.key, rating: "TV-G" });
+  assert.deepEqual(r.body, { ok: true, rating: "G" });
+  await sleep(400);
+  const rated = (await get(`/api/channels/${ch.id}/settings`)).body.ratings;
+  assert.ok(rated.total > 0 && rated.kidSafe === rated.total, JSON.stringify(rated));
+  const back = await rows();
+  assert.ok(back.airings.length > 0, "rated G, it airs again");
+  assert.equal(back.airings[0].rating, "G");
+  const exported = JSON.parse(await (await fetch(`${base}/api/export`)).text());
+  assert.equal(exported.ratings.shows[testShow.key], "G", "hand-set ratings travel with the settings export");
+  await post("/api/ratings", { showKey: testShow.key, rating: null });
+  assert.equal((await get("/api/ratings")).body.shows.find((x: any) => x.key === testShow.key).rating, null);
+});
+
 test("A4: disconnecting deletes the key from disk and takes its channels off the air", async () => {
   await post("/api/sources/disconnect", { provider: "torbox" });
   assert.doesNotMatch(configOnDisk(), new RegExp(TB_KEY));

@@ -14,10 +14,12 @@
 // the viewer starts it.
 
 import { createHash } from "node:crypto";
-import { readdirSync, statSync, openSync, readSync, closeSync } from "node:fs";
-import { join, relative, extname } from "node:path";
+import { readdirSync, statSync, openSync, readSync, closeSync, readFileSync } from "node:fs";
+import { join, relative, extname, dirname, basename } from "node:path";
 import type { Availability, MediaItem, ProviderId } from "../src/clock/types.ts";
 import { parseName, type Parsed } from "../src/library/parse.ts";
+import { parseNfo, withShow, type NfoMeta } from "../src/library/nfo.ts";
+import { RATINGS, type Rating } from "../src/clock/ratings.ts";
 import { probe, type RangeReader, type Track } from "../src/library/probe.ts";
 import { RealDebridClient, TorBoxClient } from "../src/providers/clients.ts";
 import { ProviderError, providerReady, type AccountInfo, type InventoryFile, type ProviderClient } from "../src/providers/types.ts";
@@ -64,9 +66,11 @@ export interface LibItem {
   etagChanges?: number;
   /** The viewer chose to keep this file off every channel. */
   excluded?: boolean;
-  /** Episode title or similar, when known (demo library only, for now). */
+  /** Episode title or similar, when known (demo library, or a local .nfo). */
   subtitle?: string;
   genre?: string;
+  /** What the file's own .nfo (and its show's tvshow.nfo) says. Local folders only. */
+  meta?: NfoMeta;
 }
 
 export interface AccountState extends Partial<AccountInfo> {
@@ -82,6 +86,13 @@ interface LibraryState {
   /** RD multi-file torrents not yet expanded into per-file entries. */
   rdPacks: Record<string, { name: string; status: string }>;
   accounts?: Partial<Record<RemoteProvider, AccountState>>;
+  /** Age ratings the viewer set by hand; they win over .nfo ratings. */
+  ratings?: ManualRatings;
+}
+
+export interface ManualRatings {
+  shows: Record<string, Rating>;
+  items: Record<string, Rating>;
 }
 
 export interface Config {
@@ -297,11 +308,17 @@ export class Library {
     const state = this.file.get();
     const seen = new Set<string>();
     let n = 0;
+    const shows = new Map<string, NfoMeta | null>();
     for (const dir of dirs) {
       for (const path of walk(dir, 6)) {
         const st = statSync(path);
         const name = relative(dir, path);
-        seen.add(this.upsert(state, { provider: "local", ref: path, name, bytes: st.size, providerState: "on disk" }).id);
+        const { id } = this.upsert(state, { provider: "local", ref: path, name, bytes: st.size, providerState: "on disk" });
+        seen.add(id);
+        const it = state.items[id]!;
+        const meta = localMeta(path, dir, it.parsed.kind, shows);
+        if (meta) it.meta = meta;
+        else delete it.meta;
         n++;
       }
     }
@@ -593,8 +610,47 @@ export class Library {
     this.changed();
   }
 
-  /** Clock-facing view: only identity and timing. Availability is not included on purpose. */
+  manualRatings(): ManualRatings {
+    return this.file.get().ratings ?? { shows: {}, items: {} };
+  }
+
+  /** Set or clear (null) a hand-picked rating for a whole show or one file. */
+  setRating(target: { showKey?: string; itemId?: string }, rating: Rating | null): boolean {
+    if (rating !== null && !RATINGS.includes(rating)) return false;
+    const key = target.showKey ? "shows" : target.itemId ? "items" : null;
+    const id = target.showKey ?? target.itemId;
+    if (!key || !id) return false;
+    this.file.update((s) => {
+      const r = s.ratings ?? { shows: {}, items: {} };
+      if (rating) r[key][id] = rating;
+      else delete r[key][id];
+      s.ratings = r;
+    });
+    this.changed();
+    return true;
+  }
+
+  /** Merge exported hand-picked ratings back in. */
+  importRatings(x: unknown): number {
+    if (!x || typeof x !== "object") return 0;
+    let n = 0;
+    this.file.update((s) => {
+      const r = s.ratings ?? { shows: {}, items: {} };
+      for (const key of ["shows", "items"] as const) {
+        const src = (x as Record<string, unknown>)[key];
+        if (src && typeof src === "object")
+          for (const [k, v] of Object.entries(src as Record<string, unknown>))
+            if (RATINGS.includes(v as Rating)) (r[key][k.slice(0, 300)] = v as Rating), n++;
+      }
+      s.ratings = r;
+    });
+    if (n) this.changed();
+    return n;
+  }
+
+  /** Clock-facing view: identity, timing and age rating. Availability is not included on purpose. */
   mediaItems(): MediaItem[] {
+    const manual = this.manualRatings();
     return this.items().flatMap((i) => {
       if (i.parsed.kind === "other") return [];
       return [{
@@ -605,10 +661,57 @@ export class Library {
         episode: i.parsed.kind === "episode" ? i.parsed.episode : undefined,
         durationMs: i.durationMs,
         breakpointsMs: breakpoints(i),
+        rating: effectiveRating(i, manual)?.rating,
         source: { provider: i.provider, ref: i.ref },
       }];
     });
   }
+}
+
+/** The rating the clock uses and where it came from: the viewer's pick, then the .nfo. */
+export function effectiveRating(i: LibItem, manual: ManualRatings): { rating: Rating; from: "you" | "nfo" | "demo" } | null {
+  const byItem = manual.items[i.id];
+  if (byItem) return { rating: byItem, from: "you" };
+  const byShow = i.parsed.kind === "episode" ? manual.shows[i.parsed.showKey] : undefined;
+  if (byShow) return { rating: byShow, from: "you" };
+  if (i.meta?.rating) return { rating: i.meta.rating, from: i.provider === "demo" ? "demo" : "nfo" };
+  return null;
+}
+
+const NFO_MAX_BYTES = 512 * 1024;
+
+function readNfo(path: string): NfoMeta | null {
+  try {
+    const st = statSync(path);
+    if (!st.isFile() || st.size > NFO_MAX_BYTES) return null;
+    return parseNfo(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Metadata for one local video from Kodi-style .nfo files beside it: its own
+ * "<name>.nfo", else "movie.nfo" in its folder for a movie; for an episode, the
+ * nearest "tvshow.nfo" up to two folders above (Show/Season 1/episode.mkv) fills
+ * in what the episode's own file leaves out. Never looks above the chosen folder.
+ */
+export function localMeta(path: string, root: string, kind: Parsed["kind"], showCache = new Map<string, NfoMeta | null>()): NfoMeta | null {
+  const dir = dirname(path);
+  const own = readNfo(join(dir, `${basename(path, extname(path))}.nfo`)) ?? (kind === "movie" ? readNfo(join(dir, "movie.nfo")) : null);
+  if (kind !== "episode" && own?.kind !== "episode") return own && own.kind !== "show" ? own : null;
+  let show: NfoMeta | null = null;
+  let d = dir;
+  for (let up = 0; up < 3; up++) {
+    if (!showCache.has(d)) {
+      const m = readNfo(join(d, "tvshow.nfo"));
+      showCache.set(d, m?.kind === "show" ? m : null);
+    }
+    show = showCache.get(d)!;
+    if (show || relative(root, d) === "" || relative(root, d).startsWith("..")) break;
+    d = dirname(d);
+  }
+  return withShow(own?.kind === "episode" ? own : null, show);
 }
 
 /**

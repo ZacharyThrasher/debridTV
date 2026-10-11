@@ -21,7 +21,9 @@ import { WatchLedger } from "../src/history/watched.ts";
 import { ProviderError } from "../src/providers/types.ts";
 import { Gates } from "../src/gates.ts";
 import { JsonFile, dataDir } from "./store.ts";
-import { Library, displayTitle, fileStatus, plainError, PROVIDER_NAMES, STATUS_ORDER, type Config, type LibItem, type ProviderBases, type RemoteProvider } from "./library.ts";
+import { validTimeZone } from "../src/clock/dayparts.ts";
+import { RATINGS, normalizeRating, ratingRank } from "../src/clock/ratings.ts";
+import { Library, displayTitle, effectiveRating, fileStatus, plainError, PROVIDER_NAMES, STATUS_ORDER, type Config, type LibItem, type ProviderBases, type RemoteProvider } from "./library.ts";
 import { Lineup, autoRules, cleanLogo, cleanRestricted, cleanSlots, type StationChannel, type CustomChannel } from "./lineup.ts";
 import { Meters } from "./meters.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
@@ -119,13 +121,21 @@ function rebuild() {
   const liveItems = liveLibrary();
   const ids = new Set(liveItems.map((i) => i.id));
   const liveClock = new StationClock(library.mediaItems().filter((m) => ids.has(m.id)));
-  liveLineup.sync(liveClock, autoRules(liveItems, liveLineup.custom()), now);
+  const timeZone = stationTimeZone();
+  liveLineup.sync(liveClock, autoRules(liveItems, liveLineup.custom()), now, { timeZone });
   const demoClock = new StationClock(demoMedia());
-  demoLineup.sync(demoClock, autoRules(demo, demoLineup.custom()), now);
+  demoLineup.sync(demoClock, autoRules(demo, demoLineup.custom()), now, { timeZone });
   clock = isDemo() ? demoClock : liveClock;
 }
+/** Restricted hours and time slots follow this zone: $DEBRIDTV_TZ, else this computer's. */
+function stationTimeZone(): string {
+  const env = process.env.DEBRIDTV_TZ;
+  return env && validTimeZone(env) ? env : Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
 function demoMedia() {
+  const manual = library.manualRatings();
   return demo.map((i) => ({
+    rating: effectiveRating(i, manual)?.rating,
     id: i.id,
     title: displayTitle(i),
     showId: i.parsed.kind === "episode" ? i.parsed.showKey : undefined,
@@ -156,8 +166,10 @@ function airingView(a: Airing) {
     title: p?.kind === "episode" ? p.show : p?.kind === "movie" ? p.title : (it?.name ?? "Unknown"),
     episode: p?.kind === "episode" ? (p.absolute ? `Ep. ${p.episode}` : `S${p.season} · E${p.episode}`) : undefined,
     year: p?.kind === "movie" ? p.year : undefined,
-    subtitle: it?.subtitle,
-    genre: it?.genre,
+    subtitle: it?.subtitle ?? (p?.kind === "episode" ? it?.meta?.title : undefined),
+    genre: it?.genre ?? it?.meta?.genres?.[0],
+    rating: it ? (effectiveRating(it, library.manualRatings())?.rating ?? null) : null,
+    description: it?.meta?.plot,
     kind: p?.kind,
     durationMs: it?.durationMs ?? null,
     ...availabilityView(it),
@@ -173,6 +185,23 @@ function airingView(a: Airing) {
  * host last said; an account that is no longer paid up or a file that left the
  * library overrides it with its own distinct reason (gate D5).
  */
+/**
+ * How much of a channel's lineup has a known age rating, so the editor can say
+ * what a kid flag or restricted hours will actually leave on the air.
+ */
+function ratingCoverage(c: StationChannel) {
+  const manual = library.manualRatings();
+  const ids = c.revisions[c.revisions.length - 1]!.itemIds;
+  const counts: Record<string, number> = Object.fromEntries([...RATINGS, "unrated"].map((r) => [r, 0]));
+  for (const id of ids) {
+    const it = itemById(id);
+    const r = it ? effectiveRating(it, manual)?.rating : undefined;
+    counts[r ?? "unrated"]!++;
+  }
+  const kidOk = ids.filter((id) => { const it = itemById(id); return it && ratingRank(effectiveRating(it, manual)?.rating) <= RATINGS.indexOf("PG"); }).length;
+  return { total: ids.length, byRating: counts, unrated: counts.unrated!, kidSafe: kidOk };
+}
+
 function availabilityView(it: LibItem | undefined) {
   if (!it) return { availability: "unknown", availabilityReason: undefined };
   if (it.provider === "demo") return { availability: it.availability, availabilityReason: it.availabilityReason };
@@ -681,14 +710,16 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       sources: { torbox: !!c.torboxKey, realdebrid: !!c.rdToken, localDirs: c.localDirs ?? [] },
       scanPerMinute: c.scanPerMinute ?? 30,
       lineup: liveLineup.exportSettings(),
+      ratings: library.manualRatings(),
     });
   }
   if (p === "/api/import" && m === "POST") {
     const l = (body as { lineup?: unknown }).lineup;
     if (!l || typeof l !== "object") return json(res, 400, { error: "That isn't a DebridTV settings file." });
     const n = liveLineup.importSettings(l as never);
+    const ratings = library.importRatings((body as { ratings?: unknown }).ratings);
     rebuild();
-    return json(res, 200, { ok: true, ...n });
+    return json(res, 200, { ok: true, ...n, ratings });
   }
   if (p === "/api/forget" && m === "POST") {
     // Everything DebridTV knows, gone: keys, library facts, history, channels.
@@ -721,6 +752,36 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       shows: [...shows.values()].filter((s) => match(s.name)).sort((a, b) => b.episodes - a.episodes),
       movies: movies.filter((x) => match(x.title)).sort((a, b) => a.title.localeCompare(b.title)),
     });
+  }
+  if (p === "/api/ratings" && m === "GET") {
+    // Age ratings per show and film: the viewer's pick, the .nfo's, or none. Local facts only.
+    const manual = library.manualRatings();
+    const shows = new Map<string, { key: string; name: string; episodes: number; rating: string | null; from: string | null; nfo: string | null }>();
+    const movies: Array<{ id: string; title: string; rating: string | null; from: string | null; nfo: string | null }> = [];
+    for (const it of allItems()) {
+      if (!it.present || it.parsed.kind === "other") continue;
+      const r = effectiveRating(it, manual);
+      if (it.parsed.kind === "episode") {
+        const k = it.parsed.showKey;
+        const s = shows.get(k) ?? { key: k, name: it.parsed.show, episodes: 0, rating: null, from: null, nfo: null };
+        s.episodes++;
+        const showR = manual.shows[k];
+        if (showR) (s.rating = showR), (s.from = "you");
+        else if (r && !s.rating) (s.rating = r.rating), (s.from = r.from);
+        if (!s.nfo && it.meta?.ratingText) s.nfo = it.meta.ratingText;
+        shows.set(k, s);
+      } else movies.push({ id: it.id, title: displayTitle(it), rating: r?.rating ?? null, from: r?.from ?? null, nfo: it.meta?.ratingText ?? null });
+    }
+    return json(res, 200, { scale: RATINGS, shows: [...shows.values()].sort((a, b) => a.name.localeCompare(b.name)), movies: movies.sort((a, b) => a.title.localeCompare(b.title)) });
+  }
+  if (p === "/api/ratings" && m === "POST") {
+    const b = body as { showKey?: unknown; itemId?: unknown; rating?: unknown };
+    const rating = b.rating === null || b.rating === "" ? null : normalizeRating(String(b.rating ?? ""));
+    if (b.rating != null && b.rating !== "" && !rating) return json(res, 400, { error: "Ratings are G, PG, PG-13, R or NC-17 (TV ratings like TV-14 are accepted too)." });
+    const ok = library.setRating({ showKey: typeof b.showKey === "string" ? b.showKey : undefined, itemId: typeof b.itemId === "string" ? b.itemId : undefined }, rating);
+    if (!ok) return json(res, 400, { error: "Say which show (showKey) or file (itemId)." });
+    scheduleRebuild();
+    return json(res, 200, { ok: true, rating });
   }
   if (p === "/api/channels" && m === "GET") {
     const l = lineup();
@@ -757,8 +818,9 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     const c = l.allChannels().find((x) => x.id === chSettings[1])!;
     const st = l.settingsFor(c.meta.ruleKey);
     return json(res, 200, { name: c.name, number: c.number, favorite: !!st.favorite, logo: st.logo ?? null,
-      // Stored and returned; the clock doesn't enforce these yet (docs/handoffs/library-server.md).
-      kid: !!st.kid, restrictedHours: st.restrictedHours ?? [], slots: st.slots ?? [], enforced: { kid: false, restrictedHours: false, slots: false },
+      kid: !!st.kid, restrictedHours: st.restrictedHours ?? [], slots: st.slots ?? [],
+      // The clock enforces all three; changes start once the program on now ends (C7).
+      enforced: true, timeZone: stationTimeZone(), ratings: ratingCoverage(c),
       ...(settingsNote ? { note: settingsNote } : {}) });
   }
   if (p === "/api/channels/hide" && m === "POST") {

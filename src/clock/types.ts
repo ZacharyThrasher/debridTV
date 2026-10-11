@@ -2,6 +2,9 @@
 // separate facts on purpose (handoff §5.4): an item can be on the schedule while
 // its file is currently unavailable, and the timeline must not move because of it.
 
+import type { Dayparts } from "./dayparts.ts";
+import type { Rating } from "./ratings.ts";
+
 export type ProviderId = "realdebrid" | "torbox" | "local" | "demo";
 
 /** What the provider last told us about the file. Never feeds the schedule. */
@@ -48,6 +51,10 @@ export interface ChannelRevision {
   slotMs?: number;
   /** Length of each mid-program break inserted at a trusted breakpoint. */
   midBreakMs?: number;
+  /** Nothing rated above this airs on the channel at all (kid channels). Unrated items never pass. */
+  maxRating?: Rating;
+  /** Wall-clock rules: restricted hours and weekday time slots (see dayparts.ts). */
+  dayparts?: Dayparts;
 }
 
 export interface Channel {
