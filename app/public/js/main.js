@@ -4,11 +4,13 @@
 import { api } from "./api.js";
 import { html, pref, setPref, applyPrefs, syncClock, toast } from "./util.js";
 import { tv, tune, channelStep, lastChannel, byNumber, togglePause, applyVolume } from "./player.js";
+import * as player from "./player.js"; // applyAspect comes from workstream A
 import { openGuide, closeGuide, guideOpen, guideKey } from "./guide.js";
 import { initPanel, openPanel, closePanel, panelOpen } from "./panel.js";
 import { toggleBanner, tickBanner, osd } from "./ui.js";
 import { tickCard } from "./cards.js";
 import { unlockAudio } from "./static.js";
+import { editorOpen } from "./channel-editor.js";
 
 applyPrefs();
 applyVolume();
@@ -34,6 +36,9 @@ async function bootstrap({ keepChannel = true } = {}) {
     try {
       saved = localStorage.getItem("debridtv.lastChannel");
     } catch {}
+    // Startup choice (N-14): "last" channel (default), "guide", or a fixed "ch:<id>".
+    const start = String(pref("startup") ?? "last");
+    if (start.startsWith("ch:")) saved = start.slice(3);
     target = tv.channels.find((c) => c.id === saved) ?? tv.channels[0];
   }
   if (!tv.channels.length) return;
@@ -77,7 +82,7 @@ addEventListener("keydown", (e) => {
     if (e.key === "Escape") e.target.blur();
     return;
   }
-  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || editorOpen()) return;
   const k = e.key;
   if (!document.getElementById("welcome").hidden) {
     if (k === "Enter" || k === "Escape" || k === " ") closeWelcome();
@@ -107,6 +112,7 @@ addEventListener("keydown", (e) => {
     case " ": case "k": case "K": togglePause(); break;
     case "m": case "M": toggleMute(); break;
     case "f": case "F": toggleFull(); break;
+    case "z": case "Z": cycleAspect(); break;
     case "?": showWelcome(); break;
     default:
       if (/^[0-9]$/.test(k)) enterDigit(k);
@@ -120,6 +126,16 @@ function toggleMute() {
   applyVolume();
   osd(pref("muted") ? "MUTE" : `VOL ${Math.round(pref("volume") * 100)}`, "", 1500);
   document.querySelector('[data-act="mute"]').textContent = pref("muted") ? "🔇" : "🔊";
+}
+
+// Picture shape (parity N-12): Z cycles; player.js applies it to the video.
+const ASPECTS = { auto: "Normal", fill: "Stretch", "4:3": "4:3", zoom: "Zoom" };
+function cycleAspect() {
+  const keys = Object.keys(ASPECTS);
+  const next = keys[(keys.indexOf(pref("aspect") ?? "auto") + 1) % keys.length];
+  setPref("aspect", next);
+  player.applyAspect?.();
+  osd(ASPECTS[next].toUpperCase(), "Picture", 1500);
 }
 
 function toggleFull() {
@@ -165,15 +181,16 @@ function showWelcome() {
     <p>Channels play around the clock, like cable. Flip around, check the guide, and drop into whatever's on.
       ${demo ? "You're watching demo channels with made-up shows. Connect TorBox, Real-Debrid or a folder in Settings to put your own library on the air." : ""}</p>
     <div class="keys">
-      <div><kbd>↑</kbd><kbd>↓</kbd> change channel</div>
-      <div><kbd>G</kbd> program guide</div>
-      <div><kbd>0-9</kbd> go to a number</div>
-      <div><kbd>I</kbd> what's on</div>
-      <div><kbd>L</kbd> last channel</div>
-      <div><kbd>Space</kbd> pause</div>
-      <div><kbd>M</kbd> mute</div>
-      <div><kbd>F</kbd> full screen</div>
-      <div><kbd>S</kbd> settings</div>
+      <div><span class="kk"><kbd>↑</kbd><kbd>↓</kbd></span><span>change channel</span></div>
+      <div><span class="kk"><kbd>G</kbd></span><span>program guide</span></div>
+      <div><span class="kk"><kbd>0-9</kbd></span><span>go to a number</span></div>
+      <div><span class="kk"><kbd>I</kbd></span><span>what's on</span></div>
+      <div><span class="kk"><kbd>L</kbd></span><span>last channel</span></div>
+      <div><span class="kk"><kbd>Space</kbd></span><span>pause</span></div>
+      <div><span class="kk"><kbd>M</kbd></span><span>mute</span></div>
+      <div><span class="kk"><kbd>F</kbd></span><span>full screen</span></div>
+      <div><span class="kk"><kbd>Z</kbd></span><span>picture shape</span></div>
+      <div><span class="kk"><kbd>S</kbd></span><span>settings</span></div>
     </div>
     <button class="btn primary" data-start>Start watching</button>
     ${demo ? html`<button class="btn" data-sources style="margin-left:.5em">Connect my library</button>` : ""}
@@ -208,5 +225,7 @@ setInterval(() => !panelOpen() && !guideOpen() && api.get("/api/bootstrap").then
   if (boot && sig(b) !== sig(boot)) bootstrap();
 }).catch(() => {}), 60_000);
 
-bootstrap().catch((e) => toast(`Couldn't start: ${e.message}`, 8000));
+bootstrap()
+  .then(() => pref("startup") === "guide" && pref("welcomed") && !guideOpen() && openGuide())
+  .catch((e) => toast(`Couldn't start: ${e.message}`, 8000));
 if (!pref("welcomed")) showWelcome();

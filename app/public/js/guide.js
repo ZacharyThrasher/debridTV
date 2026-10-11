@@ -3,8 +3,11 @@
 // media bytes (EXP-001). The picture keeps playing in the top-left preview.
 
 import { api } from "./api.js";
-import { html, raw, fmtTime, fmtDur, now, clamp, toast } from "./util.js";
+import { html, raw, fmtTime, fmtDur, now, clamp, toast, pref } from "./util.js";
 import { tv, tune } from "./player.js";
+import { logoHtml } from "./channel-editor.js";
+
+const wordmark = (c) => (c.logo?.kind === "text" && c.logo.text ? raw(logoHtml(c, "sm")) : null);
 
 const MIN = 60_000;
 const root = document.getElementById("guide");
@@ -19,6 +22,7 @@ let row = 0;
 let at = 0; // cursor time
 let scrollRow = 0;
 let refreshTimer = 0;
+let openedAt = 0; // set on open so the first load highlights the current channel
 
 const span = () => (innerWidth < 760 ? 90 : 150) * MIN;
 const floor30 = (t) => t - (t % (30 * MIN));
@@ -30,7 +34,8 @@ export async function openGuide() {
   document.body.classList.add("guide-open");
   viewFrom = floor30(now());
   at = now();
-  row = Math.max(0, tv.channels.findIndex((c) => c.id === tv.current?.id));
+  openedAt = now();
+  poke();
   await load();
   clearInterval(refreshTimer);
   refreshTimer = setInterval(() => (guideOpen() ? load() : clearInterval(refreshTimer)), 60_000);
@@ -40,12 +45,35 @@ export function closeGuide() {
   root.hidden = true;
   document.body.classList.remove("guide-open");
   clearInterval(refreshTimer);
+  clearTimeout(idleTimer);
 }
+
+// Idle action (N-15): after a while with no input, the guide can close back to the
+// picture or tune the highlighted channel. Default is to stay open, like a real box.
+export const IDLE_ACTIONS = { stay: "Stay open", close: "Close the guide", tune: "Tune the highlighted channel" };
+let idleTimer = 0;
+function poke() {
+  clearTimeout(idleTimer);
+  const action = pref("guideIdle") ?? "stay";
+  if (action === "stay" || !guideOpen()) return;
+  const mins = Number(pref("guideIdleMin")) || 2;
+  idleTimer = setTimeout(() => {
+    if (!guideOpen()) return;
+    if (action === "tune" && data) pick(row, airingAt(row, at));
+    else closeGuide();
+  }, mins * MIN);
+}
+for (const t of ["keydown", "pointerdown", "wheel", "touchstart"]) addEventListener(t, () => guideOpen() && poke(), { passive: true, capture: true });
 
 async function load() {
   const from = floor30(now()) - 30 * MIN;
   try {
+    const first = !data;
     data = await api.get(`/api/guide?from=${from}&to=${from + 12 * 60 * MIN}`);
+    // Favorites first (N-03), otherwise channel order. Stable, so numbers stay in order.
+    data.rows.sort((a, b) => Number(!!b.channel.favorite) - Number(!!a.channel.favorite));
+    if (first || openedAt) row = Math.max(0, data.rows.findIndex((r) => r.channel.id === tv.current?.id));
+    openedAt = 0;
   } catch (e) {
     grid.innerHTML = html`<div style="padding:2em;color:var(--dim)">Couldn't load the guide: ${e.message}</div>`;
     return;
@@ -63,7 +91,7 @@ function render() {
   const s = span();
   const viewTo = viewFrom + s;
   const t = now();
-  const rowsVisible = Math.max(1, Math.floor((grid.clientHeight - (grid.querySelector(".grid-times")?.clientHeight || 0)) / rowPx()) || 6);
+  const rowsVisible = Math.max(1, Math.round((grid.querySelector(".grid-rows")?.clientHeight || grid.clientHeight) / rowPx()) || 6);
   if (row < scrollRow) scrollRow = row;
   if (row >= scrollRow + rowsVisible) scrollRow = row - rowsVisible + 1;
   scrollRow = clamp(scrollRow, 0, Math.max(0, data.rows.length - rowsVisible));
@@ -71,13 +99,14 @@ function render() {
   const pct = (ms) => ((ms - viewFrom) / s) * 100;
   const times = [];
   for (let m = viewFrom; m < viewTo; m += 30 * MIN) times.push(html`<span style="left:${pct(m)}%">${fmtTime(m)}</span>`);
+  if (t >= viewFrom && t < viewTo) times.push(html`<span class="now-mark" style="left:${pct(t)}%" aria-hidden="true"></span>`);
   const focus = airingAt(row, at);
 
   const rows = data.rows.map((r, ri) => {
     const ch = r.channel;
     const cells = r.airings
       .filter((a) => a.end > viewFrom && a.start < viewTo)
-      .map((a) => {
+      .map((a, i, shown) => {
         const left = Math.max(0, pct(a.start));
         const right = Math.min(100, pct(a.end));
         const cls = ["cell"];
@@ -86,16 +115,22 @@ function render() {
         if (a.availability === "policy-blocked" || a.availability === "unavailable") cls.push("unavail");
         if (a.start < viewFrom) cls.push("cut-left");
         if (ri === row && focus && a.start === focus.start) cls.push("focus");
-        const sub = [a.episode, a.subtitle, a.year].filter(Boolean).join(" · ");
-        return html`<div class="${cls.join(" ")}" style="left:calc(${left}% + 2px);width:calc(${right - left}% - 4px)" data-row="${ri}" data-start="${a.start}" role="gridcell"
+        let head = a.title;
+        let sub = [a.episode, a.subtitle, a.year].filter(Boolean).join(" · ");
+        // A run of short episodes of one show: lead with the episode, not the same title again.
+        if (i > 0 && shown[i - 1].title === a.title && a.episode && right - left < 14) {
+          head = a.subtitle || a.episode;
+          sub = a.subtitle ? a.episode : a.title;
+        }
+        return html`<div class="${cls.join(" ")}" style="left:calc(${left}% + 2px);width:calc(${right - left}% - 4px)${a.start <= t && t < a.end ? `;--p:${(((t - Math.max(a.start, viewFrom)) / (Math.min(a.end, viewTo) - Math.max(a.start, viewFrom))) * 100).toFixed(1)}%` : ""}" data-row="${ri}" data-start="${a.start}" role="gridcell"
           aria-label="${a.title}, ${fmtTime(a.start)}">
           ${a.start < viewFrom ? raw('<span class="cont">◂</span>') : ""}
           ${a.watched ? raw('<span class="watched" title="Watched">✓</span>') : ""}
-          <div class="ct">${a.title}</div>${sub ? html`<div class="cs">${sub}</div>` : ""}</div>`;
+          ${raw(breakTail(a))}<div class="ct">${head}</div>${sub ? html`<div class="cs">${sub}</div>` : ""}</div>`;
       });
     const nowLine = t >= viewFrom && t < viewTo ? raw(`<div class="now-line" style="left:${pct(t)}%"></div>`) : "";
     return html`<div class="row ${tv.current?.id === ch.id ? "current" : ""}" style="--h:${ch.hue}" role="row">
-      <div class="row-label" data-tune="${ri}"><span class="n">${ch.number}</span><span class="nm">${ch.name}<span class="tg">${ch.tagline}</span></span></div>
+      <div class="row-label" data-tune="${ri}"><span class="n">${ch.number}</span><span class="nm">${ch.favorite ? raw('<b class="fav" title="Favorite">★</b>') : ""}${wordmark(ch) ?? ch.name}<span class="tg">${ch.tagline}</span></span></div>
       <div class="row-track">${raw(cells.join(""))}${nowLine}</div></div>`;
   });
 
@@ -105,6 +140,28 @@ function render() {
   dateEl.textContent = new Date(viewFrom).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   clockEl.textContent = fmtTime(t);
   renderDetails(data.rows[row]?.channel, focus);
+  if (fitRows()) render();
+}
+
+/** The slot padding after a program, drawn as a hatched tail so long breaks are visible. */
+function breakTail(a) {
+  const pad = a.segments?.filter((x) => x.kind === "break" && x.reason === "padding" && x.end - x.start >= 2 * MIN);
+  if (!pad?.length) return "";
+  const from = Math.min(...pad.map((x) => x.start));
+  const left = ((from - a.start) / (a.end - a.start)) * 100;
+  return `<i class="tail" style="left:${left.toFixed(2)}%" title="Station break"></i>`;
+}
+
+/** Fit a whole number of rows so the last one is never cut in half. */
+let fittedTo = 0;
+function fitRows() {
+  const h = grid.querySelector(".grid-rows")?.clientHeight;
+  if (!h || h === fittedTo) return false;
+  fittedTo = h;
+  grid.style.removeProperty("--row");
+  const n = Math.max(1, Math.round(h / rowPx()));
+  grid.style.setProperty("--row", `${h / n}px`);
+  return true;
 }
 
 function rowPx() {
@@ -117,14 +174,22 @@ function renderDetails(ch, a) {
   const t = now();
   const state = a.end <= t ? "Ended" : a.start <= t ? `On now · ${Math.round((a.end - t) / MIN)} min left` : `Starts in ${fmtDur(a.start - t)}`;
   const bits = [a.episode && html`<span>${a.episode}</span>`, a.year && html`<span>${a.year}</span>`, a.genre && html`<span>${a.genre}</span>`,
+    a.rating && html`<span class="rating">${a.rating}</span>`,
     a.durationMs && html`<span>${fmtDur(a.durationMs)}</span>`, a.watched && raw('<span class="badge ok">✓ Watched</span>'),
     a.availability === "policy-blocked" && raw('<span class="badge bad">Refused by provider</span>'),
     a.availability === "unavailable" && raw('<span class="badge warn">Unavailable</span>'),
     a.availability === "playable" && a.provider !== "demo" && raw('<span class="badge ok">Plays</span>')].filter(Boolean);
-  details.innerHTML = html`<div class="when">${fmtTime(a.start)} – ${fmtTime(a.end)}</div>
+  const pad = a.segments?.find((x) => x.kind === "break" && x.reason === "padding" && x.end - x.start >= 2 * MIN);
+  const onNow = a.start <= t && t < a.end;
+  const pct = onNow ? clamp((t - a.start) / (a.end - a.start), 0, 1) * 100 : 0;
+  details.style.setProperty("--h", ch.hue);
+  details.innerHTML = html`<div class="when">${fmtTime(a.start)} – ${fmtTime(a.end)}<span class="on-ch"><b>${ch.number}</b>${ch.name}</span></div>
     <div class="t">${a.title}</div>
     <div class="s">${raw(bits.join(""))}</div>
-    <div class="desc">${a.subtitle ? html`“${a.subtitle}”. ` : ""}${state}. On <b>${ch.number} ${ch.name}</b>: ${ch.tagline}.</div>`;
+    ${a.description ? html`<div class="plot">${a.description}</div>` : ""}
+    <div class="desc">${a.subtitle ? html`“${a.subtitle}”. ` : ""}${state}.${pad ? ` Ends at ${fmtTime(pad.start)}, then a station break until ${fmtTime(pad.end)}.` : ""}</div>
+    ${onNow ? raw(`<div class="prog"><i style="width:${pct.toFixed(1)}%"></i></div>`) : ""}
+    <div class="act"><kbd>Enter</kbd> ${onNow ? "watch now" : "tune to this channel"}</div>`;
 }
 
 // ------------------------------------------------------------------ input
@@ -193,3 +258,36 @@ grid.addEventListener("wheel", (e) => {
   }
 }, { passive: false });
 addEventListener("resize", () => guideOpen() && render());
+
+// Touch: swipe the grid up/down for channels, left/right for time. The rows follow
+// the finger and the guide re-renders on release: replacing the touched cell mid-
+// gesture would end the gesture (a detached node gets no more touch events).
+let touch = null;
+grid.addEventListener("touchstart", (e) => {
+  const p = e.touches[0];
+  touch = { x: p.clientX, y: p.clientY, dy: 0, scroll: grid.querySelector(".grid-scroll") };
+}, { passive: true });
+grid.addEventListener("touchmove", (e) => {
+  if (!touch || !data) return;
+  const p = e.touches[0];
+  touch.dy = touch.y - p.clientY;
+  if (Math.abs(touch.dy) > Math.abs(touch.x - p.clientX) && touch.scroll) {
+    e.preventDefault();
+    touch.scroll.style.transition = "none";
+    touch.scroll.style.translate = `0 ${-touch.dy}px`;
+  }
+}, { passive: false });
+grid.addEventListener("touchend", (e) => {
+  if (!touch || !data) return;
+  const p = e.changedTouches[0];
+  const dx = touch.x - p.clientX;
+  const dy = touch.y - p.clientY;
+  touch = null;
+  if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) return void guideKey({ key: dx > 0 ? "ArrowRight" : "ArrowLeft" });
+  const rows = Math.round(dy / rowPx());
+  if (!rows) return void render();
+  // Move the view with the finger, and the highlight along with it.
+  scrollRow = clamp(scrollRow + rows, 0, data.rows.length - 1);
+  row = clamp(row + rows, 0, data.rows.length - 1);
+  render();
+});

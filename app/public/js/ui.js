@@ -1,6 +1,9 @@
 // On-screen display: the green channel number, the info banner, and the channel bug.
 
 import { html, raw, fmtTime, fmtDur, now, clamp } from "./util.js";
+import { logoHtml } from "./channel-editor.js";
+
+const hasMark = (c) => c?.logo?.kind === "text" && c.logo.text;
 
 const osdEl = document.getElementById("osd-num");
 const bannerEl = document.getElementById("banner");
@@ -20,7 +23,7 @@ export function osdHide() {
 
 export function bug(ch) {
   if (!ch) return void (bugEl.hidden = true);
-  bugEl.innerHTML = html`<b>${ch.number}</b>${ch.name}`;
+  bugEl.innerHTML = hasMark(ch) ? logoHtml(ch) : html`<b>${ch.number}</b>${ch.name}`.html;
   bugEl.hidden = false;
 }
 
@@ -50,6 +53,13 @@ export function tickBanner() {
   if (!bannerEl.hidden) renderBanner();
 }
 
+/** Where the slot's closing station break starts on the progress bar, hatched like the guide. */
+function padAt(a) {
+  const pad = a.segments?.find((x) => x.kind === "break" && x.reason === "padding" && x.end - x.start >= 2 * 60_000);
+  if (!pad) return "";
+  return `<b style="left:${(((pad.start - a.start) / (a.end - a.start)) * 100).toFixed(2)}%"></b>`;
+}
+
 const ROUTE_LABEL = { direct: "Direct play", live: "Compatibility mode", demo: "Demo picture", card: "" };
 
 function renderBanner() {
@@ -67,6 +77,7 @@ function renderBanner() {
     if (a.subtitle) bits.push(html`<span>“${a.subtitle}”</span>`);
     if (a.year) bits.push(html`<span>${a.year}</span>`);
     if (a.genre) bits.push(html`<span>${a.genre}</span>`);
+    if (a.rating) bits.push(html`<span class="rating">${a.rating}</span>`);
     if (a.durationMs) bits.push(html`<span>${fmtDur(a.durationMs)}</span>`);
     if (seg?.kind === "break") bits.push(html`<span class="badge warn">Station break</span>`);
     else bits.push(html`<span class="badge live">LIVE</span>`);
@@ -79,11 +90,11 @@ function renderBanner() {
   if (info.next) next = html`<div class="next">Next at ${fmtTime(info.next.start)}<b>${info.next.title}</b></div>`;
   bannerEl.style.setProperty("--h", ch.hue);
   bannerEl.innerHTML = html`
-    <div class="chan"><div class="num" style="--h:${ch.hue}">${ch.number}</div><div class="cname">${ch.name}</div></div>
+    <div class="chan"><div class="num" style="--h:${ch.hue}">${ch.number}</div><div class="cname">${hasMark(ch) ? raw(logoHtml(ch)) : ch.name}</div></div>
     <div>
       <div class="title">${title}</div>
       <div class="meta">${raw(meta)}</div>
-      ${a ? raw(`<div class="progress"><i style="width:${pct.toFixed(2)}%"></i></div>`) : ""}
+      ${a ? raw(`<div class="progress"><i style="width:${pct.toFixed(2)}%"></i>${padAt(a)}</div>`) : ""}
     </div>
     <div style="display:grid;gap:calc(var(--u)*.5);justify-items:end">
       <div class="clock">${fmtTime(t)}</div>
