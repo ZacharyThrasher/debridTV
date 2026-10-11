@@ -5,6 +5,9 @@
 import { api } from "./api.js";
 import { html, raw, fmtTime, fmtDur, now, clamp, toast, pref } from "./util.js";
 import { tv, tune } from "./player.js";
+import { logoHtml } from "./channel-editor.js";
+
+const wordmark = (c) => (c.logo?.kind === "text" && c.logo.text ? raw(logoHtml(c, "sm")) : null);
 
 const MIN = 60_000;
 const root = document.getElementById("guide");
@@ -19,6 +22,7 @@ let row = 0;
 let at = 0; // cursor time
 let scrollRow = 0;
 let refreshTimer = 0;
+let openedAt = 0; // set on open so the first load highlights the current channel
 
 const span = () => (innerWidth < 760 ? 90 : 150) * MIN;
 const floor30 = (t) => t - (t % (30 * MIN));
@@ -30,7 +34,7 @@ export async function openGuide() {
   document.body.classList.add("guide-open");
   viewFrom = floor30(now());
   at = now();
-  row = Math.max(0, tv.channels.findIndex((c) => c.id === tv.current?.id));
+  openedAt = now();
   poke();
   await load();
   clearInterval(refreshTimer);
@@ -64,7 +68,12 @@ for (const t of ["keydown", "pointerdown", "wheel", "touchstart"]) addEventListe
 async function load() {
   const from = floor30(now()) - 30 * MIN;
   try {
+    const first = !data;
     data = await api.get(`/api/guide?from=${from}&to=${from + 12 * 60 * MIN}`);
+    // Favorites first (N-03), otherwise channel order. Stable, so numbers stay in order.
+    data.rows.sort((a, b) => Number(!!b.channel.favorite) - Number(!!a.channel.favorite));
+    if (first || openedAt) row = Math.max(0, data.rows.findIndex((r) => r.channel.id === tv.current?.id));
+    openedAt = 0;
   } catch (e) {
     grid.innerHTML = html`<div style="padding:2em;color:var(--dim)">Couldn't load the guide: ${e.message}</div>`;
     return;
@@ -121,7 +130,7 @@ function render() {
       });
     const nowLine = t >= viewFrom && t < viewTo ? raw(`<div class="now-line" style="left:${pct(t)}%"></div>`) : "";
     return html`<div class="row ${tv.current?.id === ch.id ? "current" : ""}" style="--h:${ch.hue}" role="row">
-      <div class="row-label" data-tune="${ri}"><span class="n">${ch.number}</span><span class="nm">${ch.name}<span class="tg">${ch.tagline}</span></span></div>
+      <div class="row-label" data-tune="${ri}"><span class="n">${ch.number}</span><span class="nm">${ch.favorite ? raw('<b class="fav" title="Favorite">★</b>') : ""}${wordmark(ch) ?? ch.name}<span class="tg">${ch.tagline}</span></span></div>
       <div class="row-track">${raw(cells.join(""))}${nowLine}</div></div>`;
   });
 

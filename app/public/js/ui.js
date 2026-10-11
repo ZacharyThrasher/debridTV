@@ -1,6 +1,9 @@
 // On-screen display: the green channel number, the info banner, and the channel bug.
 
 import { html, raw, fmtTime, fmtDur, now, clamp } from "./util.js";
+import { logoHtml } from "./channel-editor.js";
+
+const hasMark = (c) => c?.logo?.kind === "text" && c.logo.text;
 
 const osdEl = document.getElementById("osd-num");
 const bannerEl = document.getElementById("banner");
@@ -20,7 +23,7 @@ export function osdHide() {
 
 export function bug(ch) {
   if (!ch) return void (bugEl.hidden = true);
-  bugEl.innerHTML = html`<b>${ch.number}</b>${ch.name}`;
+  bugEl.innerHTML = hasMark(ch) ? logoHtml(ch) : html`<b>${ch.number}</b>${ch.name}`.html;
   bugEl.hidden = false;
 }
 
@@ -86,7 +89,7 @@ function renderBanner() {
   if (info.next) next = html`<div class="next">Next at ${fmtTime(info.next.start)}<b>${info.next.title}</b></div>`;
   bannerEl.style.setProperty("--h", ch.hue);
   bannerEl.innerHTML = html`
-    <div class="chan"><div class="num" style="--h:${ch.hue}">${ch.number}</div><div class="cname">${ch.name}</div></div>
+    <div class="chan"><div class="num" style="--h:${ch.hue}">${ch.number}</div><div class="cname">${hasMark(ch) ? raw(logoHtml(ch)) : ch.name}</div></div>
     <div>
       <div class="title">${title}</div>
       <div class="meta">${raw(meta)}</div>

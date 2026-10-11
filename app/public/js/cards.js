@@ -4,6 +4,7 @@
 import { html, raw, fmtTime, fmtClock, fmtDur, now, clamp } from "./util.js";
 import { api } from "./api.js";
 import { tv, tune } from "./player.js";
+import { logoHtml } from "./channel-editor.js";
 
 const el = document.getElementById("card");
 let countdownTo = 0;
@@ -41,7 +42,7 @@ export function breakCard(ch, info) {
   show(
     ch.hue,
     html`<header class="brk-top">
-        <div class="brk-chan"><span class="card-num">${ch.number}</span><span class="brk-name">${ch.name}</span></div>
+        <div class="brk-chan"><span class="card-num">${ch.number}</span>${ch.logo?.kind === "text" && ch.logo.text ? raw(`<span class="brk-mark">${logoHtml(ch, "lg")}</span>`) : html`<span class="brk-name">${ch.name}</span>`}</div>
         <div class="brk-kicker">${mid ? "We'll be right back" : "Station break"}</div>
         <div class="brk-clock" data-clock aria-live="off">${fmtTime(now())}</div>
       </header>

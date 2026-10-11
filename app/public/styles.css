@@ -532,6 +532,71 @@ body.guide-open { background: var(--bg); }
   .panel .x-libbar select { width: 100%; }
 }
 
+/* ------------------------------------------------------------------ channel editor and logos */
+
+/* A channel's mark: number badge or a wordmark. Same look everywhere (bug, guide, banner, editor). */
+.logo { display: inline-grid; place-items: center; flex: none; line-height: 1; white-space: nowrap; border-radius: .22em; }
+.logo.badge {
+  font-family: var(--mono); min-width: 1.9em; padding: .1em .25em 0; color: #000;
+  background: linear-gradient(180deg, hsl(var(--h) 95% 72%), hsl(var(--h) 85% 55%));
+}
+.logo.block, .logo.outline, .logo.pill { font-family: var(--display); font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: .18em .45em .14em; font-size: .8em; }
+.logo.block { color: #000; background: linear-gradient(180deg, hsl(var(--h) 95% 72%), hsl(var(--h) 85% 55%)); }
+.logo.outline { color: hsl(var(--h) 95% 75%); border: .12em solid currentColor; }
+.logo.pill { color: #fff; background: hsl(var(--h) 70% 38%); border-radius: 99px; padding-inline: .8em; }
+.logo.sm { font-size: calc(var(--u)*1.3); }
+.logo.lg { font-size: calc(var(--u)*2.2); }
+.row-label .fav { color: var(--amber); font-weight: 400; margin-right: .3em; }
+.row-label .nm .logo { font-size: calc(var(--u)*1.1); vertical-align: .05em; }
+.bug .logo { font-size: 1.3em; opacity: .8; }
+.banner .cname .logo { font-size: 1.3em; }
+.brk-mark .logo { font-size: calc(var(--u)*1.6); }
+
+.ced { position: fixed; inset: 0; z-index: 25; display: grid; place-items: center; background: rgba(2,3,10,.62); backdrop-filter: blur(8px); animation: fade .2s ease; }
+.ced-sheet {
+  width: min(96vw, calc(var(--u)*50)); max-height: 92vh; display: grid; grid-template-rows: auto auto 1fr auto; overflow: hidden;
+  background: var(--panel-solid); border: 1px solid var(--line-strong); border-radius: calc(var(--u)*1.2); box-shadow: 0 30px 80px rgba(0,0,0,.6);
+  font-size: max(14px, calc(var(--u)*.92)); animation: rise .3s var(--ease);
+}
+.ced-head { display: flex; align-items: center; gap: 1em; padding: 1.2em 1.4em .8em; background: linear-gradient(180deg, hsla(var(--h), 80%, 50%, .14), transparent); }
+.ced-title { flex: 1; min-width: 0; }
+.ced-title .k { font-family: var(--display); font-weight: 700; letter-spacing: .2em; text-transform: uppercase; font-size: .75em; color: var(--dim); }
+.ced-title .t { font-family: var(--display); font-weight: 800; font-size: 1.8em; line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ced-body { overflow-y: auto; padding: 1.1em 1.4em 1.4em; }
+.ced-body h4 { font-family: var(--display); font-weight: 800; letter-spacing: .04em; font-size: 1.2em; margin: 1.3em 0 .5em; }
+.ced-body .lead { color: var(--dim); line-height: 1.5; margin: .2em 0 1em; }
+.ced-foot { display: flex; align-items: center; gap: .6em; padding: .9em 1.4em; border-top: 1px solid var(--line); }
+.ced-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1em; align-items: start; }
+.ced-warn { color: var(--warn); font-size: .85em; }
+.seg { display: inline-flex; padding: .2em; gap: .2em; border-radius: .8em; border: 1px solid var(--line-strong); }
+.seg button { border: 0; background: none; color: var(--dim); padding: .45em .9em; border-radius: .6em; cursor: pointer; font-weight: 600; }
+.seg button[aria-checked="true"], .seg button[aria-pressed="true"] { background: var(--panel-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.hue { width: 100%; appearance: none; height: .7em; border-radius: 99px; cursor: pointer;
+  background: linear-gradient(90deg, hsl(0 85% 60%), hsl(60 85% 60%), hsl(120 85% 55%), hsl(180 85% 55%), hsl(240 85% 65%), hsl(300 85% 60%), hsl(359 85% 60%)); }
+.hue::-webkit-slider-thumb { appearance: none; width: 1.3em; height: 1.3em; border-radius: 50%; background: #fff; border: 3px solid hsl(var(--h) 85% 55%); box-shadow: 0 2px 8px rgba(0,0,0,.4); }
+.ced-preview { display: grid; grid-template-columns: 1fr 1fr; gap: .8em; }
+.ced-preview > div { border: 1px solid var(--line); border-radius: .8em; padding: 1em; min-height: 5em; display: flex; align-items: center; gap: .7em; }
+.pv-bug { justify-content: flex-end; align-items: flex-end !important; background: linear-gradient(135deg, #2a1b4a, #0b0d1e 70%); color: rgba(255,255,255,.6);
+  font-family: var(--display); font-weight: 800; text-transform: uppercase; letter-spacing: .06em; font-size: 1.05em; }
+.pv-bug .logo { font-size: 1.3em; opacity: .75; }
+.pv-row { background: var(--panel-2); }
+.pv-row .nm { font-family: var(--display); font-weight: 700; font-size: 1.2em; }
+.slot { display: flex; flex-wrap: wrap; align-items: center; gap: .5em; padding: .6em .7em; border: 1px solid var(--line); border-radius: .8em; background: rgba(255,255,255,.025); }
+.slot .input { width: auto; padding: .45em .6em; }
+.slot select.input { flex: 1; min-width: 10em; }
+.days { display: inline-flex; gap: .2em; }
+.days button { width: 2.2em; height: 2.2em; border-radius: 50%; border: 1px solid var(--line-strong); background: none; color: var(--dim); cursor: pointer; font-size: .8em; font-weight: 700; }
+.days button[aria-pressed="true"] { background: var(--amber); color: #1a1000; border-color: transparent; }
+.ced-slots { margin: .8em 0; }
+.week { position: relative; display: grid; gap: 3px; padding-bottom: 1.3em; margin-bottom: .4em; }
+.week .lane { display: grid; grid-template-columns: 2.6em 1fr; align-items: center; font-size: .78em; color: var(--faint); }
+.week .lane > div { position: relative; height: 1.1em; border-radius: .3em; background: rgba(255,255,255,.04); overflow: hidden; }
+[data-theme="daylight"] .week .lane > div { background: rgba(0,0,0,.05); }
+.week .lane i { position: absolute; top: 0; bottom: 0; border-radius: .3em; background: hsl(calc(var(--h) + var(--k) * 47) 85% 62%); opacity: .85; }
+.week .ticks { position: absolute; left: 2.6em; right: 0; bottom: 0; height: 1.2em; font-size: .72em; }
+.week .ticks b { position: absolute; transform: translateX(-50%); color: var(--faint); font-weight: 600; }
+@media (max-width: 560px) { .ced-row, .ced-preview { grid-template-columns: 1fr; } }
+
 /* ------------------------------------------------------------------ welcome, toast, dock */
 
 .welcome {
