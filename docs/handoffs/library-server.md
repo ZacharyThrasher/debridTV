@@ -60,4 +60,4 @@ Try it: `npm run dev:mock` → http://127.0.0.1:7338 with every file state (keys
 ## Note from workstream B (2026-10-11)
 - B made a small a11y edit in `panel.js` while no C thread was running: `aria-label`s on the Look & feel switches (via `sw()`), the rating-card switch and the theme/startup/guideIdle/guideIdleMin/signOffHours selects. axe-core is now clean on every Settings tab in Midnight, Daylight and Cable '92.
 - `--faint` is brighter in all three themes (4.5:1 on panels), so `.muted` text passes contrast.
-- Gotcha: `html```  renders `false` as "", so write `aria-pressed="${String(x)}"`.
+- Gotcha: the `html` template tag renders `false` as "", so write `aria-pressed="${String(x)}"`.
