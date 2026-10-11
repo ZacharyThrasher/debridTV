@@ -8,6 +8,7 @@ import { api } from "./api.js";
 import { html, raw, esc, fmtBytes, fmtDur, ago, pref, setPref, toast, fmtTime } from "./util.js";
 import { tv, applyVolume } from "./player.js";
 import { keepFocus } from "./spatial.js";
+import { onlineCard, onlinePrivacyLine } from "./online.js";
 
 const panel = document.getElementById("panel");
 const body = document.getElementById("panel-body");
@@ -143,6 +144,7 @@ async function sources() {
       <div class="row-actions"><button class="btn" data-local>Save folders</button></div>
     </div>
 
+    ${raw(await onlineCard(render))}
     <h3>Program lengths</h3>
     <p class="lead">A channel can only schedule a program once its exact running time is known. DebridTV learns it by reading a few kilobytes from the start of each file. It never downloads whole files, and it only runs when you start it.</p>
     <div class="src">
@@ -640,6 +642,7 @@ async function privacy() {
     ${raw(await pinBlock())}
     <h3>What leaves this PC</h3>
     <p class="lead">Only requests to the providers you connected: your account status and library list when you connect or refresh, one link request per program you watch (reused for an hour), the few KB a scan reads, and the video you actually watch. The Meters tab counts all of it.</p>
+    ${raw(await onlinePrivacyLine())}
     <h3>Your data</h3>
     <p class="lead">Everything lives in one folder on this PC. Exports never include your API keys.</p>
     <div class="row-actions">
