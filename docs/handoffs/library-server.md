@@ -1,7 +1,7 @@
-# Handoff: workstream C, library, accounts and server (2026-10-11)
+# Handoff: workstream C, library, accounts and server (2026-10-11, second session)
 
-Branch: `claude/project-thread-y7lgyq` (rebased on `claude/debridtv-rnd-9768mu`, fast-forwardable).
-Tests: `npm test` = 144+ green (`test/server.test.ts` end-to-end vs the mock, `test/library.test.ts`, probe tests). `npm run typecheck` clean.
+Branch: `claude/project-thread-446sg8` (contains y7lgyq and a merge of `claude/debridtv-rnd-9768mu` at 2110fe4, so shared fast-forwards onto it).
+Tests: `npm test` = 169 green (`test/server.test.ts` end-to-end vs the mock, `test/library.test.ts`, probe tests). `npm run typecheck` clean.
 Try it: `npm run dev:mock` → http://127.0.0.1:7338 with every file state (keys printed; type `expire`/`renew` to flip premium).
 
 ## What exists now
@@ -20,17 +20,29 @@ Try it: `npm run dev:mock` → http://127.0.0.1:7338 with every file state (keys
 - **Meters**: busiest minute per provider vs published limit (RD 250/min all; TorBox 300/min per endpoint).
 - **Live probe**: LIST, RD_PICK/TB_PICK, packs `n.m`, ETAG mode, runbook `docs/runbooks/live-probe.md`.
 
-## Open, in priority order (coordinator's list, 07:44)
+## Added in the second session
 
-1. **Enforce kid / restrictedHours / slots in the clock.** They are stored and returned (GET says `enforced: false`) but don't change the schedule. Needs: ratings on items (none known today; only from local .nfo, item 5), a clock filter by time of day (DST-safe, gate C5), and `slots` as weekday blocks in `StationClock` (src/clock is shared; coordinate). Unknown rating must count as restricted (gate D7).
-2. **Genre/collection channels from local `.nfo` only** (N-04, N-01c). No TMDB/OMDb: that is new outbound traffic and needs Zachary's yes.
-3. **MP4 chapters** (`chpl` / chapter text track) are not read; MKV chapters after the first Cluster (SeekHead-only) are missed.
-4. **Inline style injector** in `panel.js` (`addStyles`): B moved the rules into styles.css (commit 60db10d on `claude/project-thread-uy3380`). Delete `addStyles()` once both branches are combined; keep class names.
-5. **RD rerun + ETag answers**: waiting on Zachary's run. When the report arrives: record in LOG.md (D owns), and if ETags are stable across links and differ across versions, let a changed ETag reset the running time (today it only counts).
-6. Library tests share one `library.json` per test file; filter by name in new tests.
+- **Schedule rules enforced** (`src/clock/ratings.ts`, `dayparts.ts`, `WindowPlan` in `schedule.ts`). A revision may carry `maxRating` (kid = PG) and `dayparts {timeZone, rules[]}`. Restricted hours and slots become windows on local time in a named zone ($DEBRIDTV_TZ or the PC's), DST-safe (gap → end of gap, repeated hour → first). Each window airs whole programs from its own source (usual lineup or a slot's program), filtered by the strictest limit in force; nothing straddles a window edge; a program too long for the room left is passed over for one that fits (12-item look-ahead) and goes first next time; leftover time is the last program's closing break; a window where nothing may air is off the air. Each source keeps its place across windows (Saturday cartoons continue next week). Windowed revisions are planned forward from their start and memoised per revision (still pure: same inputs, same schedule). Unknown rating never passes a limit (D7). Tests: `test/dayparts.test.ts`.
+- **Lineup → clock**: `scheduleRules()` turns settings into `maxRating`/`dayparts`; slot `source` is a rule key (a missing source drops the slot); slots before restricted rules, earlier slot wins overlaps. Settings changes go through `revise()` (wait for the program on now, C7).
+- **Ratings**: `.nfo` `<mpaa>`/`<certification>` (film or US TV, folded to G..NC-17); hand-set ratings per show or file in library.json `ratings` win (`/api/ratings` GET/POST; exported/imported). Library tab "Age ratings" view; `openPanel("library", "ratings")` opens it.
+- **.nfo metadata** (`src/library/nfo.ts`): local folders only; own `<name>.nfo`, `movie.nfo`, nearest `tvshow.nfo` up to two folders up, never above the chosen folder. Stored as `LibItem.meta`. Airings carry `rating`, `description` (plot); subtitle/genre fall back to it.
+- **Metadata channels** (`metadataRules`): network (3+ shows, #20+), genre (2+ titles and 8+ h, #30+), collection (3+ films in a set, release order, #40+). Demo library has invented genres, ratings and a "Northstar" network.
+- **Specials** (N-05): season 0 is off show/mix channels unless settings `specials: true`; then they air after the last season. GET settings returns `specials`, `specialsAvailable`.
+- **Chapters**: MP4 Nero `chpl` or the QuickTime chapter track (`tref/chap`; that track is no longer listed as a subtitle, matching ffmpeg's 0:s:N); Matroska Chapters after the media found through the SeekHead (two small reads).
+- **Settings GET**: `enforced: true`, `timeZone`, `ratings {total, byRating, unrated, kidSafe}`.
+- `addStyles()` removed from panel.js (B's styles.css has the rules; the favorite star colour is inline).
+
+## Open, in priority order
+
+1. **RD rerun + ETag answers**: waiting on Zachary's run. When the report arrives: record in LOG.md (D owns), and if ETags are stable across links and differ across versions, let a changed ETag reset the running time (today it only counts).
+2. **Ideas not started** (parity rows): weights per show (N-09a weights), premieres (N-09c), balance by duration (N-09d), marathons as random events (N-09e), PIN-locked channels (N-06b, needs B's scramble card), "watched-only" (N-05; would revise a channel every time something is watched, so think about churn first).
+3. **Rating changes apply at once**, not at the end of the current program (the clock reads ratings directly). Rarely matters; if it does, bake ratings into the revision at sync.
+4. **Online metadata** (TMDB/OMDb) stays unbuilt until Zachary says yes (new outbound traffic).
+5. Library tests share one `library.json` per test file; filter by name in new tests.
 
 ## Gotchas
 
+- `pkill -f "node app/server.ts"` kills your own shell if it shares the command line; run it as its own call.
 - `JsonFile` reads `DEBRIDTV_HOME` at construction: set it before `createApp()`.
 - `fetch()` can't forge `Host`; use `http.get` to test the DNS-rebinding guard.
 - Mock: `account.token` may be an array; `pack` groups RD files into one torrent; `state` = downloading/magnet_error; `policy` = infringing_file.
