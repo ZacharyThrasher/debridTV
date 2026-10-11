@@ -218,6 +218,9 @@ body.addEventListener("click", async (e) => {
     } else if ("gotoLibrary" in b.dataset) {
       lib = { ...lib, status: b.dataset.gotoLibrary, provider: b.dataset.provider === "local" ? "local" : b.dataset.provider ?? "", q: "", limit: 50 };
       return showTab("library");
+    } else if (b.dataset.libView) {
+      lib = { ...lib, view: b.dataset.libView };
+      return void render();
     } else if ("libFilter" in b.dataset) {
       lib = { ...lib, status: b.dataset.libFilter, limit: 50 };
       return void libList();
@@ -512,14 +515,26 @@ const STATUS = {
   excluded: ["Kept off air", ""],
   other: ["Not a show or movie", ""],
 };
-let lib = { status: "", provider: "", q: "", limit: 50 };
+let lib = { view: "files", status: "", provider: "", q: "", limit: 50 };
 let libTimer = 0;
 
 async function library() {
   const sources = await api.get("/api/sources");
   const provs = [["", "All sources"], ...["torbox", "realdebrid", "local"].filter((p) => sources[p].connected).map((p) => [p, p === "local" ? "This PC" : PROVIDERS[p].name])];
+  const views = html`<div class="x-chips" role="group" aria-label="Library view">
+    <button class="x-chip" data-lib-view="files" aria-pressed="${String(lib.view !== "ratings")}">Files</button>
+    <button class="x-chip" data-lib-view="ratings" aria-pressed="${String(lib.view === "ratings")}">Age ratings</button></div>`;
+  if (lib.view === "ratings") {
+    setTimeout(ratingsList);
+    return html`<h3>Library</h3>${views}
+      <p class="lead">Kid channels and restricted hours only air programs with a known rating. Ratings come from .nfo files in your own folders; files from Real-Debrid and TorBox carry none, so rate them here. Nothing is looked up online.</p>
+      <div class="x-libbar" style="grid-template-columns:1fr">
+        <input class="input" id="lib-q" type="search" placeholder="Search shows and films" value="${lib.q}" aria-label="Search">
+      </div>
+      <div id="lib-results"><p class="muted">Loading…</p></div>`;
+  }
   setTimeout(libList);
-  return html`<h3>Library</h3>
+  return html`<h3>Library</h3>${views}
     <p class="lead">Every file DebridTV knows about, and exactly where it stands. Being in your account isn't the same as being playable, so each step is shown separately.</p>
     <div class="x-libbar">
       <input class="input" id="lib-q" type="search" placeholder="Search titles or file names" value="${lib.q}" aria-label="Search">
@@ -528,7 +543,34 @@ async function library() {
     <div id="lib-results"><p class="muted">Loading…</p></div>`;
 }
 
+const RATING_HELP = { G: "All ages", PG: "Some material may not suit young children", "PG-13": "Teens and up", R: "Adults", "NC-17": "Adults only" };
+
+async function ratingsList() {
+  const box = document.getElementById("lib-results");
+  if (!box) return;
+  const r = await api.get("/api/ratings");
+  const q = lib.q.toLowerCase();
+  const match = (s) => !q || s.toLowerCase().includes(q);
+  const unrated = [...r.shows, ...r.movies].filter((x) => !x.rating).length;
+  const row = (x, target, label, sub) => {
+    const from = x.from === "you" ? "Set by you" : x.from === "nfo" ? `From the .nfo (${x.nfo})` : x.from === "demo" ? "Demo rating" : "No rating: kid channels and restricted hours skip it";
+    return html`<div class="li x-file" style="grid-template-columns:1fr auto">
+      <div><div class="t">${label}</div><div class="d">${sub}</div><div class="d x-why ${x.rating ? "" : "warn"}">${from}</div></div>
+      <select class="input" style="width:auto" aria-label="Rating for ${label}" data-rate="${target}">
+        <option value="">${x.rating && x.from !== "you" ? `Use ${x.from === "nfo" ? ".nfo" : "default"} (${x.rating})` : "Not rated"}</option>
+        ${raw(r.scale.map((k) => `<option value="${k}" ${x.from === "you" && x.rating === k ? "selected" : ""} title="${esc(RATING_HELP[k] ?? "")}">${k}</option>`).join(""))}
+      </select></div>`;
+  };
+  const shows = r.shows.filter((s) => match(s.name)).map((s) => row(s, `show:${s.key}`, s.name, `${s.episodes} episode${s.episodes === 1 ? "" : "s"}`));
+  const movies = r.movies.filter((m) => match(m.title)).map((m) => row(m, `item:${m.id}`, m.title, "Film"));
+  box.innerHTML = String(html`<p class="muted">${unrated ? `${unrated} title${unrated === 1 ? "" : "s"} without a rating.` : "Everything has a rating."} TV ratings count as their film equivalent (TV-Y to TV-G = G, TV-PG = PG, TV-14 = PG-13, TV-MA = R). Kid channels air G and PG.</p>
+    ${shows.length ? html`<h4>Shows</h4><div class="list">${shows}</div>` : ""}
+    ${movies.length ? html`<h4>Films</h4><div class="list">${movies}</div>` : ""}
+    ${shows.length || movies.length ? "" : html`<p class="muted">${q ? "Nothing matches." : "No shows or films yet."}</p>`}`);
+}
+
 async function libList() {
+  if (lib.view === "ratings") return ratingsList();
   const box = document.getElementById("lib-results");
   if (!box) return;
   const q = new URLSearchParams({ status: lib.status, provider: lib.provider, q: lib.q, limit: String(lib.limit) });
@@ -575,7 +617,19 @@ body.addEventListener("input", (e) => {
     }, 200);
   }
 });
-body.addEventListener("change", (e) => {
+body.addEventListener("change", async (e) => {
+  const rate = e.target.dataset?.rate;
+  if (rate) {
+    const [kind, id] = [rate.slice(0, rate.indexOf(":")), rate.slice(rate.indexOf(":") + 1)];
+    try {
+      await api.post("/api/ratings", { [kind === "show" ? "showKey" : "itemId"]: id, rating: e.target.value || null });
+      toast(e.target.value ? `Rated ${e.target.value}. Channels change after what's airing now ends.` : "Rating cleared.");
+      onChange();
+    } catch (err) {
+      toast(err.message, 5000);
+    }
+    return void ratingsList();
+  }
   if (e.target.id === "lib-prov") {
     lib = { ...lib, provider: e.target.value, limit: 50 };
     libList();
