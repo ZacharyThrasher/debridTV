@@ -38,6 +38,7 @@ let home = "";
 let skip: string | false = !chromium ? "Playwright isn't installed" : !ffmpeg ? "ffmpeg isn't installed" : false;
 let direct: { id: string; number: number } | null = null;
 let langs: { id: string; number: number } | null = null;
+let jukebox: { id: string; number: number } | null = null;
 
 const get = async (p: string) => (await fetch(BASE + p)).json();
 const post = async (p: string, body: unknown) =>
@@ -71,6 +72,14 @@ before(async () => {
       "-map", "0", "-map", "1", "-map", "2", "-map", "3", "-c:v", "libvpx-vp9", "-b:v", "150k", "-deadline", "realtime", "-cpu-used", "8", "-g", "48",
       "-c:a", "libopus", "-b:a", "32k", "-c:s", "srt", "-metadata:s:a:0", "language=eng", "-metadata:s:a:1", "language=spa",
       "-metadata:s:s:0", "language=eng", "-disposition:a:0", "default", join(media, `Lang Test S01E0${i}.mkv`)]);
+  // Five tagged songs in one album folder with a cover: enough for the Jukebox (N-23a).
+  const album = join(media, "Test Band", "Signal Tones");
+  mkdirSync(album, { recursive: true });
+  execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=300x300", "-frames:v", "1", join(album, "cover.jpg")]);
+  for (let i = 1; i <= 5; i++)
+    execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-f", "lavfi", "-i", `sine=frequency=${200 + i * 60}:duration=40`, "-f", "lavfi", "-i", "anoisesrc=d=40:c=pink:a=0.15",
+      "-filter_complex", "[0][1]amix=inputs=2", "-c:a", "libopus", "-b:a", "48k", "-metadata", `title=Tone Number ${i}`, "-metadata", "artist=Test Band",
+      "-metadata", "album=Signal Tones", "-metadata", `track=${i}`, "-metadata", "date=1994", "-metadata", "genre=Electronic", join(album, `0${i} Tone Number ${i}.opus`)]);
   server = spawn(process.execPath, ["app/server.ts"], { env: { ...process.env, PORT: String(PORT), DEBRIDTV_HOME: home }, stdio: "ignore" });
   for (let i = 0; i < 100; i++) {
     try {
@@ -96,6 +105,10 @@ before(async () => {
     const chs = (await get("/api/bootstrap")).channels;
     direct = chs.find((c: any) => c.name === "Player Direct") ?? null;
     langs = chs.find((c: any) => c.name === "Player Langs") ?? null;
+  }
+  for (let i = 0; i < 50 && !jukebox; i++) {
+    jukebox = (await get("/api/bootstrap")).channels.find((c: any) => c.name === "Jukebox") ?? null;
+    if (!jukebox) await sleep(200);
   }
   if (!direct) skip = "the test channel didn't go on air";
 });
@@ -345,6 +358,42 @@ describe("player", () => {
     assert.equal(await next.page.evaluate(() => JSON.parse(localStorage.getItem("debridtv.prefs")!).subLang), "off");
     assert.deepEqual([...errors, ...next.errors], []);
     await next.ctx.close();
+  });
+
+  it("a music channel plays the song on station time with its sleeve, details and a live analyser (N-23a)", async (t) => {
+    if (skip) return t.skip(skip);
+    if (!jukebox) return t.skip("this server has no music channels");
+    const { page, ctx, errors } = await open({}, jukebox);
+    await playing(page);
+    const n = await get(`/api/now?channel=${jukebox.id}`);
+    assert.equal(n.airing.kind, "track");
+    const src = await page.evaluate(() => document.getElementById("video")!.getAttribute("src"));
+    assert.equal(src, `/media/${n.airing.itemId}`, "the song plays directly");
+    await page.waitForSelector("#music:not([hidden])");
+    assert.equal(await page.locator("#music .mu-title").innerText(), n.airing.title);
+    assert.equal(await page.locator("#music .mu-artist").innerText(), "Test Band");
+    assert.match(await page.locator("#music .mu-album").innerText(), /Signal Tones · 1994/);
+    assert.equal(await page.locator("#music .mu-sleeve img").count(), 1, "the album cover is on the sleeve");
+    const d = await drift(page, jukebox);
+    assert.ok(Math.abs(d.driftMs) < 1500, `on station time (drift ${d.driftMs} ms)`);
+    // The first key lets Web Audio start; the bars then follow the real sound.
+    await page.keyboard.press("Shift");
+    const meter = await page.evaluate(async () => {
+      const { musicMeter } = await import(location.origin + "/js/music.js");
+      for (let i = 0; i < 50; i++) {
+        const m = musicMeter();
+        if (m?.routed && m.level > 0.05) return m;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return musicMeter();
+    });
+    assert.ok(meter?.routed && meter.level > 0.05, `the analyser hears the song: ${JSON.stringify(meter)}`);
+    assert.equal(await page.evaluate(() => (document.getElementById("video") as HTMLVideoElement).paused), false, "still playing after routing");
+    // Leaving the channel takes the music screen down.
+    await page.keyboard.press("ArrowUp");
+    await page.waitForSelector("#music", { state: "hidden" });
+    assert.deepEqual(errors, []);
+    await ctx.close();
   });
 
   it("a locked channel asks for no link and opens no media until unlocked (N-06b)", async (t) => {
