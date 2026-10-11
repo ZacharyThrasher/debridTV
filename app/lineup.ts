@@ -39,13 +39,36 @@ interface LineupState {
   settings?: Record<string, ChannelSettings>;
 }
 
-export type ChannelLogo = { kind: "text"; text: string; bg?: string } | { kind: "image"; url: string; bg?: string };
+export type ChannelLogo =
+  | { kind: "badge" | "text"; text: string; hue?: number; style?: "block" | "outline" | "pill" }
+  | { kind: "image"; url: string };
+
+export interface RestrictedHours {
+  from: string;
+  to: string;
+  maxRating: (typeof RATINGS)[number];
+}
+export interface TimeSlot {
+  /** Mon=1 … Sun=7. */
+  days: number[];
+  from: string;
+  /** to <= from means the slot runs overnight. */
+  to: string;
+  /** Rule key whose programs fill this slot. */
+  source: string;
+}
 
 export interface ChannelSettings {
   name?: string;
   favorite?: boolean;
   logo?: ChannelLogo;
+  /** Stored and returned; not yet enforced by the clock (see docs/handoffs/library-server.md). */
+  kid?: boolean;
+  restrictedHours?: RestrictedHours[];
+  slots?: TimeSlot[];
 }
+
+export const RATINGS = ["G", "PG", "PG-13", "R", "NC-17"] as const;
 
 export interface Rule {
   key: string;
@@ -111,14 +134,24 @@ export class Lineup {
    * Rename, renumber, favorite or brand a channel. A number already in use is
    * refused (no silent shuffling of other channels, N-03); `null` clears a field.
    */
-  updateSettings(ruleKey: string, patch: { name?: string | null; number?: number; favorite?: boolean; logo?: ChannelLogo | null }): { ok: true } | { ok: false; error: string } {
+  updateSettings(
+    ruleKey: string,
+    patch: { name?: string | null; number?: number; favorite?: boolean; logo?: ChannelLogo | null; kid?: boolean; restrictedHours?: RestrictedHours[]; slots?: TimeSlot[] },
+  ): { ok: true; swappedWith?: string } | { ok: false; error: string } {
     const s = this.file.get();
     const ch = s.channels.find((c) => c.meta.ruleKey === ruleKey);
     if (!ch) return { ok: false, error: "no such channel" };
+    let swappedWith: string | undefined;
     if (patch.number !== undefined && patch.number !== ch.number) {
       if (!Number.isInteger(patch.number) || patch.number < 1 || patch.number > 9999) return { ok: false, error: "Channel numbers run from 1 to 9999." };
+      // Asking for a taken number swaps the two channels: explicit, and nothing else moves.
       const holder = s.channels.find((c) => c.number === patch.number);
-      if (holder) return { ok: false, error: `${patch.number} is ${holder.name}. Pick a free number.` };
+      const freedKey = Object.entries(s.numbers).find(([k, n]) => n === patch.number && k !== ruleKey)?.[0];
+      if (holder) {
+        holder.number = ch.number;
+        s.numbers[holder.meta.ruleKey] = ch.number;
+        swappedWith = holder.name;
+      } else if (freedKey) s.numbers[freedKey] = ch.number; // a channel that's off the air keeps a number too
       ch.number = patch.number;
       s.numbers[ruleKey] = patch.number;
     }
@@ -133,10 +166,13 @@ export class Lineup {
       if (patch.logo === null) delete cur.logo;
       else cur.logo = patch.logo;
     }
+    if (patch.kid !== undefined) cur.kid = patch.kid || undefined;
+    if (patch.restrictedHours !== undefined) cur.restrictedHours = patch.restrictedHours.length ? patch.restrictedHours : undefined;
+    if (patch.slots !== undefined) cur.slots = patch.slots.length ? patch.slots : undefined;
     s.settings = { ...s.settings, [ruleKey]: cur };
     if (cur.name) ch.name = cur.name;
     this.file.set(s);
-    return { ok: true };
+    return { ok: true, ...(swappedWith ? { swappedWith } : {}) };
   }
 
   /** What a settings export carries: choices, not library facts or credentials. */
@@ -243,16 +279,46 @@ export function cleanSettings(v: unknown): ChannelSettings | null {
   if (x.favorite === true) out.favorite = true;
   const logo = cleanLogo(x.logo);
   if (logo) out.logo = logo;
+  if (x.kid === true) out.kid = true;
+  const rh = cleanRestricted(x.restrictedHours);
+  if (rh?.length) out.restrictedHours = rh;
+  const sl = cleanSlots(x.slots);
+  if (sl?.length) out.slots = sl;
+  return out;
+}
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function cleanRestricted(v: unknown): RestrictedHours[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: RestrictedHours[] = [];
+  for (const r of v.slice(0, 8))
+    if (r && HHMM.test(r.from) && HHMM.test(r.to) && RATINGS.includes(r.maxRating)) out.push({ from: r.from, to: r.to, maxRating: r.maxRating });
+    else return null;
+  return out;
+}
+
+export function cleanSlots(v: unknown): TimeSlot[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: TimeSlot[] = [];
+  for (const t of v.slice(0, 50)) {
+    const days = Array.isArray(t?.days) ? [...new Set<number>(t.days.filter((d: unknown) => Number.isInteger(d) && (d as number) >= 1 && (d as number) <= 7))].sort() : [];
+    if (!days.length || !HHMM.test(t.from) || !HHMM.test(t.to) || typeof t.source !== "string" || !t.source) return null;
+    out.push({ days, from: t.from, to: t.to, source: t.source.slice(0, 200) });
+  }
   return out;
 }
 
 export function cleanLogo(v: unknown): ChannelLogo | null {
   if (!v || typeof v !== "object") return null;
   const l = v as Record<string, unknown>;
-  const bg = typeof l.bg === "string" && /^#[0-9a-f]{3,8}$/i.test(l.bg) ? l.bg : undefined;
-  if (l.kind === "text" && typeof l.text === "string" && l.text.trim()) return { kind: "text", text: l.text.trim().slice(0, 6), ...(bg ? { bg } : {}) };
+  if ((l.kind === "badge" || l.kind === "text") && typeof l.text === "string" && l.text.trim()) {
+    const hue = typeof l.hue === "number" && Number.isFinite(l.hue) ? Math.round(((l.hue % 360) + 360) % 360) : undefined;
+    const style = l.style === "block" || l.style === "outline" || l.style === "pill" ? l.style : undefined;
+    return { kind: l.kind, text: l.text.trim().slice(0, 6), ...(hue != null ? { hue } : {}), ...(style ? { style } : {}) };
+  }
   if (l.kind === "image" && typeof l.url === "string" && /^data:image\/(png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(l.url) && l.url.length <= 300_000)
-    return { kind: "image", url: l.url, ...(bg ? { bg } : {}) };
+    return { kind: "image", url: l.url };
   return null;
 }
 

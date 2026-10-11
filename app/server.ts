@@ -22,7 +22,7 @@ import { ProviderError } from "../src/providers/types.ts";
 import { Gates } from "../src/gates.ts";
 import { JsonFile, dataDir } from "./store.ts";
 import { Library, displayTitle, fileStatus, plainError, PROVIDER_NAMES, STATUS_ORDER, type Config, type LibItem, type ProviderBases, type RemoteProvider } from "./library.ts";
-import { Lineup, autoRules, cleanLogo, type StationChannel, type CustomChannel } from "./lineup.ts";
+import { Lineup, autoRules, cleanLogo, cleanRestricted, cleanSlots, type StationChannel, type CustomChannel } from "./lineup.ts";
 import { Meters } from "./meters.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
 import { demoItems } from "./demo.ts";
@@ -141,8 +141,9 @@ rebuild();
 
 function channelView(c: StationChannel) {
   const st = lineup().settingsFor(c.meta.ruleKey);
-  return { id: c.id, number: c.number, name: c.name, hue: c.meta.hue, kind: c.meta.kind, tagline: c.meta.tagline, ruleKey: c.meta.ruleKey,
-    favorite: !!st.favorite, logo: st.logo ?? null };
+  const hue = st.logo && "hue" in st.logo && st.logo.hue != null ? st.logo.hue : c.meta.hue;
+  return { id: c.id, number: c.number, name: c.name, hue, kind: c.meta.kind, tagline: c.meta.tagline, ruleKey: c.meta.ruleKey,
+    favorite: !!st.favorite, logo: st.logo ?? null, kid: !!st.kid };
 }
 
 function airingView(a: Airing) {
@@ -726,6 +727,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return json(res, 200, { channels: l.allChannels().map((c) => ({ ...channelView(c), hidden: l.hidden().includes(c.meta.ruleKey),
       items: c.revisions[c.revisions.length - 1]!.itemIds.length, ordering: c.revisions[c.revisions.length - 1]!.ordering })), custom: l.custom() });
   }
+  let settingsNote = "";
   const chSettings = /^\/api\/channels\/([\w-]+)\/settings$/.exec(p);
   if (chSettings) {
     const l = lineup();
@@ -734,21 +736,30 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     if (m === "PUT" || m === "POST") {
       const b = body as Record<string, unknown>;
       const logo = b.logo === null ? null : b.logo === undefined ? undefined : cleanLogo(b.logo);
-      if (b.logo != null && !logo) return json(res, 400, { error: "A logo is short text, or an inline PNG/JPEG/WebP/SVG image (data: URL, up to ~200 KB)." });
+      if (b.logo != null && !logo) return json(res, 400, { error: "A logo is up to 6 letters (badge or text), or an inline image (data: URL). No outside images." });
+      const restrictedHours = b.restrictedHours === undefined ? undefined : cleanRestricted(b.restrictedHours);
+      if (restrictedHours === null) return json(res, 400, { error: "Restricted hours need from/to as HH:MM and a rating G, PG, PG-13, R or NC-17." });
+      const slots = b.slots === undefined ? undefined : cleanSlots(b.slots);
+      if (slots === null) return json(res, 400, { error: "Each time slot needs days 1-7, from/to as HH:MM and a source." });
       const r = l.updateSettings(ch.meta.ruleKey, {
         name: typeof b.name === "string" || b.name === null ? (b.name as string | null) : undefined,
         number: typeof b.number === "number" ? b.number : undefined,
         favorite: typeof b.favorite === "boolean" ? b.favorite : undefined,
         logo: logo as never,
+        kid: typeof b.kid === "boolean" ? b.kid : undefined,
+        restrictedHours,
+        slots,
       });
       if (!r.ok) return json(res, 409, { error: r.error });
       scheduleRebuild();
+      if (r.swappedWith) settingsNote = `Swapped numbers with ${r.swappedWith}.`;
     }
     const c = l.allChannels().find((x) => x.id === chSettings[1])!;
     const st = l.settingsFor(c.meta.ruleKey);
     return json(res, 200, { name: c.name, number: c.number, favorite: !!st.favorite, logo: st.logo ?? null,
-      // Not built yet; accepted shapes are documented in docs/handoffs/library-server.md.
-      kid: false, restrictedHours: [], slots: [] });
+      // Stored and returned; the clock doesn't enforce these yet (docs/handoffs/library-server.md).
+      kid: !!st.kid, restrictedHours: st.restrictedHours ?? [], slots: st.slots ?? [], enforced: { kid: false, restrictedHours: false, slots: false },
+      ...(settingsNote ? { note: settingsNote } : {}) });
   }
   if (p === "/api/channels/hide" && m === "POST") {
     lineup().setHidden(String(body.ruleKey), !!body.hidden);
