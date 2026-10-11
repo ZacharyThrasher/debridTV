@@ -113,6 +113,8 @@ addEventListener("keydown", (e) => {
     case "m": case "M": toggleMute(); break;
     case "f": case "F": toggleFull(); break;
     case "z": case "Z": cycleAspect(); break;
+    case "a": case "A": player.cycleAudio?.(); break; // audio track (workstream A shows the OSD)
+    case "c": case "C": player.cycleCaptions?.(); break; // captions
     case "?": showWelcome(); break;
     default:
       if (/^[0-9]$/.test(k)) enterDigit(k);
@@ -190,6 +192,8 @@ function showWelcome() {
       <div><span class="kk"><kbd>M</kbd></span><span>mute</span></div>
       <div><span class="kk"><kbd>F</kbd></span><span>full screen</span></div>
       <div><span class="kk"><kbd>Z</kbd></span><span>picture shape</span></div>
+      <div><span class="kk"><kbd>A</kbd></span><span>audio track</span></div>
+      <div><span class="kk"><kbd>C</kbd></span><span>captions</span></div>
       <div><span class="kk"><kbd>S</kbd></span><span>settings</span></div>
     </div>
     <button class="btn primary" data-start>Start watching</button>
