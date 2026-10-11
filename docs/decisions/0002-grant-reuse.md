@@ -12,4 +12,4 @@
 
 ## Consequences
 In the mock: 400 range reads cost 1 API call instead of 400, and surfing never holds more than one stream client-side.
-Live behaviour (link lifetimes, range support, connection limits) is untested.
+Live (TorBox, LIVE-001): range reads and seeking work; a link stayed valid for at least 120 min. Concurrent-connection limits and Real-Debrid link behaviour are still untested.
