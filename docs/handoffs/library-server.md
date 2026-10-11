@@ -49,6 +49,7 @@ Try it: `npm run dev:mock` → http://127.0.0.1:7338 with every file state (keys
   - `/media/:id`, `/media/:id/live`, `/api/prefetch` → 403 `{locked:true, final:true}` for an item that only locked channels carry (unlocked channels count only within their rating limit). Checked before any link or byte, `internal=1` included.
   - While the guard is up (PIN set, a channel locked, not unlocked), anything that decides what airs needs the PIN (403 `pinRequired`): channel settings other than `favorite` and `locked:true`, custom channel save/delete, ratings, import, backup restore. Hiding and exclusions only shrink what airs, so they stay open.
   - Routes: `GET /api/lock` → `{pinSet, unlocked, untilMs, retryAfterMs?, lockedChannels}`; `POST /api/lock/pin {old?, pin}` (pin `null` removes; setter is unlocked at once); `POST /api/lock/unlock {pin}` → `{ok, untilMs}` or 403/429 `{error, retryAfterMs?}`; `POST /api/lock/lock`.
+  - Redaction: on a locked, not-unlocked channel, /api/guide and /api/now airings become `{start, end, itemId: null, locked: true, title: "Locked", rating: null, segments (times only)}`; /api/now adds top-level `locked: true`, `fileOffsetMs: null`, no `segment.fileFrom`. Channel name and number stay. `/api/item` → 403 for a locked item.
   - Panel: Privacy tab "Parental PIN" (set, unlock, lock now, change, remove); Channels tab gets a lock button per channel and a PIN row while locked. Unlocking from the panel fires `debridtv:unlocked` with `{channelId: null}` (all channels) for A's player.
   - Tests: `test/pinlock.test.ts`.
 

@@ -131,6 +131,18 @@ test("N-06b: a locked channel costs zero bytes and zero calls until the PIN is e
   const now = (await get(`/api/now?channel=${late.id}`)).body;
   assert.equal(now.channel.locked, true);
   assert.equal(now.channel.unlocked, false);
+  // Nothing says what is on: the grid keeps its times, the name and number stay.
+  assert.equal(now.locked, true);
+  assert.equal(now.channel.name, "Late Night Show");
+  assert.equal(now.airing.title, "Locked");
+  assert.equal(now.airing.itemId, null);
+  assert.equal(now.fileOffsetMs, null);
+  assert.equal(now.segment.fileFrom, undefined);
+  assert.ok(now.airing.end > now.airing.start);
+  assert.doesNotMatch(JSON.stringify(now), new RegExp(`${lateItem}|S01|Late\\.Night|"episode"|description|codecs`, "i"));
+  const guide = (await get("/api/guide")).body.rows.find((r: any) => r.channel.id === late.id);
+  assert.ok(guide.airings.length > 0 && guide.airings.every((a: any) => a.locked && a.title === "Locked" && a.itemId === null));
+  assert.equal((await get(`/api/item?id=${lateItem}`)).status, 403);
   assert.equal((await get("/api/bootstrap")).body.channels.find((c: any) => c.id === late.id).locked, true);
 
   mock.reset();
@@ -175,6 +187,9 @@ test("N-06b: the right PIN unlocks every locked channel; the export never carrie
   assert.ok(Math.abs(r.body.untilMs - (Date.now() + UNLOCK_MS)) < 5_000);
   const now = (await get(`/api/now?channel=${late.id}`)).body;
   assert.equal(now.channel.unlocked, true);
+  assert.equal(now.airing.title, "Late Night Show");
+  assert.equal(now.locked, undefined);
+  assert.equal((await get(`/api/item?id=${lateItem}`)).status, 200);
   assert.equal((await fetch(`${base}/media/${lateItem}`, { headers: { range: "bytes=0-99" } })).status, 206);
 
   const lockFile = readFileSync(join(home, "lock.json"), "utf8");

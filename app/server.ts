@@ -284,6 +284,22 @@ function refuseLocked(res: http.ServerResponse, id: string): boolean {
   return true;
 }
 
+/**
+ * What a locked channel shows until the PIN is entered: when things start and end
+ * (so the guide grid and breaks still line up), and nothing that says what they are.
+ */
+function lockedAiringView(a: Airing) {
+  return {
+    start: a.startMs, end: a.endMs, itemId: null, locked: true, title: "Locked", rating: null,
+    segments: a.segments.map((s) => (s.kind === "program" ? { kind: s.kind, start: s.startMs, end: s.endMs } : { kind: s.kind, start: s.startMs, end: s.endMs, reason: s.reason })),
+  };
+}
+/** airingView, or the locked stand-in when this channel is locked and nobody has entered the PIN. */
+function airingViewFor(c: StationChannel): (a: Airing) => object {
+  const v = lockView(lineup().settingsFor(c.meta.ruleKey));
+  return v.locked && !v.unlocked ? lockedAiringView : airingView;
+}
+
 function airingView(a: Airing) {
   const it = itemById(a.itemId);
   const p = it?.parsed;
@@ -701,7 +717,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   if (p === "/api/guide") {
     const from = Number(url.searchParams.get("from") ?? Date.now() - 30 * MIN);
     const to = Math.min(from + 12 * 60 * MIN, Number(url.searchParams.get("to") ?? from + 3 * 60 * MIN));
-    const out = lineup().channels().map((c) => ({ channel: channelView(c), airings: clock.airingsBetween(c, from, to).map(airingView) }));
+    const out = lineup().channels().map((c) => ({ channel: channelView(c), airings: clock.airingsBetween(c, from, to).map(airingViewFor(c)) }));
     return json(res, 200, { now: Date.now(), from, to, rows: out });
   }
   if (p === "/api/now") {
@@ -712,15 +728,18 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     meters.tunes += url.searchParams.get("count") === "1" ? 1 : 0;
     if (!target) return json(res, 200, { now: Date.now(), channel: channelView(ch), offAir: true });
     const next = clock.airingAt(ch, target.airing.endMs);
+    const view = airingViewFor(ch);
+    const hidden = view === lockedAiringView;
     return json(res, 200, {
       now: Date.now(),
       channel: channelView(ch),
-      airing: airingView(target.airing),
+      airing: view(target.airing),
       segment: target.segment.kind === "program"
-        ? { kind: "program", start: target.segment.startMs, end: target.segment.endMs, fileFrom: target.segment.fileFromMs }
+        ? { kind: "program", start: target.segment.startMs, end: target.segment.endMs, ...(hidden ? {} : { fileFrom: target.segment.fileFromMs }) }
         : { kind: "break", start: target.segment.startMs, end: target.segment.endMs, reason: target.segment.reason },
-      fileOffsetMs: target.fileOffsetMs,
-      next: next ? airingView(next) : null,
+      ...(hidden ? { locked: true } : {}),
+      fileOffsetMs: hidden ? null : target.fileOffsetMs,
+      next: next ? view(next) : null,
     });
   }
   if (p === "/api/prefetch" && m === "POST") {
@@ -748,6 +767,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   if (p === "/api/item") {
     const it = itemById(url.searchParams.get("id") ?? "");
     if (!it) return json(res, 404, {});
+    if (refuseLocked(res, it.id)) return;
     return json(res, 200, {
       id: it.id, title: displayTitle(it), provider: it.provider, container: it.container, video: it.video, audio: it.audio,
       tracks: it.tracks ?? [], chaptersMs: it.chaptersMs ?? [],
