@@ -24,7 +24,7 @@ Branch: `claude/project-thread-vyi2fe` (fast-forwardable onto `claude/debridtv-r
   or initials, a spinning disc, track details, a progress bar and a themed LED analyser (Web Audio, routed only once
   running). C4 confirmed the shapes; an end-to-end Jukebox test runs on 5 tagged Opus songs with a cover.
 - **Compat audio**: the player sends `&ac=opus` when the browser has no AAC (needs C's patch in serveLive).
-  `&maxh=720|1080` comes from pref `compatMaxHeight` (ADR-0004; needs C's server side and a settings control).
+  `&maxh=720|1080` comes from pref `compatMaxHeight` (ADR-0004; server side and panel control shipped by C4).
 - **Tests**: `test/ui/player.test.ts` covers join at live, pause→live, surf cost, peek, lock, sign-off ×2, On Demand,
   and audio and captions (N-18a: two-language MKV plus numbered SRT; runs with C4's `&ac=opus`).
 
@@ -33,7 +33,7 @@ Branch: `claude/project-thread-vyi2fe` (fast-forwardable onto `claude/debridtv-r
 - Peek and edge-cache numbers on a real provider (needs a run on Zachary's PC).
 - Declined: filling the edge-cache head at probe time (~1 GB of unwatched media across 938 files breaks the core rule). The cache stays viewer-filled.
 - Bitmap-subtitle burn-in has no fixture yet.
-- Waiting on C4: an optional video map for audio-only compat, `&maxh` (server side plus a settings control).
+- Closed (C4 b7a7fc3): audio-only compat has no video map; `&maxh` works on the encode paths, with a panel control `compatMaxHeight`.
 - No passthrough: browsers can't bitstream AC-3 or DTS (ADR-0004).
 
 ## Bench
