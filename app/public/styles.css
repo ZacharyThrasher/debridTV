@@ -358,7 +358,7 @@ body.guide-open { background: var(--bg); }
 .guide-hints { display: flex; gap: calc(var(--u)*1.2); justify-content: flex-end; color: var(--faint); font-size: calc(var(--u)*.8); }
 .guide-clock { font-family: var(--mono); font-size: calc(var(--u)*2); color: var(--ink); line-height: 1; }
 
-.grid { position: relative; overflow: hidden; background: var(--panel-solid); min-height: 0; --label: calc(var(--u)*15); --row: calc(var(--u)*3.6); }
+.grid { touch-action: none; position: relative; overflow: hidden; background: var(--panel-solid); min-height: 0; --label: calc(var(--u)*15); --row: calc(var(--u)*3.6); }
 .grid-times { position: sticky; top: 0; z-index: 3; height: calc(var(--u)*2); margin-left: var(--label); position: relative; border-bottom: 1px solid var(--line); background: var(--panel-solid); }
 .grid-times span {
   position: absolute; top: 0; height: 100%; display: flex; align-items: center; padding-left: .5em; border-left: 1px solid var(--line);

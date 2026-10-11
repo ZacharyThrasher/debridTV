@@ -222,3 +222,36 @@ grid.addEventListener("wheel", (e) => {
   }
 }, { passive: false });
 addEventListener("resize", () => guideOpen() && render());
+
+// Touch: swipe the grid up/down for channels, left/right for time. The rows follow
+// the finger and the guide re-renders on release: replacing the touched cell mid-
+// gesture would end the gesture (a detached node gets no more touch events).
+let touch = null;
+grid.addEventListener("touchstart", (e) => {
+  const p = e.touches[0];
+  touch = { x: p.clientX, y: p.clientY, dy: 0, scroll: grid.querySelector(".grid-scroll") };
+}, { passive: true });
+grid.addEventListener("touchmove", (e) => {
+  if (!touch || !data) return;
+  const p = e.touches[0];
+  touch.dy = touch.y - p.clientY;
+  if (Math.abs(touch.dy) > Math.abs(touch.x - p.clientX) && touch.scroll) {
+    e.preventDefault();
+    touch.scroll.style.transition = "none";
+    touch.scroll.style.translate = `0 ${-touch.dy}px`;
+  }
+}, { passive: false });
+grid.addEventListener("touchend", (e) => {
+  if (!touch || !data) return;
+  const p = e.changedTouches[0];
+  const dx = touch.x - p.clientX;
+  const dy = touch.y - p.clientY;
+  touch = null;
+  if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) return void guideKey({ key: dx > 0 ? "ArrowRight" : "ArrowLeft" });
+  const rows = Math.round(dy / rowPx());
+  if (!rows) return void render();
+  // Move the view with the finger, and the highlight along with it.
+  scrollRow = clamp(scrollRow + rows, 0, data.rows.length - 1);
+  row = clamp(row + rows, 0, data.rows.length - 1);
+  render();
+});
