@@ -60,10 +60,13 @@ async function open(route?: (u: URL, body: any) => any) {
   if (route)
     await ctx.route("**/api/**", async (r: any) => {
       const u = new URL(r.request().url());
-      const resp = await r.fetch();
-      let body = await resp.json().catch(() => null);
-      body = body && route(u, body);
-      await r.fulfill({ response: resp, body: JSON.stringify(body ?? (await resp.json())) });
+      // A request still in flight when the test closes its context rejects here; that's not a failure.
+      try {
+        const resp = await r.fetch();
+        let body = await resp.json().catch(() => null);
+        body = body && route(u, body);
+        await r.fulfill({ response: resp, body: JSON.stringify(body ?? (await resp.json())) });
+      } catch {}
     });
   const page = await ctx.newPage();
   const errors: string[] = [];
