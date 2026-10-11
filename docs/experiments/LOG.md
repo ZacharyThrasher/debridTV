@@ -326,3 +326,26 @@ reads on revisits.
 (`PEEK_AT`, `PEEK_MIN_WAIT` in `player.js`); compat mode still waits the full dwell
 (it starts ffmpeg). Head+tail cache handed to workstream C as a proposal (server).
 ADR-0003 records the decision.
+
+### EXP-009 — The edge cache in the real app (2026-10-11)
+
+**Question.** Does workstream C's head+tail edge cache (ADR-0003, `app/edgecache.ts`)
+give the ~0.45 s per tune that EXP-008 predicted, in the real app rather than a bench?
+
+**Setup.** `experiments/exp009-app-surf.ts` runs the app server (C's branch merged with
+the player) against the mock TorBox shaped like LIVE-001 (link 370 ms, media TTFB
+200 ms, 100 Mb/s) serving real 8 Mb/s VP9/Opus WebM. Eight one-movie channels. Links
+are fetched first, so every tune pays the same for the link. Chromium tunes to each
+channel by number, rests 3.5 s, and does three passes: pass 1 meets a cold cache,
+passes 2–3 a warm one. Time = key press to a decoded frame of the live point.
+Result: `results/exp009.json`.
+
+| | median | range |
+|---|---|---|
+| Cold cache (first visit to a file) | **1,069 ms** | 951–1,142 |
+| Warm cache (revisit) | **556 ms** | 474–917 |
+
+**Verdict.** The cache cuts a revisit's tune time by **~0.5 s (−48 %)**, slightly more
+than EXP-008's estimate. 15 MB of the run came from the cache instead of the provider;
+no extra API calls. First visits still pay three round trips; filling the head at
+library-probe time would extend the win to them (the probe already reads the head).
