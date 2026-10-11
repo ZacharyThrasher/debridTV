@@ -6,18 +6,24 @@
 // media bytes, and leaving a channel cancels its stream at once.
 
 import { api } from "./api.js";
-import { now, sleep, clamp, pref, syncClock, toast } from "./util.js";
+import { now, sleep, clamp, pref, setPref, syncClock, toast } from "./util.js";
 import { staticOn, staticOff, click } from "./static.js";
 import { synthStart, synthStop, synthPaused } from "./synth.js";
 import { breakCard, offAirCard, unavailableCard, messageCard, hideCard } from "./cards.js";
 import { osd, osdHide, bug, setBanner, showBanner } from "./ui.js";
+import { initSignOff, signedOff } from "./signoff.js";
+import { tracksFor, selectionFor, needsCompat, selectionQuery, audioTracks, subTracks, defaultAudio, isText, trackLabel, Captions } from "./tracks.js";
 
 const video = document.getElementById("video");
+const synthEl = document.getElementById("synth");
 const pausedEl = document.getElementById("paused");
 
 export const tv = { channels: [], current: null, last: null, info: null, route: "card", ffmpeg: false, paused: false };
 
 const MIN_WAIT = 150, MAX_WAIT = 1200; // EXP-006 adaptive bounds
+// EXP-008: a slow surfer (about one press a second) gets a paused "peek" of the
+// picture 400 ms after a press; motion and sound start when the adaptive wait ends.
+const PEEK_AT = 400, PEEK_MIN_WAIT = 700;
 let token = 0;
 let lastPressAt = 0;
 let lastGap = Infinity;
@@ -44,7 +50,7 @@ export function byNumber(n) {
 }
 
 export async function tune(ch, { silent = false } = {}) {
-  if (!ch) return;
+  if (!ch || signedOff()) return;
   const my = ++token;
   clearTimeout(boundary);
   clearTimeout(stallTimer);
@@ -88,15 +94,19 @@ export async function tune(ch, { silent = false } = {}) {
 
   const a = info.airing;
   const playable = a && info.segment?.kind === "program" && a.provider && a.provider !== "demo" && a.availability !== "policy-blocked";
+  let hold = 0;
   if (playable) {
     // Resolve the link after the minimum dwell; media waits for the adaptive dwell.
     if (wait > 0) await sleep(Math.min(MIN_WAIT, wait));
     if (my !== token) return;
     api.post("/api/prefetch", { itemId: a.itemId }).catch(() => {});
-    if (wait > MIN_WAIT) await sleep(wait - MIN_WAIT);
+    if (wait >= PEEK_MIN_WAIT) {
+      await sleep(PEEK_AT - MIN_WAIT);
+      hold = wait - PEEK_AT;
+    } else if (wait > MIN_WAIT) await sleep(wait - MIN_WAIT);
     if (my !== token) return;
   }
-  render(ch, info, my, silent);
+  render(ch, info, my, silent, hold);
 }
 
 export function togglePause() {
@@ -115,7 +125,7 @@ export function applyVolume() {
 
 // ------------------------------------------------------------------ render
 
-function render(ch, info, my, silent) {
+function render(ch, info, my, silent, hold = 0) {
   const seg = info.segment;
   const a = info.airing;
   const newProgram = !media || media.itemId !== a?.itemId || seg?.kind !== "program";
@@ -147,7 +157,7 @@ function render(ch, info, my, silent) {
   } else if (silent && media && media.itemId === a.itemId && !newProgram && !video.paused) {
     // Same program continuing after a mid-break boundary we never left.
   } else {
-    playMedia(ch, info, my);
+    playMedia(ch, info, my, null, hold);
   }
   setBanner(ch, info, tv.route);
   if (!silent || newProgram) showBanner();
@@ -190,13 +200,23 @@ function chooseRoute(a) {
   return "live";
 }
 
-function playMedia(ch, info, my) {
+async function playMedia(ch, info, my, forced = null, hold = 0) {
+  const holdUntil = performance.now() + hold;
   const a = info.airing;
   stopMedia();
-  const route = chooseRoute(a);
+  // Remembered audio/caption languages may need tracks the browser can't pick by
+  // itself. Only then do we look the tracks up (a local call), so the common case
+  // adds no delay.
+  let sel = forced;
+  if (!sel && tv.ffmpeg && (pref("audioLang") || (pref("subLang") && pref("subLang") !== "off"))) {
+    sel = selectionFor(await tracksFor(a.itemId));
+    if (my !== token) return;
+  }
+  let route = chooseRoute(a);
+  if (sel && needsCompat(sel) && tv.ffmpeg && route === "direct") route = "live";
   tv.route = route;
   const offsetAt = () => info.fileOffsetMs + (now() - info.now);
-  media = { itemId: a.itemId, route, liveStart: 0, ch, info };
+  media = { itemId: a.itemId, route, liveStart: 0, ch, info, sel, my };
   applyVolume();
   const onPlaying = () => {
     if (my !== token) return;
@@ -207,25 +227,33 @@ function playMedia(ch, info, my) {
   const onError = async () => {
     if (my !== token) return;
     clearTimeout(stallTimer);
-    if (media?.route === "direct" && tv.ffmpeg) {
-      // One fallback to compatibility mode, never a retry loop.
-      media.route = tv.route = "live";
-      setBanner(ch, info, tv.route);
-      return startLive(offsetAt(), a, onPlaying, onError);
-    }
+    const route = media?.route;
     stopMedia();
-    staticOff();
+    // Ask the server what happened before doing anything else. A refusal (451) or a
+    // file the account can't serve (409) is final: no retry, no compatibility-mode
+    // second attempt, no other provider (ADR-0002).
     let item = null;
     try {
       item = await api.get(`/api/item?id=${encodeURIComponent(a.itemId)}`);
     } catch {}
     if (my !== token) return;
-    if (item?.availability === "policy-blocked") return unavailableCard(ch, a, { policy: true });
-    const why = item?.availabilityReason
-      ? `${item.availabilityReason}.`
-      : tv.ffmpeg
-        ? "The browser couldn't play this file, even in compatibility mode."
-        : "Your browser can't play this file's format. Installing ffmpeg turns on compatibility mode (see the README).";
+    if (item?.availability === "policy-blocked") return staticOff(), unavailableCard(ch, a, { policy: true });
+    if (item?.availability === "unavailable") {
+      staticOff();
+      return unavailableCard(ch, a, { reason: `${item.availabilityReason ?? "The provider couldn't serve this file"}. The channel moves on at the next program.` });
+    }
+    if (route === "direct" && tv.ffmpeg) {
+      // The bytes arrived but this browser couldn't decode them: one fallback to
+      // compatibility mode, never a loop.
+      media = { itemId: a.itemId, route: "live", liveStart: 0, ch, info, sel, my };
+      tv.route = "live";
+      setBanner(ch, info, tv.route);
+      return startLive(offsetAt(), a, onPlaying, onError);
+    }
+    staticOff();
+    const why = tv.ffmpeg
+      ? "The browser couldn't play this file, even in compatibility mode."
+      : "Your browser can't play this file's format. Installing ffmpeg turns on compatibility mode (see the README).";
     unavailableCard(ch, a, { reason: `${why} The channel moves on at the next program.` });
   };
   video.onplaying = onPlaying;
@@ -237,13 +265,30 @@ function playMedia(ch, info, my) {
     return unavailableCard(ch, a, { reason: `This browser can't decode ${String(a.codecs?.video ?? "this").toUpperCase()} or H.264 video. Chrome or Edge can. The channel moves on at the next program.` });
   }
   if (route === "direct") {
+    // With a hold (slow surfing) open paused: headers, then the frame where the
+    // program will be when the hold ends. Motion and sound start then.
+    video.preload = hold > 0 ? "metadata" : "auto";
     video.src = `/media/${encodeURIComponent(a.itemId)}`;
     video.onloadedmetadata = () => {
       if (my !== token) return;
-      video.currentTime = offsetAt() / 1000;
-      video.play().catch(() => autoplayHint());
+      const left = Math.max(0, holdUntil - performance.now());
+      video.currentTime = (offsetAt() + left) / 1000;
+      if (!left) return void video.play().catch(() => autoplayHint());
+      video.onseeked = () => {
+        video.onseeked = null;
+        if (my === token && video.paused) staticOff(); // the picture locks in, still silent
+      };
+      setTimeout(() => {
+        if (my !== token || tv.paused) return;
+        video.preload = "auto";
+        if (Math.abs(video.currentTime * 1000 - offsetAt()) > 1000) video.currentTime = offsetAt() / 1000;
+        video.play().catch(() => autoplayHint());
+      }, left);
     };
     video.load();
+  } else if (hold > 0) {
+    // Compatibility mode starts ffmpeg, so it only starts once the viewer settles.
+    setTimeout(() => my === token && media?.itemId === a.itemId && startLive(offsetAt(), a, onPlaying, onError), hold);
   } else startLive(offsetAt(), a, onPlaying, onError);
 }
 
@@ -263,8 +308,15 @@ function startLive(offsetMs, a, onPlaying, onError) {
     onPlaying();
   };
   video.onerror = onError;
-  video.src = `/media/${encodeURIComponent(a.itemId)}/live?start=${(offsetMs / 1000).toFixed(2)}&v=${v}&tok=${tok}`;
+  video.src = `/media/${encodeURIComponent(a.itemId)}/live?start=${(offsetMs / 1000).toFixed(2)}&v=${v}&tok=${tok}${selectionQuery(m.sel)}`;
   video.play().catch(() => autoplayHint());
+  if (m.sel?.sub != null && !m.sel.burn) {
+    tracksFor(a.itemId).then((tracks) => {
+      if (media !== m) return;
+      const t = subTracks(tracks).find((x) => x.index === m.sel.sub);
+      captions.start(tok, trackLabel(t), t?.lang);
+    });
+  }
 }
 
 /**
@@ -310,9 +362,10 @@ function autoplayHint() {
 
 function stopMedia() {
   flushWatch(true);
+  captions.stop();
   video.playbackRate = 1;
   media = null;
-  video.onplaying = video.onerror = video.onloadedmetadata = null;
+  video.onplaying = video.onerror = video.onloadedmetadata = video.onseeked = null;
   if (video.getAttribute("src")) {
     video.pause();
     // Dropping the source closes the connection, which the server turns into an
@@ -362,3 +415,98 @@ function flushWatch(end = false) {
 }
 setInterval(() => flushWatch(false), 15_000);
 addEventListener("pagehide", () => flushWatch(true));
+
+// ------------------------------------------------------------------ audio and captions
+
+const captions = new Captions(video);
+captions.onUnsupported = () => toast("Captions need a newer DebridTV server.");
+
+/** Restart the current program with another track choice, at the live point. */
+function replay(m, sel) {
+  if (media !== m || m.my !== token) return;
+  staticOn();
+  playMedia(m.ch, m.info, m.my, sel);
+}
+
+/** A key: next audio track. Remembers the language for the next programs too. */
+export async function cycleAudio() {
+  const m = media;
+  if (!m) return osd("AUDIO", tv.route === "demo" ? "Demo channels have one track" : "Nothing playing", 1500);
+  const tracks = await tracksFor(m.itemId);
+  if (media !== m) return;
+  const list = audioTracks(tracks);
+  if (list.length < 2) return osd("AUDIO", list[0] ? `${trackLabel(list[0])} · only track` : "Only one track", 2000);
+  if (!tv.ffmpeg) return osd("AUDIO", "Switching tracks needs compatibility mode (install ffmpeg)", 3000);
+  const cur = m.sel?.audio ?? defaultAudio(tracks);
+  const i = (list.findIndex((t) => t.index === cur) + 1) % list.length;
+  const next = list[i];
+  setPref("audioLang", next.lang && next.lang !== "und" ? next.lang : null);
+  osd(`AUDIO ${i + 1}/${list.length}`, trackLabel(next), 2500);
+  const sel = { ...(m.sel ?? { sub: null, burn: false }), audio: next.index === defaultAudio(tracks) ? null : next.index };
+  replay(m, sel);
+}
+
+/** C key: captions off → each subtitle track → off. */
+export async function cycleCaptions() {
+  const m = media;
+  if (!m) return osd("CC", tv.route === "demo" ? "Demo channels have no captions" : "Nothing playing", 1500);
+  const tracks = await tracksFor(m.itemId);
+  if (media !== m) return;
+  const list = subTracks(tracks);
+  if (!list.length) return osd("CC", "No captions for this program", 2000);
+  if (!tv.ffmpeg) return osd("CC", "Captions need compatibility mode (install ffmpeg)", 3000);
+  const at = list.findIndex((t) => t.index === m.sel?.sub);
+  const next = list[at + 1] ?? null; // past the last one: off
+  setPref("subLang", next ? next.lang && next.lang !== "und" ? next.lang : "any" : "off");
+  osd(next ? "CC ON" : "CC OFF", next ? `${trackLabel(next)}${isText(next) ? "" : " · drawn into the picture"}` : "", 2500);
+  const sel = { ...(m.sel ?? { audio: null }), sub: next?.index ?? null, burn: next ? !isText(next) : false };
+  replay(m, sel);
+}
+
+// ------------------------------------------------------------------ picture shape
+
+/**
+ * Picture shape (parity N-17a), set by the Z key (main.js) through pref "aspect":
+ *   auto — the file's own shape, letterboxed (default)
+ *   fill — stretched to the screen
+ *   4:3  — a 4:3 set: widescreen pictures are center-cut, like a 90s broadcast
+ *   zoom — fills the screen and crops the edges (for 4:3 shows on a wide screen)
+ */
+export function applyAspect() {
+  const mode = pref("aspect") ?? "auto";
+  const stage = video.parentElement;
+  const W = stage?.clientWidth || innerWidth, H = stage?.clientHeight || innerHeight;
+  // The demo canvas paints to whatever box it gets, so only the 4:3 box applies to it.
+  for (const el of [video, synthEl]) {
+    if (!el) continue;
+    const s = el.style;
+    s.objectFit = mode === "fill" ? "fill" : mode === "4:3" || mode === "zoom" ? "cover" : "";
+    if (mode === "4:3") {
+      // The largest 4:3 box that fits, centred.
+      const w = Math.min(W, (H * 4) / 3), h = Math.min(H, (W * 3) / 4);
+      Object.assign(s, { width: `${w}px`, height: `${h}px`, left: `${(W - w) / 2}px`, top: `${(H - h) / 2}px`, right: "auto", bottom: "auto" });
+    } else Object.assign(s, { width: "", height: "", left: "", top: "", right: "", bottom: "" });
+  }
+}
+addEventListener("resize", () => (pref("aspect") ?? "auto") === "4:3" && applyAspect());
+applyAspect();
+
+// ------------------------------------------------------------------ sign-off
+
+initSignOff({
+  // Drop every stream and timer: nothing is fetched until the viewer is back.
+  stop() {
+    token++;
+    clearTimeout(boundary);
+    clearTimeout(stallTimer);
+    stopMedia();
+    synthStop();
+    staticOff();
+    hideCard();
+    setPaused(false, { quiet: true });
+  },
+  // Back on the air, live, on the same channel.
+  resume() {
+    if (tv.current) tune(tv.current, { silent: true });
+  },
+});
