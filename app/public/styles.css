@@ -1398,3 +1398,23 @@ html.tv .gp-slate { left: calc(var(--u)*1.2); top: 1.5vh; width: 31vw; height: 3
 html.tv .guide-hints .hint-browse { display: none; } /* a remote's arrows need no hint; keeps the bar on one line */
 .guide-preview.previewing .gp-slate { padding-bottom: calc(var(--u)*2.8); }
 html.tv .guide-preview.previewing .gp-slate { padding-bottom: calc(var(--u)*2.4); }
+
+/* ------------------------------------------------------------- home network: a paired device
+   Sources and the PIN are PC-only settings (the server refuses them with pcOnly), so a paired
+   phone or TV doesn't offer them. */
+html[data-where="device"] #panel [data-tab="sources"],
+html[data-where="device"] [data-pin-change],
+html[data-where="device"] .ced-pin { display: none !important; }
+
+/* ------------------------------------------------------------- music stations and Coming Attractions
+   (N-23a, N-23c): one long block per row, ticks where each song or trailer starts. */
+.cell.stream .ticks { position: absolute; inset: 0; pointer-events: none; /* clear of the title */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0 calc(var(--u)*15), #000 calc(var(--u)*17)); mask-image: linear-gradient(90deg, transparent 0 calc(var(--u)*15), #000 calc(var(--u)*17)); }
+.cell.stream .ticks i { position: absolute; top: 22%; bottom: 22%; width: 1px; background: color-mix(in srgb, var(--ink) 14%, transparent); }
+.cell.stream .ct .glyph { display: inline-block; margin-right: .4em; font-weight: 400; color: hsl(var(--h) 80% 68%); }
+.cell.stream.music { --fill: color-mix(in srgb, hsl(var(--h) 70% 55%) 12%, var(--cell)); }
+.cell.stream.music .ticks i { top: auto; bottom: 18%; height: 28%; width: 2px; border-radius: 1px; }
+.cell.stream.trailers .ticks i { background: repeating-linear-gradient(transparent 0 3px, color-mix(in srgb, var(--ink) 20%, transparent) 3px 6px); width: 2px; }
+.badge.kind { color: var(--ink); background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.banner .b-art.square { height: calc(var(--u)*7.4); aspect-ratio: 1; border-radius: calc(var(--radius) * .6); }
+.banner .artist { font-weight: 700; }

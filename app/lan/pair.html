@@ -147,6 +147,8 @@
     document.addEventListener("keydown", (e) => {
       if (e.target === nameEl) {
         if (e.key === "Enter") submit();
+        // A remote has no Tab key: Up leaves the name field for the keypad's bottom row.
+        if (e.key === "ArrowUp") { e.preventDefault(); document.querySelector('#pad button[data-k="0"]').focus(); }
         return;
       }
       const digit = /^\d$/.test(e.key) ? e.key : e.keyCode >= 96 && e.keyCode <= 105 ? String(e.keyCode - 96) : null;

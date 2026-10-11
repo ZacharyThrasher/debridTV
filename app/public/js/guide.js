@@ -9,7 +9,7 @@ import { logoHtml, hasLogo, datesLabel } from "./channel-editor.js";
 import { formatChips, artOf, artImg } from "./ui.js";
 import { isLocked, isRedacted } from "./lock.js";
 import { openPanel } from "./panel.js";
-import { openOnDemand } from "./ondemand.js";
+import { openOnDemand, watchFilm } from "./ondemand.js";
 
 const wordmark = (c) => (hasLogo(c) ? raw(logoHtml(c, "sm")) : null);
 
@@ -90,6 +90,49 @@ async function load() {
   render();
 }
 
+// Coming Attractions (N-23c) and the music stations (N-23a) air 2 to 4 minute pieces back
+// to back. As slivers they'd be unreadable, so the row is one long block that names what's
+// on now; ticks mark where each piece starts, and the details still follow each one.
+const isStream = (ch) => ch?.kind === "trailers" || ch?.kind === "music";
+const trailerName = (a) => [a.trailerFor?.title ?? a.title, (a.trailerFor?.year ?? a.year) && `(${a.trailerFor?.year ?? a.year})`].filter(Boolean).join(" ");
+
+function streamCell(r, ri, pct, t, focus, viewTo) {
+  const ch = r.channel;
+  const shown = r.airings.filter((a) => a.end > viewFrom && a.start < viewTo);
+  if (!shown.length) return "";
+  const start = shown[0].start;
+  const end = shown.at(-1).end;
+  const left = Math.max(0, pct(start));
+  const right = Math.min(100, pct(end));
+  const music = ch.kind === "music";
+  const cls = ["cell", "stream", music ? "music" : "trailers"];
+  if (end <= t) cls.push("past");
+  else if (start <= t) cls.push("now");
+  if (start < viewFrom) cls.push("cut-left");
+  const mine = ri === row && focus && shown.includes(focus);
+  if (mine) cls.push("focus");
+  const onNow = shown.find((a) => a.start <= t && t < a.end);
+  const locked = isLocked(ch) || shown.some(isRedacted);
+  let head, sub;
+  if (locked) (cls.push("locked"), (head = "Locked"), (sub = ""));
+  else if (music) {
+    head = onNow ? `Now playing: ${onNow.title}` : `${ch.name}, nonstop`;
+    sub = onNow ? [onNow.artist, onNow.album].filter(Boolean).join(" · ") : `${shown.length} songs`;
+  } else {
+    head = "Trailers, back to back";
+    sub = onNow ? `Now: ${trailerName(onNow)}` : `${shown.length} trailers`;
+  }
+  const from = Math.max(start, viewFrom);
+  const to = Math.min(end, viewTo);
+  const p = start <= t && t < end ? `;--p:${(((t - from) / (to - from)) * 100).toFixed(1)}%` : "";
+  // A tick where each piece starts, as a share of the block's visible width.
+  const ticks = shown.slice(1).map((a) => `<i style="left:${(((a.start - from) / (to - from)) * 100).toFixed(2)}%"></i>`).join("");
+  return html`<div class="${cls.join(" ")}" style="left:calc(${left}% + 2px);width:calc(${right - left}% - 4px)${p}" data-row="${ri}" data-start="${(mine ? focus : onNow ?? shown[0]).start}" role="gridcell"
+    aria-label="${locked ? "Locked program" : `${head}${sub ? `, ${sub}` : ""}`}">
+    ${start < viewFrom ? raw('<span class="cont">◂</span>') : ""}<span class="ticks" aria-hidden="true">${raw(ticks)}</span>
+    <div class="ct">${music && !locked ? raw('<b class="glyph" aria-hidden="true">♪</b>') : !locked ? raw('<b class="glyph" aria-hidden="true">▶</b>') : ""}${head}</div>${sub ? html`<div class="cs">${sub}</div>` : ""}</div>`.html;
+}
+
 function airingAt(r, t) {
   const list = data?.rows[r]?.airings ?? [];
   return list.find((a) => a.start <= t && t < a.end) ?? list.find((a) => a.start >= t) ?? list[list.length - 1];
@@ -113,7 +156,7 @@ function render() {
 
   const rows = data.rows.map((r, ri) => {
     const ch = r.channel;
-    const cells = r.airings
+    const cells = isStream(ch) ? [streamCell(r, ri, pct, t, focus, viewTo)] : r.airings
       .filter((a) => a.end > viewFrom && a.start < viewTo)
       .map((a, i, shown) => {
         const left = Math.max(0, pct(a.start));
@@ -208,7 +251,11 @@ function renderDetails(ch, a) {
   }
   const t = now();
   const state = a.end <= t ? "Ended" : a.start <= t ? `On now · ${Math.round((a.end - t) / MIN)} min left` : `Starts in ${fmtDur(a.start - t)}`;
-  const bits = [a.episode && html`<span>${a.episode}</span>`, a.year && html`<span>${a.year}</span>`, a.genre && html`<span>${a.genre}</span>`,
+  const track = a.kind === "track";
+  const trailer = a.kind === "trailer" || !!a.trailerFor;
+  const bits = [track && raw('<span class="badge kind">♪ Song</span>'), trailer && raw('<span class="badge kind">Trailer</span>'),
+    track && a.artist && html`<span>${a.artist}</span>`, track && a.album && html`<span>${a.album}${a.trackNo ? ` · track ${a.trackNo}` : ""}</span>`,
+    a.episode && html`<span>${a.episode}</span>`, a.year && html`<span>${a.year}</span>`, a.genre && html`<span>${a.genre}</span>`,
     a.rating && html`<span class="rating">${a.rating}</span>`,
     a.durationMs && html`<span>${fmtDur(a.durationMs)}</span>`, formatChips(a), a.watched && raw('<span class="badge ok">✓ Watched</span>'),
     a.availability === "policy-blocked" && raw('<span class="badge bad">Refused by provider</span>'),
@@ -229,7 +276,7 @@ function renderDetails(ch, a) {
     ${a.group ? html`<div class="gd-group"><b>${a.group.name}</b>${a.group.description ? html` · ${a.group.description}` : ""}</div>` : ""}
     <div class="desc">${a.subtitle ? html`“${a.subtitle}”. ` : ""}${state}.${pad ? ` Ends at ${fmtTime(pad.start)}, then a station break until ${fmtTime(pad.end)}.` : ""}</div>
     ${onNow ? raw(`<div class="prog"><i style="width:${pct.toFixed(1)}%"></i></div>`) : ""}
-    <div class="act"><kbd>OK</kbd> ${onNow ? "watch now" : "tune to this channel"}</div>`;
+    <div class="act"><kbd>OK</kbd> ${onNow ? (track ? "listen now" : "watch now") : "tune to this channel"}${a.trailerFor?.itemId ? raw(' <kbd>W</kbd> watch the film, it\'s in your library') : ""}</div>`;
 }
 
 // ------------------------------------------------------------------ preview (N-14)
@@ -286,7 +333,7 @@ function paintPreview(ch, a, fresh) {
         : offSeason(ch) ? html`<div class="gp-k">Off season</div><div class="gp-t">${ch.name}</div>${backOn(ch) ? html`<div class="gp-s">Back ${backOn(ch)}</div>` : ""}`
         : html`<div class="gp-k">Coming up</div><div class="gp-t">${ch.name}</div>`}
     </div>
-    ${a && !locked ? html`<div class="gp-bar"><i style="width:${pct.toFixed(1)}%"></i></div><div class="gp-left">${left} min left · <kbd>OK</kbd> watch</div>` : ""}`.html;
+    ${a && !locked ? html`<div class="gp-bar"><i style="width:${pct.toFixed(1)}%"></i></div><div class="gp-left">${left} min left · <kbd>OK</kbd> ${a.kind === "track" ? "listen" : "watch"}</div>` : ""}`.html;
   if (fresh) {
     slate.hidden = false;
     slate.style.animation = "none";
@@ -318,6 +365,12 @@ export function guideKey(e) {
     return true;
   }
   if (/^[0-9]$/.test(k)) return jumpKey(k), true;
+  if ((k === "w" || k === "W") && !isLocked(data.rows[row]?.channel)) {
+    const a = airingAt(row, at);
+    if (!a?.trailerFor?.itemId || isRedacted(a)) return false;
+    closeGuide();
+    return watchFilm(a), true;
+  }
   const list = data.rows[row]?.airings ?? [];
   const cur = airingAt(row, at);
   const idx = list.indexOf(cur);

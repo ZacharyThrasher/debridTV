@@ -341,6 +341,16 @@ function play(it, fromMs) {
   player.playOnDemand(it.id, { fromMs, item: it });
 }
 
+/** A trailer on Coming Attractions (N-23c) points at its film when the film is in the
+ * library: W ("Watch it") plays the film from the start through On Demand. */
+export function watchFilm(a) {
+  const id = a?.trailerFor?.itemId;
+  if (!id) return false;
+  const name = [a.trailerFor.title ?? a.title, a.trailerFor.year && `(${a.trailerFor.year})`].filter(Boolean).join(" ");
+  play({ id, kind: "movie", title: name }, 0);
+  return true;
+}
+
 async function openShow(key) {
   state.show = key;
   state.season = null;

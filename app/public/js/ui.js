@@ -79,6 +79,9 @@ export function formatChips(a) {
   return html`<span class="fmt" role="img" aria-label="${label}" title="${label}">${out.map(([t, k]) => html`<i class="${k}">${t}</i>`)}</span>`.html;
 }
 
+/** What the live channel is airing now, unless it's locked (null then). */
+export const liveAiring = () => (bannerState && !isLocked(bannerState.ch) && !isRedacted(bannerState.info.airing ?? {}) ? bannerState.info.airing : null);
+
 export function setBanner(ch, info, route) {
   bannerState = { ch, info, route };
   ratingCard(isLocked(ch) ? null : info);
@@ -195,6 +198,16 @@ function renderBanner() {
     pct = clamp((t - a.start) / (a.end - a.start), 0, 1) * 100;
     times = `${fmtTime(a.start, { short: true })} – ${fmtTime(a.end)}`;
     const bits = [];
+    // Music stations and Coming Attractions (N-23a, N-23c): the song's artist and album, or
+    // the trailer's film (and W to watch it when the film is in the library).
+    if (a.kind === "track") {
+      bits.push(html`<span class="badge kind">♪ Song</span>`);
+      if (a.artist) bits.push(html`<span class="artist">${a.artist}</span>`);
+      if (a.album) bits.push(html`<span>${a.album}</span>`);
+    } else if (a.kind === "trailer" || a.trailerFor) {
+      bits.push(html`<span class="badge kind">Trailer</span>`);
+      if (a.trailerFor?.itemId) bits.push(html`<span class="badge ok">W · Watch the film</span>`);
+    }
     if (a.episode) bits.push(html`<span class="ep">${a.episode}</span>`);
     if (a.subtitle) bits.push(html`<span>“${a.subtitle}”</span>`);
     if (a.year) bits.push(html`<span>${a.year}</span>`);
@@ -215,11 +228,12 @@ function renderBanner() {
   // Episodes show their still (16:9) when there is one; movies their poster.
   const art = isLocked(ch) ? null : a?.episode ? artOf(a, "thumb", "poster") : artOf(a, "poster", "thumb");
   const wide = !!art && art === artOf(a, "thumb");
+  const shape = a?.kind === "track" ? "square" : wide ? "wide" : "tall"; // an album cover is square
   bannerEl.style.setProperty("--h", ch.hue);
   bannerEl.innerHTML = html`
     <div class="chan"><div class="num" style="--h:${ch.hue}">${ch.number}</div><div class="cname">${hasMark(ch) ? raw(logoHtml(ch)) : ch.name}</div></div>
     <div class="b-main ${art ? "has-art" : ""}" data-art-box>
-      ${raw(artImg(art, `b-art ${wide ? "wide" : "tall"}`))}
+      ${raw(artImg(art, `b-art ${shape}`))}
       <div class="b-text">
       <div class="title">${title}</div>
       <div class="meta">${raw(meta)}</div>

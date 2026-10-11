@@ -2,22 +2,24 @@
 // guide and settings, and keeps the clock ticking.
 
 import "./spatial.js"; // first, so the remote's keys reach it before any other handler
-import { api } from "./api.js";
+import { api, whereAmI } from "./api.js";
 import { html, raw, pref, setPref, applyPrefs, syncClock, toast } from "./util.js";
 import { tv, tune, channelStep, lastChannel, byNumber, togglePause, applyVolume } from "./player.js";
 import * as player from "./player.js"; // applyAspect comes from workstream A
 import { openGuide, closeGuide, guideOpen, guideKey } from "./guide.js";
 import { initPanel, openPanel, closePanel, panelOpen } from "./panel.js";
-import { toggleBanner, tickBanner, osd } from "./ui.js";
+import { toggleBanner, tickBanner, osd, liveAiring } from "./ui.js";
 import { tickCard, pinPromptOpen, pinKey } from "./cards.js";
 import { unlockAudio } from "./static.js";
 import { editorOpen, exclusionsOpen } from "./channel-editor.js";
 import { themeEditorOpen } from "./theme.js";
-import { openOnDemand, onDemandOpen } from "./ondemand.js";
+import { openOnDemand, onDemandOpen, watchFilm } from "./ondemand.js";
 import { groupsOpen } from "./groups.js";
 import "./bezel.js";
 
 applyPrefs();
+// A paired phone or TV can't change sources or the PIN; those controls hide (html[data-where="device"]).
+whereAmI().then((w) => (document.documentElement.dataset.where = w));
 applyVolume();
 // The demo picture draws text on a canvas, which only uses fonts already loaded.
 for (const f of ['800 20px "Barlow Condensed"', "20px VT323", "600 20px Inter"]) document.fonts?.load(f).catch(() => {});
@@ -123,6 +125,7 @@ addEventListener("keydown", (e) => {
     case "s": case "S": case "ContextMenu": case "Settings": openPanel(); break;
     case "o": case "O": case "MediaTopMenu": case "VOD": openOnDemand(); break;
     case "i": case "I": case "Info": toggleBanner(); break;
+    case "w": case "W": if (!watchFilm(liveAiring())) return; break; // a trailer's film, when it's in the library
     case "ArrowRight": case "ArrowLeft": if (!focusChips(k)) toggleBanner(); break;
     case "Backspace": case "l": case "L": case "LastChannel": lastChannel(); break;
     case " ": case "k": case "K": case "MediaPlayPause": case "MediaPlay": case "MediaPause": case "Pause": case "Play": togglePause(); break;
