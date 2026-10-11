@@ -1,0 +1,47 @@
+{
+  "experiment": "EXP-002",
+  "ranAt": "2026-10-11T03:30:03.398Z",
+  "pressMs": 1000,
+  "apiLatencyMs": 370,
+  "mediaTtfbMs": 200,
+  "linkMbps": 100,
+  "bufferTargetMB": 112,
+  "rows": [
+    {
+      "variant": "cancel+cache",
+      "presses": 31,
+      "apiCalls": 17,
+      "mediaRequests": 31,
+      "mediaMB": 344,
+      "peakConcurrentStreams": 1,
+      "streamsOpenWhileResting": 1,
+      "streamsOpenAfterStop": 0,
+      "finalStatus": "playing",
+      "finalFirstByteMs": 575
+    },
+    {
+      "variant": "adaptive+cache",
+      "presses": 31,
+      "apiCalls": 2,
+      "mediaRequests": 2,
+      "mediaMB": 120,
+      "peakConcurrentStreams": 1,
+      "streamsOpenWhileResting": 1,
+      "streamsOpenAfterStop": 0,
+      "finalStatus": "playing",
+      "finalFirstByteMs": 1777
+    },
+    {
+      "variant": "adaptive-prefetch+cache",
+      "presses": 31,
+      "apiCalls": 17,
+      "mediaRequests": 2,
+      "mediaMB": 122,
+      "peakConcurrentStreams": 1,
+      "streamsOpenWhileResting": 1,
+      "streamsOpenAfterStop": 0,
+      "finalStatus": "playing",
+      "finalFirstByteMs": 1404
+    }
+  ]
+}

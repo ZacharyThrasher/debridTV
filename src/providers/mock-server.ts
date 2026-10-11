@@ -18,6 +18,8 @@ export interface MockOptions {
   files: MockFile[];
   /** Simulated latency of each API call. */
   apiLatencyMs?: number;
+  /** Delay before a media response starts (LIVE-001 TorBox CDN: ~130–250 ms). */
+  mediaTtfbMs?: number;
   /** Pacing of media responses (bytes per second, per connection). */
   linkBytesPerSec?: number;
   /** How long a generated download URL works. */
@@ -143,6 +145,12 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
 
   const serveMedia = (req: http.IncomingMessage, res: http.ServerResponse, token: string) => {
     counters.mediaRequests++;
+    const ttfb = opts.mediaTtfbMs ?? 0;
+    if (ttfb > 0) setTimeout(() => !res.destroyed && serveMediaNow(req, res, token), ttfb);
+    else serveMediaNow(req, res, token);
+  };
+
+  const serveMediaNow = (req: http.IncomingMessage, res: http.ServerResponse, token: string) => {
     const g = grants.get(token);
     if (!g) return json(res, 404, { error: "unknown_grant" });
     if (Date.now() > g.expiresAt) {

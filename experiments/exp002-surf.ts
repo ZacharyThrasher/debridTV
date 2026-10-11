@@ -18,7 +18,8 @@ const MB = 1_000_000;
 const FILE_BYTES = 2_000 * MB; // ~ 9 min at 30 Mb/s; size only matters for offsets
 const BUFFER_TARGET = 112 * MB; // ~30 s of 30 Mb/s video, a typical player buffer goal
 const LINK_BYTES_PER_SEC = 12.5 * MB; // 100 Mb/s home link
-const API_LATENCY_MS = 150;
+const API_LATENCY_MS = Number(process.env.API_LATENCY_MS ?? 150);
+const MEDIA_TTFB_MS = Number(process.env.MEDIA_TTFB_MS ?? 0);
 
 const files: MockFile[] = Array.from({ length: 17 }, (_, i) =>
   i % 2 ? { ref: `rd:${i}`, name: `f${i}.mkv`, bytes: FILE_BYTES } : { ref: `tb:${i}:0`, name: `f${i}.mkv`, bytes: FILE_BYTES },
@@ -46,11 +47,11 @@ const variants: Variant[] = process.env.DWELLS
         : d === -2 ? { name: "adaptive-prefetch+cache", strategy: "adaptive-prefetch" as const, cache: true }
         : { name: `dwell${d}+cache`, strategy: "dwell" as const, dwellMs: d, cache: true })
   : defaultVariants;
-const tag = (process.env.FINAL === "fresh" ? "-fresh" : "") + (process.env.DWELLS ? `-dwells${process.env.DWELLS.replaceAll(",", "_")}` : "");
+const tag = (process.env.MEDIA_TTFB_MS ? `-live${API_LATENCY_MS}_${MEDIA_TTFB_MS}` : "") + (process.env.FINAL === "fresh" ? "-fresh" : "") + (process.env.DWELLS ? `-dwells${process.env.DWELLS.replaceAll(",", "_")}` : "");
 
 const rows = [];
 for (const v of variants) {
-  const mock = await startMockProviders({ files, apiLatencyMs: API_LATENCY_MS, linkBytesPerSec: LINK_BYTES_PER_SEC });
+  const mock = await startMockProviders({ files, apiLatencyMs: API_LATENCY_MS, mediaTtfbMs: MEDIA_TTFB_MS, linkBytesPerSec: LINK_BYTES_PER_SEC });
   const rd = new RealDebridClient(`${mock.baseUrl}/rd`, "fixture-token");
   const tb = new TorBoxClient(`${mock.baseUrl}/tb`, "fixture-token");
   const tuner = new Tuner({ strategy: v.strategy, dwellMs: v.dwellMs, bufferTargetBytes: BUFFER_TARGET,
@@ -86,7 +87,7 @@ for (const v of variants) {
   await mock.close();
 }
 
-const result = { experiment: "EXP-002", ranAt: new Date().toISOString(), pressMs: PRESS_MS, apiLatencyMs: API_LATENCY_MS,
+const result = { experiment: "EXP-002", ranAt: new Date().toISOString(), pressMs: PRESS_MS, apiLatencyMs: API_LATENCY_MS, mediaTtfbMs: MEDIA_TTFB_MS,
   linkMbps: (LINK_BYTES_PER_SEC * 8) / MB, bufferTargetMB: BUFFER_TARGET / MB, rows };
 mkdirSync("docs/experiments/results", { recursive: true });
 writeFileSync(`docs/experiments/results/exp002-press${PRESS_MS}${tag}.json`, JSON.stringify(result, null, 2) + "\n");

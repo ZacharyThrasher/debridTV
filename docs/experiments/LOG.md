@@ -225,3 +225,44 @@ because it had just been reset. No further calls.
 3. **Not tested yet:** link lifetime, seek, and cancel. These need a file that is not
    policy-blocked, chosen by Zachary (`PICK=n`). The probe deliberately does not
    hunt through the library for one.
+
+### LIVE-001 run 2 — 2026-10-11 03:26 UTC
+
+**Real-Debrid:** same auto-pick, same `infringing_file` refusal (no `PICK` set). One more refused call, no media.
+
+**TorBox ✅** (plan type 1, expires 2027-08-29)
+
+| Step | Result |
+|---|---|
+| Account | 514 ms |
+| Library (`mylist`, one call) | **938 files, 2,836 ms**, all `download_finished` |
+| Link request (`requestdl`, JSON form) | **369 ms**; no stated expiry; host `tb-cdn.io`; no redirect |
+| Range, start (cold) | 206, TTFB **251 ms**, 465 ms for 256 KiB |
+| Range, middle (cold seek) | 206, TTFB 183 ms |
+| Range, middle again (warm) | 206, TTFB 131 ms, 155 ms total |
+| Range, end | 206, TTFB 129 ms |
+| Open + cancel | first chunk 30 ms |
+| Totals | 3 API calls, 1.05 MB media |
+
+**Findings**
+1. **Seeking works everywhere in the file** (206 with correct `content-range`), so tuning into the middle of a program is a plain range read.
+2. **Realistic cold tune ≈ 0.37 s link + 0.25 s first byte ≈ 0.6 s**; with a cached link ≈ 0.13–0.25 s.
+3. **The library call is slow and large** (2.8 s for 938 files). The guide must never wait on it; refresh it in the background, rarely, and cache it (also gate B7: shared rate budget).
+4. **The CDN sends a stable `ETag`** per file. It is a candidate for file/edition identity (gate D4) and stale-link detection. Not yet verified stable across links or days.
+5. Link lifetime is still unknown (needs `WATCH_MIN`).
+
+### EXP-007 — Surfing re-run with live-calibrated latency (2026-10-11)
+
+Mock set to LIVE-001's TorBox numbers: API 370 ms, media TTFB 200 ms; fresh final channel.
+Results: `results/exp002-press*-live370_200-fresh-dwells0_-1_-2.json`.
+
+| Press interval | cancel + cache | adaptive + cache | adaptive-prefetch + cache |
+|---|---|---|---|
+| 300 ms | 17 / 134 MB / 574 ms | 2 / 117 / 967 | 17 / 117 / **594** |
+| 1000 ms | 17 / 344 / 575 | 2 / 120 / 1,777 | 17 / 122 / **1,404** |
+
+**Verdict.** With real latencies, prefetch hides the link request inside the wait.
+For normal-speed surfing (300 ms), adaptive-prefetch is **as fast as the snappy
+option (594 vs 574 ms) with the least media**. Slow surfers (1 s presses) still wait
+~0.8 s longer than with cancel-only, which itself costs ~2.8× the media. Keep
+adaptive-prefetch as the default; the slow-surfer case is the remaining gap.
