@@ -3,7 +3,7 @@
 // Parity N-03, N-06a, N-09a, N-16. Opened from Settings → Channels → Edit.
 //
 // Data contract (workstream C): GET and POST /api/channels/:id/settings with
-//   { name, number, favorite, logo: { kind: "badge"|"text", text?, hue?, style? },
+//   { name, number, favorite, logo: null | { kind: "badge"|"text", text (≤6), hue?, style? } | { kind: "image", url: data: URL },
 //     kid, maxRating?, restrictedHours: [{ from, to, maxRating }],
 //     slots: [{ days: [1..7], from: "HH:MM", to: "HH:MM", source }] }
 // Until that endpoint exists, the editor runs on a local draft and says so.
@@ -29,6 +29,7 @@ let draft = null;
 let tab = "identity";
 let onSaved = null;
 let live = true; // false when the server has no settings endpoint yet
+let info = null; // { enforced, timeZone, ratings } from the server, never sent back
 let lastFocus = null;
 
 export const editorOpen = () => !root.hidden;
@@ -41,9 +42,17 @@ export async function openChannelEditor(channel, opts = {}) {
   draft = defaults(channel);
   live = true;
   try {
-    draft = { ...draft, ...(await api.get(`/api/channels/${encodeURIComponent(channel.id)}/settings`)) };
+    const { enforced, timeZone, ratings, note, ...got } = await api.get(`/api/channels/${encodeURIComponent(channel.id)}/settings`);
+    info = { enforced, timeZone, ratings };
+    // Normalise: the server sends null for "not set" (logo, lists), which the form treats as defaults.
+    for (const k of Object.keys(got)) if (got[k] == null) delete got[k];
+    draft = { ...draft, ...got };
+    draft.logo ??= defaults(channel).logo;
+    draft.restrictedHours = Array.isArray(draft.restrictedHours) ? draft.restrictedHours : [];
+    draft.slots = Array.isArray(draft.slots) ? draft.slots.map((x) => ({ ...x, days: Array.isArray(x.days) ? x.days : [] })) : [];
   } catch (e) {
     live = false;
+    info = null;
   }
   root.hidden = false;
   document.body.classList.add("ced-open");
@@ -57,10 +66,12 @@ export function closeChannelEditor() {
   lastFocus?.focus?.();
 }
 
+const wordFrom = (d) => (d.logo?.text && d.logo.kind === "text" ? d.logo.text : d.name.replace(/^the\s+/i, "").split(/\s+/)[0].slice(0, 6).toUpperCase());
+
 function defaults(c) {
   return {
     name: c.name, number: c.number, favorite: !!c.favorite,
-    logo: c.logo ?? { kind: "badge", text: c.name, hue: c.hue, style: "block" },
+    logo: c.logo ?? { kind: "badge", text: String(c.number), hue: c.hue, style: "block" },
     kid: !!c.kid, restrictedHours: [], slots: [],
   };
 }
@@ -89,13 +100,14 @@ function render() {
 /** A channel's mark: its logo when it has one, else the number badge. Shared look with the guide. */
 export function logoHtml(c, size = "") {
   const l = c.logo;
+  if (l?.kind === "image" && /^data:image\//.test(l.url ?? "")) return html`<img class="logo img ${size}" src="${l.url}" alt="${c.name}">`.html;
   if (l?.kind === "text" && l.text) return html`<span class="logo ${l.style || "block"} ${size}" style="--h:${l.hue ?? c.hue ?? 220}">${l.text}</span>`.html;
   return html`<span class="logo badge ${size}" style="--h:${l?.hue ?? c.hue ?? 220}">${c.number}</span>`.html;
 }
 
 function identity() {
   const taken = tv.channels.find((c) => c.number === Number(draft.number) && c.id !== ch.id);
-  const l = draft.logo;
+  const l = draft.logo ?? { kind: "badge" };
   return html`
     <div class="field"><label for="ced-name">Name</label><input id="ced-name" class="input" data-k="name" data-first value="${draft.name}" maxlength="40"></div>
     <div class="ced-row">
@@ -109,14 +121,17 @@ function identity() {
     <div class="seg" role="radiogroup" aria-label="Logo kind">
       <button role="radio" data-logo-kind="badge" aria-checked="${l.kind !== "text"}">Number badge</button>
       <button role="radio" data-logo-kind="text" aria-checked="${l.kind === "text"}">Wordmark</button>
+      <button role="radio" data-logo-kind="image" aria-checked="${l.kind === "image"}">Image</button>
     </div>
+    ${l.kind === "image" ? html`<div class="field"><label for="ced-img">Logo image (PNG, JPEG, WebP or SVG, up to 200 KB). It stays on this PC.</label>
+      <input id="ced-img" class="input" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" data-logo-file></div>` : ""}
     ${l.kind === "text" ? html`
       <div class="ced-row">
-        <div class="field"><label for="ced-lt">Wordmark text</label><input id="ced-lt" class="input" data-logo="text" maxlength="14" value="${l.text ?? ""}"></div>
+        <div class="field"><label for="ced-lt">Wordmark (up to 6 letters)</label><input id="ced-lt" class="input" data-logo="text" maxlength="6" value="${l.text ?? ""}"></div>
         <div class="field"><label>Style</label><div class="seg">${Object.entries(LOGO_STYLES).map(([k, v]) =>
           html`<button data-logo-style="${k}" aria-pressed="${(l.style || "block") === k}">${v}</button>`)}</div></div>
       </div>` : ""}
-    <div class="field"><label for="ced-hue">Color</label><input id="ced-hue" class="hue" type="range" min="0" max="359" data-logo="hue" value="${l.hue ?? ch.hue}"></div>
+    ${l.kind === "image" ? "" : html`<div class="field"><label for="ced-hue">Color</label><input id="ced-hue" class="hue" type="range" min="0" max="359" data-logo="hue" value="${l.hue ?? ch.hue}"></div>`}
     <h4>Preview</h4>
     <div class="ced-preview">
       <div class="pv-bug">${raw(logoHtml(draft))}<span>${draft.name}</span></div>
@@ -128,7 +143,7 @@ function schedule() {
   const slots = draft.slots;
   const sources = sourceOptions();
   return html`
-    <p class="lead">Pin what plays at set times, like Saturday-morning cartoons. Outside its slots the channel plays its usual lineup.</p>
+    <p class="lead">Pin what plays at set times, like Saturday-morning cartoons. Outside its slots the channel plays its usual lineup.${info?.timeZone ? ` Times are in ${info.timeZone}.` : ""} Changes start when the program on now ends.</p>
     ${raw(weekStrip(slots))}
     <div class="list ced-slots">${slots.length ? slots.map((s, i) => html`<div class="slot">
       <div class="days">${DAYS.map((d, di) => html`<button data-slot-day="${i}:${di + 1}" aria-pressed="${s.days.includes(di + 1)}">${d.slice(0, 2)}</button>`)}</div>
@@ -142,7 +157,15 @@ function schedule() {
 
 function audience() {
   const rh = draft.restrictedHours;
-  return html`
+  const rt = info?.ratings;
+  const cover = rt ? html`<div class="ced-cover">
+      <div class="bars">${Object.entries(rt.byRating).filter(([, n]) => n).map(([k, n]) =>
+        html`<i class="r-${k.toLowerCase().replace(/[^a-z0-9]/g, "")}" style="flex:${n}" title="${k}: ${n}"><b>${k === "unrated" ? "?" : k}</b></i>`)}</div>
+      <div class="muted">${rt.total} programs: ${rt.total - rt.unrated} rated, ${rt.unrated} with no rating.</div>
+      ${draft.kid && rt.total - rt.kidSafe > 0 ? html`<div class="ced-warn">As a kid channel it airs ${rt.kidSafe} of ${rt.total}. ${rt.unrated ? `${rt.unrated} have no rating, so they won't air.` : ""}</div>` : ""}
+      ${rt.unrated ? html`<button class="linkish" data-ratings>Set ratings in Library → Ratings</button>` : ""}
+    </div>` : "";
+  return html`${cover}
     <div class="opt"><div><div class="ol">Kid channel</div><div class="od">Only plays programs rated G, PG, TV-Y, TV-Y7 or TV-G. Unrated programs are left out.</div></div>
       <label class="switch"><input type="checkbox" data-k="kid" data-first ${draft.kid ? "checked" : ""}><i></i></label></div>
     <h4>Daytime limit</h4>
@@ -194,7 +217,7 @@ root.addEventListener("click", async (e) => {
   const d = b.dataset;
   if (d.close !== undefined) return closeChannelEditor();
   if (d.tab) tab = d.tab;
-  else if (d.logoKind) draft.logo = { ...draft.logo, kind: d.logoKind, text: draft.logo.text || draft.name.slice(0, 14) };
+  else if (d.logoKind) draft.logo = d.logoKind === "image" ? { ...draft.logo, kind: "image" } : { ...draft.logo, kind: d.logoKind, text: d.logoKind === "text" ? wordFrom(draft) : String(draft.number) };
   else if (d.logoStyle) draft.logo = { ...draft.logo, style: d.logoStyle };
   else if (d.slotAdd !== undefined) draft.slots = [...draft.slots, { days: [6], from: "08:00", to: "11:00", source: sourceOptions()[0]?.value ?? "" }];
   else if (d.slotDel) draft.slots = draft.slots.filter((_, i) => i !== Number(d.slotDel));
@@ -205,13 +228,31 @@ root.addEventListener("click", async (e) => {
   } else if (d.rhAdd !== undefined) draft.restrictedHours = [{ from: "06:00", to: "22:00", maxRating: "PG-13" }];
   else if (d.rhDel) draft.restrictedHours = draft.restrictedHours.filter((_, i) => i !== Number(d.rhDel));
   else if (d.save !== undefined) return save();
+  else if (d.ratings !== undefined) {
+    closeChannelEditor();
+    return import("./panel.js").then((m) => m.openPanel("library"));
+  }
   else return;
   render();
   (root.querySelector(d.tab ? `[data-tab="${d.tab}"]` : "[data-first]") ?? root.querySelector("button"))?.focus();
 });
 
+root.addEventListener("change", (e) => {
+  const t = e.target;
+  if (!t.matches?.("[data-logo-file]") || !t.files?.[0]) return;
+  const f = t.files[0];
+  if (f.size > 200_000) return toast("That image is over 200 KB. Try a smaller one.");
+  const rd = new FileReader();
+  rd.onload = () => {
+    draft.logo = { kind: "image", url: String(rd.result), hue: draft.logo.hue };
+    render();
+  };
+  rd.readAsDataURL(f);
+});
+
 root.addEventListener("input", (e) => {
   const t = e.target;
+  if (t.type === "file") return;
   const d = t.dataset;
   if (d.k) draft[d.k] = t.type === "checkbox" ? t.checked : t.type === "number" ? Number(t.value) : t.value;
   else if (d.logo) draft.logo = { ...draft.logo, [d.logo]: d.logo === "hue" ? Number(t.value) : t.value };
@@ -259,12 +300,17 @@ addEventListener("keydown", (e) => {
 async function save() {
   if (!draft.name.trim()) return toast("Give the channel a name.");
   if (!(draft.number >= 1 && draft.number <= 999)) return toast("Channel numbers run from 1 to 999.");
+  const body = { ...draft };
+  if (body.logo?.kind === "badge") body.logo = { kind: "badge", text: String(body.number), hue: body.logo.hue };
+  if (body.logo?.kind === "text" && !body.logo.text?.trim()) return toast("Type a wordmark, or pick the number badge.");
+  if (body.logo?.kind === "image" && !body.logo.url) return toast("Choose an image, or pick another kind of logo.");
+  let res;
   try {
-    await api.post(`/api/channels/${encodeURIComponent(ch.id)}/settings`, draft);
+    res = await api.post(`/api/channels/${encodeURIComponent(ch.id)}/settings`, body);
   } catch (e) {
     return toast(`Couldn't save: ${e.message}`);
   }
   closeChannelEditor();
-  toast(`Saved ${draft.name}.`);
+  toast(`Saved ${draft.name}.${res?.note ? ` ${res.note}` : ""}`);
   onSaved?.(draft);
 }

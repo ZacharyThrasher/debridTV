@@ -77,6 +77,7 @@ function renderBanner() {
     if (a.subtitle) bits.push(html`<span>“${a.subtitle}”</span>`);
     if (a.year) bits.push(html`<span>${a.year}</span>`);
     if (a.genre) bits.push(html`<span>${a.genre}</span>`);
+    if (a.rating) bits.push(html`<span class="rating">${a.rating}</span>`);
     if (a.durationMs) bits.push(html`<span>${fmtDur(a.durationMs)}</span>`);
     if (seg?.kind === "break") bits.push(html`<span class="badge warn">Station break</span>`);
     else bits.push(html`<span class="badge live">LIVE</span>`);

@@ -174,6 +174,7 @@ function renderDetails(ch, a) {
   const t = now();
   const state = a.end <= t ? "Ended" : a.start <= t ? `On now · ${Math.round((a.end - t) / MIN)} min left` : `Starts in ${fmtDur(a.start - t)}`;
   const bits = [a.episode && html`<span>${a.episode}</span>`, a.year && html`<span>${a.year}</span>`, a.genre && html`<span>${a.genre}</span>`,
+    a.rating && html`<span class="rating">${a.rating}</span>`,
     a.durationMs && html`<span>${fmtDur(a.durationMs)}</span>`, a.watched && raw('<span class="badge ok">✓ Watched</span>'),
     a.availability === "policy-blocked" && raw('<span class="badge bad">Refused by provider</span>'),
     a.availability === "unavailable" && raw('<span class="badge warn">Unavailable</span>'),
@@ -185,6 +186,7 @@ function renderDetails(ch, a) {
   details.innerHTML = html`<div class="when">${fmtTime(a.start)} – ${fmtTime(a.end)}<span class="on-ch"><b>${ch.number}</b>${ch.name}</span></div>
     <div class="t">${a.title}</div>
     <div class="s">${raw(bits.join(""))}</div>
+    ${a.description ? html`<div class="plot">${a.description}</div>` : ""}
     <div class="desc">${a.subtitle ? html`“${a.subtitle}”. ` : ""}${state}.${pad ? ` Ends at ${fmtTime(pad.start)}, then a station break until ${fmtTime(pad.end)}.` : ""}</div>
     ${onNow ? raw(`<div class="prog"><i style="width:${pct.toFixed(1)}%"></i></div>`) : ""}
     <div class="act"><kbd>Enter</kbd> ${onNow ? "watch now" : "tune to this channel"}</div>`;

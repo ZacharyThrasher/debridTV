@@ -222,6 +222,8 @@ body.guide-open .banner, body.guide-open .osd-num, body.panel-open .osd-num { di
   text-wrap: balance;
 }
 .brk-sub { margin-top: calc(var(--u)*1); font-size: calc(var(--u)*1.35); color: rgba(255,255,255,.82); }
+.brk-plot { margin-top: calc(var(--u)*.8); max-width: 46em; font-size: calc(var(--u)*1.1); line-height: 1.45; color: rgba(255,255,255,.72);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .brk-when { margin-top: calc(var(--u)*2); font-family: var(--display); font-weight: 600; letter-spacing: .14em; text-transform: uppercase; font-size: calc(var(--u)*1.1); color: rgba(255,255,255,.66); }
 .brk-when b { font-family: var(--mono); font-weight: 400; letter-spacing: .02em; font-size: 2.4em; color: #fff; vertical-align: -.12em; margin-left: .25em; }
 .brk-hint { margin-top: calc(var(--u)*1.1); color: rgba(255,255,255,.5); font-size: calc(var(--u)*.9); }
@@ -348,6 +350,9 @@ body.guide-open { background: var(--bg); }
 .guide-details .prog { margin-top: calc(var(--u)*.7); height: calc(var(--u)*.3); max-width: calc(var(--u)*30); border-radius: 99px; background: var(--line-strong); overflow: hidden; }
 .guide-details .prog i { display: block; height: 100%; background: linear-gradient(90deg, var(--amber), var(--magenta)); }
 .guide-details .act { margin-top: calc(var(--u)*.7); color: var(--faint); font-size: calc(var(--u)*.85); }
+.guide-details .plot { margin-top: calc(var(--u)*.5); color: var(--ink); opacity: .85; font-size: calc(var(--u)*.95); line-height: 1.45; max-width: 44em;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rating { font-weight: 700; font-size: .78em; letter-spacing: .04em; padding: .05em .4em; border: 1.5px solid currentColor; border-radius: .25em; line-height: 1.3; }
 .guide-details .desc { margin-top: calc(var(--u)*.6); color: var(--dim); font-size: calc(var(--u)*.95); line-height: 1.45; max-width: 44em; }
 
 .guide-bar {
@@ -544,6 +549,7 @@ body.guide-open { background: var(--bg); }
 .logo.block { color: #000; background: linear-gradient(180deg, hsl(var(--h) 95% 72%), hsl(var(--h) 85% 55%)); }
 .logo.outline { color: hsl(var(--h) 95% 75%); border: .12em solid currentColor; }
 .logo.pill { color: #fff; background: hsl(var(--h) 70% 38%); border-radius: 99px; padding-inline: .8em; }
+.logo.img { height: 1.6em; width: auto; max-width: 5em; object-fit: contain; border-radius: .15em; background: none; }
 .logo.sm { font-size: calc(var(--u)*1.3); }
 .logo.lg { font-size: calc(var(--u)*2.2); }
 .row-label .fav { color: var(--amber); font-weight: 400; margin-right: .3em; }
@@ -595,6 +601,14 @@ body.guide-open { background: var(--bg); }
 .week .lane i { position: absolute; top: 0; bottom: 0; border-radius: .3em; background: hsl(calc(var(--h) + var(--k) * 47) 85% 62%); opacity: .85; }
 .week .ticks { position: absolute; left: 2.6em; right: 0; bottom: 0; height: 1.2em; font-size: .72em; }
 .week .ticks b { position: absolute; transform: translateX(-50%); color: var(--faint); font-weight: 600; }
+.ced-cover { display: grid; gap: .45em; margin-bottom: 1em; padding: .9em 1em; border: 1px solid var(--line); border-radius: .8em; }
+.ced-cover .bars { display: flex; height: 1.6em; border-radius: .4em; overflow: hidden; gap: 2px; }
+.ced-cover .bars i { display: grid; place-items: center; min-width: 1.8em; font-style: normal; font-size: .72em; color: #000; background: var(--faint); }
+.ced-cover .bars i b { white-space: nowrap; }
+.ced-cover .r-g { background: #6ff2a8; } .ced-cover .r-pg { background: #a6e36f; } .ced-cover .r-pg13 { background: #ffd166; }
+.ced-cover .r-r { background: #ff9a5f; } .ced-cover .r-nc17 { background: #ff6b6b; } .ced-cover .r-unrated { background: repeating-linear-gradient(135deg, #5b638f 0 4px, #3d4470 4px 8px); color: #fff; }
+.linkish { background: none; border: 0; padding: 0; color: var(--cyan); cursor: pointer; font: inherit; font-weight: 600; justify-self: start; }
+.linkish:hover { text-decoration: underline; }
 @media (max-width: 560px) { .ced-row, .ced-preview { grid-template-columns: 1fr; } }
 
 /* ------------------------------------------------------------------ welcome, toast, dock */

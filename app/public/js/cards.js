@@ -78,7 +78,7 @@ async function loadGuide(key) {
   if (brk.long) renderPips();
 }
 
-const meta = (a) => [a.episode, a.subtitle && `“${a.subtitle}”`, a.year, a.genre, a.durationMs && fmtDur(a.durationMs)].filter(Boolean);
+const meta = (a) => [a.episode, a.subtitle && `“${a.subtitle}”`, a.year, a.genre, a.rating, a.durationMs && fmtDur(a.durationMs)].filter(Boolean);
 
 function heroSlide() {
   const { next, mid, seg, ch } = brk;
@@ -88,6 +88,7 @@ function heroSlide() {
     <div class="brk-label">${mid ? "Back to" : "Up next"}${mid ? "" : html` · <span class="brk-at">${fmtTime(seg.end)}</span>`}</div>
     <div class="brk-title">${next.title}</div>
     <div class="brk-sub">${meta(next).join(" · ")}</div>
+    ${next.description ? html`<div class="brk-plot">${next.description}</div>` : ""}
     <div class="brk-when">${mid ? "Back in" : "Starts in"} <b data-countdown>${fmtClock(seg.end - now())}</b></div>
   </div>`.html;
 }
