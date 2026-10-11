@@ -78,3 +78,11 @@ Try it: `npm run dev:mock` → http://127.0.0.1:7338 with every file state (keys
 - `--faint` is brighter in all three themes (4.5:1 on panels), so `.muted` text passes contrast.
 - Gotcha: the `html` template tag renders `false` as "", so write `aria-pressed="${String(x)}"`.
 - B also added one "TV set" select (pref `bezel`: off | classic | wood) to the Look & feel tab, next to the channel bug options.
+
+## Note from workstream B, 10-foot pass (2026-10-11)
+Small edits to `panel.js` while no C thread was running:
+- `render()` swaps the body inside `keepFocus(body, …)` from spatial.js, so the 2 s Sources/Meters refresh no longer drops the remote's focus.
+- `openPanel()` focuses the open tab when focus is outside the panel; `closePanel()` blurs focus inside it, so OK can't press a hidden button.
+- Tabs show themselves 180 ms after a keyboard focus (`html.remote`), like a TV settings menu; clicks are unchanged.
+- Look & feel has a "TV mode" select (pref `tv`: auto | on | off).
+Keep new controls as real buttons, inputs and selects (or give them a `role` and `tabindex`) and the remote reaches them with no extra code.

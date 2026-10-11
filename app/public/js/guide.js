@@ -8,6 +8,7 @@ import { tv, tune } from "./player.js";
 import { logoHtml, hasLogo } from "./channel-editor.js";
 import { formatChips, artOf, artImg } from "./ui.js";
 import { isLocked, isRedacted } from "./lock.js";
+import { openPanel } from "./panel.js";
 
 const wordmark = (c) => (hasLogo(c) ? raw(logoHtml(c, "sm")) : null);
 
@@ -17,6 +18,8 @@ const grid = document.getElementById("grid");
 const details = document.getElementById("guide-details");
 const dateEl = document.getElementById("guide-date");
 const clockEl = document.getElementById("guide-clock");
+const jumpEl = document.getElementById("guide-jump");
+const tools = () => [...root.querySelectorAll(".guide-tools button")];
 
 let data = null; // { from, to, rows }
 let viewFrom = 0;
@@ -44,6 +47,8 @@ export async function openGuide() {
 }
 
 export function closeGuide() {
+  if (root.contains(document.activeElement)) document.activeElement.blur();
+  root.classList.remove("in-tools");
   root.hidden = true;
   document.body.classList.remove("guide-open");
   clearInterval(refreshTimer);
@@ -180,7 +185,7 @@ function renderDetails(ch, a) {
     details.style.setProperty("--h", ch.hue);
     details.innerHTML = html`<div class="when">${fmtTime(a.start)} – ${fmtTime(a.end)}<span class="on-ch"><b>${ch.number}</b>${ch.name}</span></div>
       <div class="t">🔒 Locked</div><div class="desc">This channel is locked. Tune to it and type the PIN to see what's on.</div>
-      <div class="act"><kbd>Enter</kbd> tune to this channel</div>`.html;
+      <div class="act"><kbd>OK</kbd> tune to this channel</div>`.html;
     return;
   }
   const t = now();
@@ -205,7 +210,7 @@ function renderDetails(ch, a) {
     ${a.description ? html`<div class="plot">${a.description}</div>` : ""}
     <div class="desc">${a.subtitle ? html`“${a.subtitle}”. ` : ""}${state}.${pad ? ` Ends at ${fmtTime(pad.start)}, then a station break until ${fmtTime(pad.end)}.` : ""}</div>
     ${onNow ? raw(`<div class="prog"><i style="width:${pct.toFixed(1)}%"></i></div>`) : ""}
-    <div class="act"><kbd>Enter</kbd> ${onNow ? "watch now" : "tune to this channel"}</div>`;
+    <div class="act"><kbd>OK</kbd> ${onNow ? "watch now" : "tune to this channel"}</div>`;
 }
 
 // ------------------------------------------------------------------ input
@@ -213,6 +218,22 @@ function renderDetails(ch, a) {
 export function guideKey(e) {
   if (!data) return false;
   const k = e.key;
+  // The toolbar (Now, Settings): a remote reaches it with Up from the top row.
+  const tl = tools();
+  const ti = tl.indexOf(document.activeElement);
+  if (ti >= 0) {
+    if (k === "ArrowLeft" || k === "ArrowRight") tl[clamp(ti + (k === "ArrowRight" ? 1 : -1), 0, tl.length - 1)].focus();
+    else if (k === "ArrowDown") leaveTools();
+    else if (k === "Enter") document.activeElement.click();
+    else if (k !== "ArrowUp") return false;
+    return true;
+  }
+  if (k === "ArrowUp" && row === 0) {
+    root.classList.add("in-tools");
+    tl.at(-1)?.focus({ focusVisible: true });
+    return true;
+  }
+  if (/^[0-9]$/.test(k)) return jumpKey(k), true;
   const list = data.rows[row]?.airings ?? [];
   const cur = airingAt(row, at);
   const idx = list.indexOf(cur);
@@ -241,6 +262,48 @@ export function guideKey(e) {
   } else return false;
   render();
   return true;
+}
+
+function leaveTools() {
+  document.activeElement?.blur();
+  root.classList.remove("in-tools");
+}
+
+root.querySelector(".guide-tools").addEventListener("click", (e) => {
+  const act = e.target.closest("[data-gt]")?.dataset.gt;
+  if (act === "settings") {
+    closeGuide();
+    openPanel();
+  } else if (act === "now") {
+    leaveTools();
+    guideKey({ key: "Home" });
+  }
+});
+
+// Digits jump the highlight to a channel number, like typing it on a cable box guide.
+let jump = "";
+let jumpTimer = 0;
+function jumpKey(d) {
+  jump = (jump + d).slice(-3);
+  jumpEl.textContent = jump.padEnd(2, "-");
+  jumpEl.classList.add("on");
+  clearTimeout(jumpTimer);
+  const n = Number(jump);
+  const go = () => {
+    const r = data.rows.findIndex((x) => x.channel.number === n);
+    jump = "";
+    if (r < 0) {
+      jumpEl.textContent = `No ${n}`;
+      jumpTimer = setTimeout(() => jumpEl.classList.remove("on"), 1200);
+      return;
+    }
+    jumpEl.classList.remove("on");
+    row = r;
+    render();
+  };
+  const longer = data.rows.some((x) => String(x.channel.number).startsWith(jump) && x.channel.number !== n);
+  if (!longer && data.rows.some((x) => x.channel.number === n)) return go();
+  jumpTimer = setTimeout(go, 1200);
 }
 
 function pick(r, a) {

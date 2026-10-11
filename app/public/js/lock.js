@@ -17,6 +17,7 @@
 import { api } from "./api.js";
 import { html } from "./util.js";
 import { tv } from "./player.js";
+import { keepFocus } from "./spatial.js";
 
 export const PIN_MIN = 4, PIN_MAX = 8;
 export const isLocked = (ch) => !!ch?.locked && !ch?.unlocked;
@@ -103,7 +104,7 @@ function closeDlg(ok) {
 function drawDlg() {
   const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "OK"];
   const wait = Math.max(0, ask.until - Date.now());
-  dlg.innerHTML = html`<div class="lock-panel">
+  keepFocus(dlg, () => (dlg.innerHTML = html`<div class="lock-panel">
     <div class="lock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 10V7a5 5 0 0 1 10 0v3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><rect x="4" y="10" width="16" height="11" rx="2.5" fill="currentColor"/><circle cx="12" cy="15.5" r="1.7" fill="#05060f"/></svg></div>
     <div class="card-kicker">Parental PIN</div>
     <div class="lock-reason">${ask.reason} Type the PIN to go on.</div>
@@ -111,7 +112,7 @@ function drawDlg() {
     <div class="lock-msg" role="status">${wait ? `${ask.msg} Try again in ${Math.ceil(wait / 1000)} s.` : ask.msg}</div>
     <div class="lock-pad">${keys.map((k) => html`<button data-pin="${k}" aria-label="${k === "⌫" ? "Delete" : k === "OK" ? "Unlock" : k}" ${wait && k === "OK" ? "disabled" : ""}>${k}</button>`)}</div>
     <button class="btn" data-pin-cancel>Cancel</button>
-  </div>`.html;
+  </div>`.html));
   if (wait) setTimeout(() => ask && drawDlg(), Math.min(1000, wait));
 }
 
@@ -148,6 +149,8 @@ addEventListener("keydown", (e) => {
   e.preventDefault();
   e.stopImmediatePropagation();
   if (e.key === "Escape") closeDlg(false);
+  // OK on a remote presses the pad key it is on; the arrows (spatial.js) move between keys.
+  else if (e.key === "Enter" && dlg.contains(document.activeElement) && document.activeElement.matches("[data-pin], [data-pin-cancel]")) document.activeElement.click();
   else dlgKey(e.key);
 }, true);
 

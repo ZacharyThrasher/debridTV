@@ -266,7 +266,7 @@ async function elsewhere(skipId) {
     .filter((x) => x.a)
     .slice(0, 4);
   if (!picks.length) return;
-  box.innerHTML = html`<div class="label">Meanwhile, on now</div><div class="chips">${picks.map(({ ch, a }) =>
+  box.innerHTML = html`<div class="label">Meanwhile, on now<span class="hint"><kbd>◀</kbd> <kbd>▶</kbd> pick · <kbd>OK</kbd> tune</span></div><div class="chips">${picks.map(({ ch, a }) =>
     html`<button class="chip" style="--h:${ch.hue}" data-ch="${ch.id}"><b>${ch.number}</b><span>${a.title}</span></button>`)}</div>`.html;
 }
 

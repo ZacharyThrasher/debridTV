@@ -314,7 +314,7 @@ describe("channel mix and exclusions (N-09, N-10)", { skip }, () => {
     await page.waitForSelector("#toast:not([hidden])");
     assert.match(await js(page, `document.getElementById("toast").textContent`), /New order starts/);
     await page.click("[data-save]");
-    await page.waitForFunction(`document.querySelector(".ced").hidden`);
+    await page.waitForFunction(`document.querySelector('.ced[aria-label="Edit channel"]').hidden`);
     const s = await (await fetch(`${BASE}/api/channels/${id}/settings`)).json();
     assert.equal(s.weights[first], 0);
     assert.deepEqual(s.exclude.genres, [genre]);
@@ -416,6 +416,77 @@ describe("locked channels (N-06b)", { skip }, () => {
     await page.keyboard.press("g");
     await page.waitForSelector(".cell.focus");
     assert.ok(await js(page, `(() => { const r = [...document.querySelectorAll(".row")].find((r) => r.querySelector(".n").textContent === "7"); return [...r.querySelectorAll(".cell .ct")].every((c) => c.textContent === "Locked") && !!r.querySelector(".lk"); })()`));
+    await ctx.close();
+  });
+});
+
+describe("remote (10-foot)", { skip }, () => {
+  const focused = (page: any) => js(page, `(() => { const e = document.activeElement; return e === document.body ? "" : (e.dataset.tab ?? e.dataset.gt ?? e.dataset.prefSelect ?? e.dataset.pref ?? e.textContent.trim()); })()`);
+
+  it("reaches settings with arrows and OK only, keeps its place across redraws, and Back closes", async () => {
+    const { page, ctx, errors } = await open({ prefs: { tv: "on" } });
+    assert.ok(await js(page, `document.documentElement.classList.contains("tv")`));
+    await page.keyboard.press("Enter");
+    await page.waitForSelector(".cell.focus");
+    for (let i = 0; i < 12; i++) await page.keyboard.press("ArrowUp");
+    assert.equal(await focused(page), "settings", "Up from the top row lands on the guide's Settings button");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector("#panel:not([hidden])");
+    assert.equal(await focused(page), "sources", "the open tab has focus");
+    for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowRight");
+    await page.waitForSelector('[data-pref-select="tv"]');
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    assert.equal(await focused(page), "tv");
+    // Left/Right step a select's choices.
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await js(page, `JSON.parse(localStorage.getItem("debridtv.prefs")).tv`), "off");
+    await page.keyboard.press("ArrowLeft");
+    // A redraw keeps the remote on the same control.
+    await js(page, `import("/js/panel.js").then((m) => m.openPanel("look"))`);
+    await page.waitForTimeout(300);
+    assert.equal(await focused(page), "tv");
+    await page.keyboard.press("Backspace");
+    assert.ok(await js(page, `document.getElementById("panel").hidden`), "Backspace means Back inside a layer");
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  it("TV Back keys close the top layer only, and digits jump the guide", async () => {
+    const { page, ctx } = await open({ prefs: { tv: "on" } });
+    await page.keyboard.press("s");
+    await page.waitForSelector("#panel:not([hidden])");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await page.waitForFunction(`document.querySelector('[data-tab="channels"]').getAttribute("aria-selected") === "true"`);
+    await page.waitForSelector("[data-edit-channel]");
+    await page.focus("[data-edit-channel]");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector(".ced:not([hidden]) .ced-sheet");
+    const back = () => js(page, `(document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "GoBack", bubbles: true, cancelable: true }))`);
+    assert.equal(await js(page, `document.activeElement.id`), "ced-name");
+    await back();
+    assert.ok(await js(page, `!document.querySelector('.ced[aria-label="Edit channel"]').hidden && document.activeElement === document.body`), "Back first leaves the text field");
+    await back();
+    assert.ok(await js(page, `document.querySelector('.ced[aria-label="Edit channel"]').hidden && !document.getElementById("panel").hidden`), "Back closes the editor, not settings");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector(".cell.focus");
+    const want = await js(page, `[...document.querySelectorAll(".row-label .n")].map((n) => n.textContent).find((n) => n.length === 1 && n !== document.querySelector(".cell.focus").closest(".row").querySelector(".n").textContent)`);
+    await page.keyboard.press(want);
+    await page.waitForFunction(`document.querySelector(".cell.focus").closest(".row").querySelector(".n").textContent === ${JSON.stringify(want)}`);
+    await ctx.close();
+  });
+
+  it("a remote reaches the meanwhile chips on a dead-end card and tunes with OK", async () => {
+    const { page, ctx } = await open({ prefs: { tv: "on" } });
+    await js(page, `import("/js/cards.js").then((m) => m.unavailableCard({ id: "x", number: 99, name: "Test", hue: 200 }, { title: "Gone", start: Date.now() - 60000, end: Date.now() + 600000 }, { reason: "Removed." }))`);
+    await page.waitForSelector(".chip[data-ch]");
+    await page.keyboard.press("ArrowRight");
+    const id = await js(page, `document.activeElement.dataset.ch`);
+    assert.ok(id, "Right focuses the first chip");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(`localStorage.getItem("debridtv.lastChannel") === ${JSON.stringify(id)}`);
     await ctx.close();
   });
 });
