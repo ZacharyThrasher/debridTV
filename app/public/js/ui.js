@@ -2,6 +2,7 @@
 
 import { html, raw, fmtTime, fmtDur, now, clamp, pref, onPrefsApplied } from "./util.js";
 import { logoHtml } from "./channel-editor.js";
+import { isLocked, isRedacted } from "./lock.js";
 
 const hasMark = (c) => c?.logo?.kind === "text" && c.logo.text;
 
@@ -60,7 +61,7 @@ export function formatChips(a) {
 
 export function setBanner(ch, info, route) {
   bannerState = { ch, info, route };
-  ratingCard(info);
+  ratingCard(isLocked(ch) ? null : info);
   if (!bannerEl.hidden) renderBanner();
 }
 
@@ -119,7 +120,12 @@ function renderBanner() {
   const seg = info.segment;
   const t = now();
   let title = ch.name, meta = "", pct = 0, times = "", next = "";
-  if (a) {
+  if (a && (isLocked(ch) || isRedacted(a))) {
+    title = "Locked channel";
+    pct = clamp((t - a.start) / (a.end - a.start), 0, 1) * 100;
+    times = `${fmtTime(a.start, { short: true })} – ${fmtTime(a.end)}`;
+    meta = html`<span class="badge warn">🔒 Type the PIN to watch</span>`;
+  } else if (a) {
     title = a.title;
     pct = clamp((t - a.start) / (a.end - a.start), 0, 1) * 100;
     times = `${fmtTime(a.start, { short: true })} – ${fmtTime(a.end)}`;
@@ -140,7 +146,7 @@ function renderBanner() {
     if (a.provider && a.provider !== "demo") bits.push(html`<span class="badge">${a.provider === "realdebrid" ? "Real-Debrid" : a.provider === "torbox" ? "TorBox" : "This PC"}</span>`);
     meta = bits.join("");
   } else meta = html`<span class="badge warn">Off the air</span>`;
-  if (info.next) next = html`<div class="next">Next at ${fmtTime(info.next.start)}<b>${info.next.title}</b></div>`;
+  if (info.next && !isLocked(ch) && !isRedacted(info.next)) next = html`<div class="next">Next at ${fmtTime(info.next.start)}<b>${info.next.title}</b></div>`;
   bannerEl.style.setProperty("--h", ch.hue);
   bannerEl.innerHTML = html`
     <div class="chan"><div class="num" style="--h:${ch.hue}">${ch.number}</div><div class="cname">${hasMark(ch) ? raw(logoHtml(ch)) : ch.name}</div></div>

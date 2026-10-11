@@ -311,6 +311,7 @@ describe("channel mix and exclusions (N-09, N-10)", { skip }, () => {
     await page.click(".ex-row >> nth=0");
     assert.equal(await js(page, `document.querySelector(".ex-count").textContent`), "2 kept off");
     await page.click("[data-ex-save]");
+    await page.waitForFunction(`document.querySelector('[aria-label="Keep off every channel"]').hidden`);
     const ex = await (await fetch(`${BASE}/api/exclusions`)).json();
     assert.deepEqual(ex.genres, [genre]);
     assert.equal(ex.shows.length, 1);
@@ -334,6 +335,65 @@ describe("TV set (N-12)", { skip }, () => {
     await page.waitForTimeout(450);
     assert.equal(await js(page, `getComputedStyle(document.getElementById("stage")).left`), "0px", "the set steps aside for the guide");
     assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+});
+
+describe("locked channels (N-06b)", { skip }, () => {
+  /** Channel 7 locked by stubbing the server's lock fields; PIN 1984. */
+  async function lockedPage() {
+    const o = await open();
+    const unlocks: string[] = [];
+    await o.ctx.route("**/api/**", async (route: any) => {
+      const u = new URL(route.request().url());
+      if (u.pathname === "/api/lock") return route.fulfill({ json: { pinSet: true, unlockedUntil: null } });
+      if (u.pathname === "/api/lock/unlock") {
+        const pin = JSON.parse(route.request().postData() || "{}").pin;
+        unlocks.push(pin);
+        return pin === "1984" ? route.fulfill({ json: { ok: true, untilMs: Date.now() + 3600e3 } }) : route.fulfill({ status: 403, json: { error: "wrong pin" } });
+      }
+      const resp = await route.fetch();
+      let body = await resp.text();
+      try {
+        const j = JSON.parse(body);
+        const mark = (c: any) => c && c.number === 7 && (c.locked = true);
+        j.channels?.forEach(mark);
+        j.rows?.forEach((r: any) => mark(r.channel));
+        mark(j.channel);
+        if (u.pathname === "/api/now" && j.channel?.number === 7) j.locked = true;
+        body = JSON.stringify(j);
+      } catch {}
+      await route.fulfill({ response: resp, body });
+    });
+    await o.page.reload();
+    await o.page.waitForFunction("document.getElementById('bug').textContent.length > 0");
+    return { ...o, unlocks };
+  }
+
+  it("scrambles the channel, fetches no media, and unlocks with the PIN", async () => {
+    const { page, ctx, requests, unlocks, errors } = await lockedPage();
+    const before = requests.length;
+    await page.keyboard.press("7");
+    await page.waitForSelector(".card.locked .lock-pad");
+    assert.ok(await js(page, `document.querySelector("canvas.scramble").width === 320`));
+    for (const k of ["1", "2", "3", "4", "Enter"]) await page.keyboard.press(k);
+    await page.waitForFunction(`document.querySelector("[data-pinmsg]").textContent === "Wrong PIN."`);
+    assert.ok(await js(page, `document.getElementById("bug").textContent.startsWith("7")`), "digits go to the PIN pad, not channel entry");
+    for (const k of ["1", "9", "8", "4"]) await page.click(`[data-pin="${k}"]`);
+    await page.click('[data-pin="OK"]');
+    await page.waitForFunction(`!document.querySelector(".card.locked:not([hidden])")`);
+    assert.deepEqual(unlocks, ["1234", "1984"]);
+    const media = requests.slice(before).filter((p) => p.startsWith("/media") || p === "/api/prefetch");
+    assert.deepEqual(media, []);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  it("hides a locked channel's listings in the guide and banner", async () => {
+    const { page, ctx } = await lockedPage();
+    await page.keyboard.press("g");
+    await page.waitForSelector(".cell.focus");
+    assert.ok(await js(page, `(() => { const r = [...document.querySelectorAll(".row")].find((r) => r.querySelector(".n").textContent === "7"); return [...r.querySelectorAll(".cell .ct")].every((c) => c.textContent === "Locked") && !!r.querySelector(".lk"); })()`));
     await ctx.close();
   });
 });

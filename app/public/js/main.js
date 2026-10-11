@@ -8,7 +8,7 @@ import * as player from "./player.js"; // applyAspect comes from workstream A
 import { openGuide, closeGuide, guideOpen, guideKey } from "./guide.js";
 import { initPanel, openPanel, closePanel, panelOpen } from "./panel.js";
 import { toggleBanner, tickBanner, osd } from "./ui.js";
-import { tickCard } from "./cards.js";
+import { tickCard, pinPromptOpen, pinKey } from "./cards.js";
 import { unlockAudio } from "./static.js";
 import { editorOpen, exclusionsOpen } from "./channel-editor.js";
 import { themeEditorOpen } from "./theme.js";
@@ -104,6 +104,8 @@ addEventListener("keydown", (e) => {
     e.preventDefault();
     return;
   }
+  // A locked channel's PIN pad takes digits, Backspace and Enter; channel keys still work.
+  if (pinPromptOpen() && pinKey(k)) return void e.preventDefault();
   switch (k) {
     case "ArrowUp": case "PageUp": case "+": case "=": channelStep(1); break;
     case "ArrowDown": case "PageDown": case "-": case "_": channelStep(-1); break;

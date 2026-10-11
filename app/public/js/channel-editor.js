@@ -15,6 +15,7 @@
 import { api } from "./api.js";
 import { html, raw, toast, clamp, fmtTime } from "./util.js";
 import { tv } from "./player.js";
+import { lockStatus, setPin, withPin, PIN_MIN, PIN_MAX } from "./lock.js";
 
 const root = document.createElement("div");
 root.className = "ced";
@@ -35,6 +36,8 @@ let onSaved = null;
 let live = true; // false when the server has no settings endpoint yet
 let info = null; // { enforced, timeZone, ratings } from the server, never sent back
 let lastFocus = null;
+let lockInfo = null; // { pinSet } from /api/lock
+let pinForm = null; // { old, pin, again } while setting or changing the PIN
 
 export const editorOpen = () => !root.hidden;
 
@@ -46,8 +49,8 @@ export async function openChannelEditor(channel, opts = {}) {
   draft = defaults(channel);
   live = true;
   try {
-    const { enforced, timeZone, ratings, note, specialsAvailable, groups, ...got } = await api.get(`/api/channels/${encodeURIComponent(channel.id)}/settings`);
-    info = { enforced, timeZone, ratings, specialsAvailable: Number(specialsAvailable) || 0, groups: Array.isArray(groups) ? groups : null };
+    const { enforced, timeZone, ratings, note, specialsAvailable, groups, unlocked, pinSet, alsoOn, ...got } = await api.get(`/api/channels/${encodeURIComponent(channel.id)}/settings`);
+    info = { enforced, timeZone, ratings, specialsAvailable: Number(specialsAvailable) || 0, groups: Array.isArray(groups) ? groups : null, alsoOn: Array.isArray(alsoOn) ? alsoOn : [], pinSet };
     // Normalise: the server sends null for "not set" (logo, lists), which the form treats as defaults.
     for (const k of Object.keys(got)) if (got[k] == null) delete got[k];
     draft = { ...draft, ...got };
@@ -60,6 +63,9 @@ export async function openChannelEditor(channel, opts = {}) {
     live = false;
     info = null;
   }
+  lockInfo = await lockStatus(); // null when this build has no locks
+  if (lockInfo && typeof info?.pinSet === "boolean") lockInfo.pinSet = info.pinSet;
+  pinForm = null;
   root.hidden = false;
   document.body.classList.add("ced-open");
   render();
@@ -243,7 +249,27 @@ function audience() {
       <select class="input" data-rh="${i}:maxRating" aria-label="Highest rating">${RATINGS.map((x) => html`<option ${x === r.maxRating ? "selected" : ""}>${x}</option>`)}</select>
       <button class="icon-btn" data-rh-del="${i}" aria-label="Remove">✕</button></div>`)}</div>
     ${rh.length ? "" : html`<button class="btn" data-rh-add>+ Add a daytime limit</button>`}
+    ${lockInfo ? raw(lockSection()) : ""}
     <p class="muted" style="margin-top:1.2em">Ratings come from your files' metadata where present. DebridTV never looks them up online.</p>`.html;
+}
+
+/** N-06b: lock with a PIN. The PIN is shared by every locked channel. */
+function lockSection() {
+  const needPin = draft.locked && !lockInfo.pinSet;
+  const form = pinForm ?? (needPin ? { old: "", pin: "", again: "" } : null);
+  const field = (k, label) => html`<div class="field"><label for="ced-pin-${k}">${label}</label>
+    <input id="ced-pin-${k}" class="input pin-in" type="password" inputmode="numeric" autocomplete="off" maxlength="${PIN_MAX}" data-pinf="${k}" value="${form[k]}"></div>`;
+  return html`<h4>Lock</h4>
+    <div class="opt"><div><div class="ol">Lock with a PIN</div><div class="od">The channel shows a scrambled picture until someone types the PIN. Nothing downloads while it's locked, and its listings stay hidden in the guide.</div></div>
+      <label class="switch"><input type="checkbox" data-k="locked" aria-label="Lock with a PIN" ${draft.locked ? "checked" : ""}><i></i></label></div>
+    ${form ? html`<div class="ced-pin">
+        <p class="lead">${lockInfo.pinSet ? "Change the PIN for every locked channel." : `Choose a PIN of ${PIN_MIN} to ${PIN_MAX} digits. It works for every locked channel.`}</p>
+        <div class="ced-row">${lockInfo.pinSet ? field("old", "Current PIN") : ""}${field("pin", "New PIN")}${field("again", "Type it again")}</div>
+        ${lockInfo.pinSet ? html`<button class="linkish" data-pin-cancel>Keep the current PIN</button>` : ""}
+      </div>` : lockInfo.pinSet ? html`<button class="linkish" data-pin-change>Change PIN</button>` : ""}
+    ${draft.locked && info?.alsoOn?.length ? html`<div class="ced-also"><b>Some of these programs also air on other channels, where they can still be watched:</b>${info.alsoOn.map((o) => html`<div class="also-row">
+      <span class="n">${o.number}</span><span>${o.name}<small>${o.programs} program${o.programs === 1 ? "" : "s"} in common</small></span>
+      ${o.locked ? html`<span class="muted">Locked</span>` : html`<button class="btn" data-lock-also="${o.id}">Lock it too</button>`}</div>`)}</div>` : ""}`.html;
 }
 
 /** Seven lanes of 24 hours; slots drawn as blocks so overlaps are obvious. */
@@ -298,6 +324,21 @@ root.addEventListener("click", async (e) => {
     const g = draft.exclude.genres;
     draft.exclude.genres = g.includes(d.genre) ? g.filter((x) => x !== d.genre) : [...g, d.genre];
   } else if (d.refresh !== undefined) return reshuffle(b);
+  else if (d.pinChange !== undefined) pinForm = { old: "", pin: "", again: "" };
+  else if (d.lockAlso) {
+    b.disabled = true;
+    try {
+      await withPin(() => api.post(`/api/channels/${encodeURIComponent(d.lockAlso)}/settings`, { locked: true }), "Locking a channel needs the PIN.");
+      const o = info.alsoOn.find((x) => x.id === d.lockAlso);
+      if (o) o.locked = true;
+      toast(`Locked ${o?.name ?? "that channel"} too.`);
+    } catch (e) {
+      if (!e.cancelled) toast(`Couldn't lock it: ${e.message}`);
+      b.disabled = false;
+      return;
+    }
+  }
+  else if (d.pinCancel !== undefined) pinForm = null;
   else if (d.rhAdd !== undefined) draft.restrictedHours = [{ from: "06:00", to: "22:00", maxRating: "PG-13" }];
   else if (d.rhDel) draft.restrictedHours = draft.restrictedHours.filter((_, i) => i !== Number(d.rhDel));
   else if (d.save !== undefined) return save();
@@ -330,7 +371,12 @@ root.addEventListener("input", (e) => {
   if (t.type === "file") return;
   const d = t.dataset;
   if (d.k) draft[d.k] = t.type === "checkbox" ? t.checked : t.type === "number" ? Number(t.value) : t.value;
-  else if (d.weight) {
+  else if (d.pinf) {
+    pinForm ??= { old: "", pin: "", again: "" };
+    pinForm[d.pinf] = t.value.replace(/\D/g, "");
+    if (t.value !== pinForm[d.pinf]) t.value = pinForm[d.pinf];
+    return;
+  } else if (d.weight) {
     draft.weights[d.weight] = Number(t.value);
     return refreshMix(t);
   } else if (d.logo) draft.logo = { ...draft.logo, [d.logo]: d.logo === "hue" ? Number(t.value) : t.value };
@@ -407,14 +453,23 @@ async function reshuffle(btn) {
 async function save() {
   if (!draft.name.trim()) return toast("Give the channel a name.");
   if (!(draft.number >= 1 && draft.number <= 999)) return toast("Channel numbers run from 1 to 999.");
+  if (lockInfo && (pinForm?.pin || (draft.locked && !lockInfo.pinSet))) {
+    const f = pinForm ?? { pin: "" };
+    if (f.pin !== f.again) return toast("The two PINs don't match.");
+    const err = await setPin(f.pin, lockInfo.pinSet ? f.old : undefined);
+    if (err) return toast(err);
+    lockInfo = { ...lockInfo, pinSet: true };
+    pinForm = null;
+  }
   const body = { ...draft };
   if (body.logo?.kind === "badge") body.logo = { kind: "badge", text: String(body.number), hue: body.logo.hue };
   if (body.logo?.kind === "text" && !body.logo.text?.trim()) return toast("Type a wordmark, or pick the number badge.");
   if (body.logo?.kind === "image" && !body.logo.url) return toast("Choose an image, or pick another kind of logo.");
   let res;
   try {
-    res = await api.post(`/api/channels/${encodeURIComponent(ch.id)}/settings`, body);
+    res = await withPin(() => api.post(`/api/channels/${encodeURIComponent(ch.id)}/settings`, body), "This channel's settings are locked.");
   } catch (e) {
+    if (e.cancelled) return;
     return toast(`Couldn't save: ${e.message}`);
   }
   closeChannelEditor();
