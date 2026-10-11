@@ -440,3 +440,13 @@ at a time, stoppable. Never for Real-Debrid or TorBox files: the same check woul
 every episode in full (about 1 GB per hour of HD) for media nobody is watching.
 `breakpoints()` ignores silence data on anything that isn't local, so a stray value can't
 place a break in a debrid file either.
+
+### PARITY-004 — Audit round 4 on PR #2 (2026-10-11)
+
+PR #2 head `4c24574`: audit **28/28**, `npm test` **283/283**. Register v0.5: V 40, P/V 6, P 1,
+G 1, not started 10, N/A 3 (round 3: V 28, P/V 11). Newly verified: On Demand and Continue
+Watching (N-30), content groups (N-07), seasonal lineups (N-32), watched rules (N-05), Jukebox
+(N-23a) and Coming Attractions (N-23c), silence breaks for local files (N-22c), audio/caption
+choice (N-18a), transcode cap (N-19; passthrough won't-do per ADR-0004), TMDB posters (N-01c),
+home-network pairing (N-26b, N-27a). Every remaining not-started row needs an outside source
+or a product decision from Zachary.
