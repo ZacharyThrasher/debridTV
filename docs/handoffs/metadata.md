@@ -14,6 +14,6 @@ Branch `claude/project-thread-jmyyxx`, on top of release `14f0a5e`.
 
 ## Open
 - Real-key check on Zachary's PC: runbook step 8.
-- TMDB's attribution guidelines also ask for their logo; the credit is text plus a link for now.
+- TMDB credit: their official "Alt short (blue)" logo, bundled at `app/public/img/tmdb.svg` (source in `app/public/img/README.md`), with the notice text.
 - Not fetched: episode stills, genres, ratings/certifications, OMDb. Language is fixed at en-US (`language` in tmdb-key.json is read but has no UI).
 - Shows whose file names carry no year can match a same-named remake; the picker prefers an exact title, then year, then TMDB's order.

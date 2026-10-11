@@ -160,6 +160,13 @@ test("N-01c online: the app shows TMDB posters and descriptions, keeps the key o
     const on = await post("/api/metadata", { key: TEST_KEY });
     assert.equal(on.status, 200);
     assert.match(((await on.json()) as any).attribution, /not endorsed or certified by TMDB/);
+    // TMDB's logo for the credit is bundled with the app, not fetched from TMDB.
+    const logoReq = mock.requests.length;
+    const mark = await fetch(`${base}/img/tmdb.svg`);
+    assert.equal(mark.status, 200);
+    assert.equal(mark.headers.get("content-type"), "image/svg+xml");
+    assert.match(await mark.text(), /^<svg[^>]*viewBox="0 0 273\.42 35\.52"/);
+    assert.equal(mock.requests.length, logoReq);
     for (let t = 0; t < 100 && !now.airing.art?.poster; t++) {
       await new Promise((r) => setTimeout(r, 50));
       now = await get(`/api/now?channel=${ch.id}`);
