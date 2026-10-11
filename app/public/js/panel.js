@@ -631,6 +631,17 @@ function backupsBlock(bk) {
     <div class="row-actions"><button class="btn" data-backup-now>Back up now</button></div>`;
 }
 
+/** Home network (sharing gate): set up on its own page, and only from this PC itself. */
+async function homeNetworkRow() {
+  const hello = await api.get("/api/lan/hello").catch(() => null);
+  if (hello?.where !== "pc") return "";
+  const lan = await api.get("/api/lan").catch(() => null);
+  const on = !!(lan?.enabled ?? hello.enabled);
+  return html`<div class="opt"><div><div class="ol">Home network · ${on ? "on" : "off"}</div>
+      <div class="od">Watch on a TV, phone or tablet in your home. Each device has to be approved here on this PC, and turning it on is your yes to sharing.</div></div>
+    <a class="btn" href="/lan" target="_blank" rel="noopener">${on ? "Manage devices" : "Set up…"}</a></div>`;
+}
+
 async function privacy() {
   const [b, bk] = await Promise.all([api.get("/api/bootstrap"), api.get("/api/backups").catch(() => null)]);
   const gate = (on, title, desc) => html`<div class="gate"><span class="lock">${on ? "🔓" : "🔒"}</span><div><b>${title} · ${on ? "on" : "off"}</b><span>${desc}</span></div></div>`;
@@ -639,6 +650,7 @@ async function privacy() {
     ${raw(gate(b.gates.sharing, "Sharing", "Letting other people or devices watch your channels. Not built yet, and off until you say so."))}
     ${raw(gate(b.gates.cloudRelay, "Cloud relay", "Streaming through a server instead of your own PC. Off: Real-Debrid treats server traffic differently, so this needs your explicit choice."))}
     ${raw(gate(b.gates.tunerExport, "Tuner export", "Showing your channels to Plex, Jellyfin or other TV apps as a tuner. Off until you say so."))}
+    ${raw(await homeNetworkRow())}
     ${raw(await pinBlock())}
     <h3>What leaves this PC</h3>
     <p class="lead">Only requests to the providers you connected: your account status and library list when you connect or refresh, one link request per program you watch (reused for an hour), the few KB a scan reads, and the video you actually watch. The Meters tab counts all of it.</p>
