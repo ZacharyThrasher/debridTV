@@ -17,7 +17,10 @@ export async function onlineCard(changed) {
   } catch {
     return "";
   }
-  const credit = html`<div class="muted tmdb-credit" style="margin-top:.7em"><a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer">TMDB</a> · ${s.attribution}</div>`;
+  // TMDB's API terms: their logo with this notice, less prominent than DebridTV's own mark. Bundled, never fetched.
+  const credit = html`<div class="muted tmdb-credit" style="margin-top:.8em;display:flex;align-items:center;gap:.7em;flex-wrap:wrap">
+    <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" style="display:inline-flex"><img src="/img/tmdb.svg" alt="TMDB" width="84" height="11" style="height:.8em;width:auto"></a>
+    <span>${s.attribution}</span></div>`;
   const head = (badge) => html`<div class="src-head"><div class="src-name"><span class="src-dot ${s.state === "off" || s.state === "rejected" ? "" : "on"}"></span>Posters and descriptions</div>${raw(badge)}</div>`;
   if (!s.keySet)
     return html`<h3>Online artwork</h3>
