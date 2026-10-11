@@ -199,6 +199,9 @@ const CODEC_TYPES = {
 /** Video codecs this browser can decode, asked once. */
 const decodable = Object.keys(CODEC_TYPES).filter((c) => !!probeEl.canPlayType(CODEC_TYPES[c]));
 const canVideo = (codec) => !codec || decodable.includes(codec);
+// Compatibility mode sends AAC sound. Chromium builds without AAC (Linux distros,
+// test browsers) ask for Opus instead.
+const aacOk = !!probeEl.canPlayType('audio/mp4; codecs="mp4a.40.2"');
 
 /** Direct play when the browser can decode the file as-is, else ffmpeg compatibility mode. */
 function chooseRoute(a) {
@@ -349,7 +352,7 @@ function startLive(offsetMs, a, onPlaying, onError) {
     onPlaying();
   };
   video.onerror = onError;
-  video.src = `/media/${encodeURIComponent(a.itemId)}/live?start=${(offsetMs / 1000).toFixed(2)}&v=${v}&tok=${tok}${selectionQuery(m.sel)}`;
+  video.src = `/media/${encodeURIComponent(a.itemId)}/live?start=${(offsetMs / 1000).toFixed(2)}&v=${v}&tok=${tok}${aacOk ? "" : "&ac=opus"}${selectionQuery(m.sel)}`;
   video.play().catch(() => autoplayHint());
   if (m.sel?.sub != null && !m.sel.burn) {
     tracksFor(a.itemId).then((tracks) => {
