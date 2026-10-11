@@ -18,22 +18,22 @@ Branch: `claude/project-thread-vyi2fe` (fast-forwardable onto `claude/debridtv-r
   `{itemId, fromMs, durationMs, title, positionMs}`, event `debridtv:ondemand` (detail, or null at end).
   A direct file seeks in place; a compat stream restarts 400 ms after the presses settle. Pause holds, and a compat
   stream paused for more than 30 s restarts there. The end of the file, any tune, or sign-off returns to live.
-  Final errors show a toast and go back to live. Watch spans use channel "ondemand".
+  Final errors show a toast and go back to live. Watch spans use channel "ondemand". It accepts `{ item }` from B's listing.
+  Demo files are painted by synth.js from the file position, with seek, pause and end timer (`test/ui/ondemand-demo.test.ts`).
 - **Music** `music.js` (N-23a): `kind: "track"` airings play through the same `<video>` path. The screen has a sleeve
   or initials, a spinning disc, track details, a progress bar and a themed LED analyser (Web Audio, routed only once
-  running). Shapes are assumed until C4 confirms them.
+  running). C4 confirmed the shapes; an end-to-end Jukebox test runs on 5 tagged Opus songs with a cover.
 - **Compat audio**: the player sends `&ac=opus` when the browser has no AAC (needs C's patch in serveLive).
   `&maxh=720|1080` comes from pref `compatMaxHeight` (ADR-0004; needs C's server side and a settings control).
 - **Tests**: `test/ui/player.test.ts` covers join at live, pause→live, surf cost, peek, lock, sign-off ×2, On Demand,
-  and audio and captions (N-18a: two-language MKV plus numbered SRT; it skips until the server takes `&ac=opus`).
+  and audio and captions (N-18a: two-language MKV plus numbered SRT; runs with C4's `&ac=opus`).
 
 ## Open
 - Chrome/Edge MKV direct play with H.264/HEVC on Zachary's Windows PC (Playwright Chromium has no H.264).
 - Peek and edge-cache numbers on a real provider (needs a run on Zachary's PC).
 - Declined: filling the edge-cache head at probe time (~1 GB of unwatched media across 938 files breaks the core rule). The cache stays viewer-filled.
 - Bitmap-subtitle burn-in has no fixture yet.
-- Waiting on C4: `&ac=opus`, a `D_WEBVTT` probe mapping, an optional video map for audio-only compat,
-  `&maxh`, and music airing shapes. Then add an end-to-end music test.
+- Waiting on C4: an optional video map for audio-only compat, `&maxh` (server side plus a settings control).
 - No passthrough: browsers can't bitstream AC-3 or DTS (ADR-0004).
 
 ## Bench

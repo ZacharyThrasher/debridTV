@@ -201,6 +201,13 @@ export function musicHide() {
 
 export const musicShowing = () => !!state;
 
+/** For tests and diagnostics: is the real analyser on, and how loud is it now (0..1)? */
+export function musicMeter() {
+  if (!state) return null;
+  const lv = state.levels;
+  return { routed, level: lv.reduce((a, b) => a + b, 0) / lv.length };
+}
+
 let colors = null;
 let colorsAt = 0;
 function themeColors() {

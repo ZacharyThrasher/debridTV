@@ -460,6 +460,7 @@ function setPaused(p, { quiet = false } = {}) {
 
 /** File position currently on screen, in ms, or null if nothing is playing. */
 function filePos() {
+  if (odDemo) return demoPos();
   if (tv.route === "demo" && tv.info?.airing) return tv.info.fileOffsetMs + (now() - tv.info.now);
   if (!media || video.readyState < 2) return null;
   return media.route === "live" ? media.liveStart + video.currentTime * 1000 : video.currentTime * 1000;
@@ -513,12 +514,17 @@ function odInfo(item, fromMs) {
   };
 }
 
-export async function playOnDemand(itemId, { fromMs = 0 } = {}) {
+/**
+ * opts.item is the On Demand listing's item when the caller has it (title,
+ * episode label, genre); the server's /api/item still decides what can play.
+ */
+export async function playOnDemand(itemId, { fromMs = 0, item: listed = null } = {}) {
   if (!itemId || signedOff()) return;
   const my = ++token;
   clearTimeout(boundary);
   clearTimeout(stallTimer);
   flushWatch(true);
+  if (odDemo) clearTimeout(odDemo.endTimer), (odDemo = null);
   setPaused(false, { quiet: true });
   click();
   staticOn();
@@ -541,14 +547,46 @@ export async function playOnDemand(itemId, { fromMs = 0 } = {}) {
   const from = Math.round(clamp(Number(fromMs) || 0, 0, durationMs > 10_000 ? durationMs - 5000 : 0));
   odItem = item;
   tv.onDemand = {
-    itemId: item.id, fromMs: from, durationMs, title: item.title,
+    itemId: item.id, fromMs: from, durationMs, title: listed?.title ?? item.title,
     /** Where the picture is now, in file ms (or where a pending seek is heading). */
     get positionMs() {
+      if (odDemo) return demoPos();
       return media?.seekTarget ?? filePos() ?? media?.info?.fileOffsetMs ?? from;
     },
   };
   dispatchEvent(new CustomEvent("debridtv:ondemand", { detail: tv.onDemand }));
+  if (item.provider === "demo") return startDemoOnDemand(item, listed, from);
   playMedia(OD_CH, odInfo(item, from), my);
+}
+
+// Demo files have no media: the picture is painted from the file position, as on
+// live demo channels, so the demo's On Demand is watchable end to end.
+let odDemo = null; // { airing, pos, t0, paused, endTimer }
+
+function demoPos() {
+  return odDemo.pos + (odDemo.paused ? 0 : performance.now() - odDemo.t0);
+}
+
+function startDemoOnDemand(item, listed, from) {
+  const l = listed ?? {};
+  const airing = { itemId: item.id, provider: "demo", title: l.title ?? item.title, kind: l.kind ?? "episode", genre: l.genre ?? item.genre,
+    episode: l.label ?? (l.episode != null ? `S${l.season} · E${l.episode}` : undefined), subtitle: l.subtitle, year: l.year, durationMs: tv.onDemand.durationMs };
+  odDemo = { airing, pos: from, t0: performance.now(), paused: false, endTimer: 0 };
+  tv.route = "demo";
+  demoRun();
+  staticOff();
+}
+
+/** (Re)start the painted picture at odDemo.pos and set the end-of-file timer. */
+function demoRun() {
+  const d = odDemo;
+  clearTimeout(d.endTimer);
+  d.t0 = performance.now();
+  d.paused = false;
+  synthStart(d.airing, d.pos);
+  startWatch(d.airing.itemId, "ondemand");
+  const left = (tv.onDemand?.durationMs || Infinity) - d.pos;
+  if (Number.isFinite(left)) d.endTimer = setTimeout(() => odDemo === d && backToLive(), Math.max(0, left));
 }
 
 /** Back to the live airing on the channel we came from. */
@@ -567,9 +605,16 @@ export function backToLive() {
  */
 export function seekBy(deltaMs) {
   const m = media;
-  if (!tv.onDemand || !m || m.my !== token) return;
+  if (!tv.onDemand) return;
   const end = tv.onDemand.durationMs ? tv.onDemand.durationMs - 1000 : Infinity;
   const target = Math.round(clamp(tv.onDemand.positionMs + deltaMs, 0, Math.max(0, end)));
+  if (odDemo) {
+    flushWatch(true);
+    odDemo.pos = target;
+    setPaused(false, { quiet: true });
+    return demoRun();
+  }
+  if (!m || m.my !== token) return;
   m.seekTarget = target;
   if (m.route === "direct") {
     flushWatch(true);
@@ -594,9 +639,16 @@ function toggleOnDemandPause() {
   const m = media;
   if (!tv.paused) {
     pausedAt = performance.now();
+    if (odDemo) {
+      setPaused(true); // flushes the watch span first, then freezes the picture
+      odDemo.pos = demoPos();
+      odDemo.paused = true;
+      return clearTimeout(odDemo.endTimer);
+    }
     return setPaused(true);
   }
   setPaused(false);
+  if (odDemo) return demoRun();
   if (!m) return;
   // A compatibility stream left paused for long may have been dropped along the
   // way; restart it where the viewer paused rather than risk a dead stream.
@@ -609,6 +661,12 @@ function toggleOnDemandPause() {
 
 function endOnDemand() {
   if (!tv.onDemand) return;
+  if (odDemo) {
+    flushWatch(true);
+    clearTimeout(odDemo.endTimer);
+    odDemo = null;
+    synthStop();
+  }
   tv.onDemand = null;
   odItem = null;
   clearTimeout(seekTimer);
