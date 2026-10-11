@@ -6,6 +6,7 @@
 import { StationClock } from "../src/clock/schedule.ts";
 import type { Channel, Ordering } from "../src/clock/types.ts";
 import { hash32 } from "../src/clock/rng.ts";
+import { ORDERINGS } from "../src/clock/ordering.ts";
 import { JsonFile } from "./store.ts";
 import type { LibItem } from "./library.ts";
 
@@ -92,6 +93,45 @@ export class Lineup {
     });
   }
 
+  /** What a settings export carries: choices, not library facts or credentials. */
+  exportSettings(): { numbers: Record<string, number>; custom: CustomChannel[]; hidden: string[] } {
+    const s = this.file.get();
+    return { numbers: { ...s.numbers }, custom: s.custom.slice(), hidden: s.hidden.slice() };
+  }
+
+  /**
+   * Bring back exported choices. Custom channels and hidden flags are merged by id;
+   * a remembered number is only taken if nothing here already uses it.
+   */
+  importSettings(x: { numbers?: unknown; custom?: unknown; hidden?: unknown }): { custom: number; hidden: number } {
+    let custom = 0;
+    let hidden = 0;
+    this.file.update((s) => {
+      if (Array.isArray(x.custom))
+        for (const c of x.custom as CustomChannel[]) {
+          if (!c || typeof c.id !== "string" || typeof c.name !== "string" || !Array.isArray(c.showKeys) || !Array.isArray(c.movieIds)) continue;
+          s.custom = [...s.custom.filter((y) => y.id !== c.id), {
+            id: c.id.slice(0, 20), name: c.name.slice(0, 40), showKeys: c.showKeys.map(String), movieIds: c.movieIds.map(String),
+            ordering: ORDERINGS.includes(c.ordering) ? c.ordering : "block-shuffle", slotMinutes: typeof c.slotMinutes === "number" ? c.slotMinutes : 30,
+          }];
+          custom++;
+        }
+      if (Array.isArray(x.hidden))
+        for (const k of x.hidden) if (typeof k === "string" && !s.hidden.includes(k)) (s.hidden.push(k), hidden++);
+      if (x.numbers && typeof x.numbers === "object") {
+        const used = new Set(Object.values(s.numbers));
+        for (const [k, n] of Object.entries(x.numbers as Record<string, unknown>))
+          if (typeof n === "number" && Number.isInteger(n) && n > 0 && !(k in s.numbers) && !used.has(n)) (s.numbers[k] = n), used.add(n);
+      }
+    });
+    return { custom, hidden };
+  }
+
+  /** Forget channels, numbers and choices. */
+  reset(): void {
+    this.file.set({ channels: [], numbers: {}, custom: [], hidden: [] });
+  }
+
   /**
    * Bring channels in line with the rules. New channels start on a past slot
    * boundary so they look like they've been on air all along; existing channels
@@ -154,7 +194,9 @@ function nextNumber(numbers: Record<string, number>, preferred?: number): number
 /** Automatic rules. Without genre metadata, channels are built from what is known for sure. */
 export function autoRules(items: LibItem[], custom: CustomChannel[]): Rule[] {
   const usable = dedupe(
-    items.filter((i) => i.present && i.durationMs && i.parsed.kind !== "other" && i.availability !== "policy-blocked"),
+    items.filter(
+      (i) => i.present && i.ready !== false && !i.excluded && i.durationMs && i.parsed.kind !== "other" && i.availability !== "policy-blocked",
+    ),
   );
   const rules: Rule[] = [];
   const eps = usable.filter((i) => i.parsed.kind === "episode");

@@ -12,6 +12,21 @@ export interface MockFile {
   ref: string;
   name: string;
   bytes: number;
+  /** Real bytes to serve (e.g. a small fixture). Without it the file is filler. */
+  content?: Uint8Array;
+  /** Provider readiness wording (RD status / TorBox finished flag). Default: ready. */
+  state?: "ready" | "downloading" | "magnet_error";
+  /** The provider refuses this file on link generation (RD infringing_file, code 35). */
+  policy?: boolean;
+  /** ETag the media host sends for this file. Default: derived from ref and size. */
+  etag?: string;
+}
+
+export interface MockAccount {
+  /** The only key(s) the mock accepts (Bearer header, or `token` on TorBox requestdl). */
+  token?: string | string[];
+  premiumUntilMs?: number | null;
+  plan?: string;
 }
 
 export interface MockOptions {
@@ -28,6 +43,8 @@ export interface MockOptions {
   rdPerMinute?: number;
   /** TorBox: requests per minute per endpoint (T04: 300). */
   tbPerMinutePerEndpoint?: number;
+  /** Account facts and key check. Without it any key is accepted. */
+  account?: MockAccount;
 }
 
 export interface ServerCounters {
@@ -44,6 +61,10 @@ export interface ServerCounters {
 export interface MockProviders {
   baseUrl: string;
   counters: ServerCounters;
+  /** Change the library between calls (files added, removed, finished). */
+  setFiles(files: MockFile[]): void;
+  /** Change account facts (e.g. premium expiry) between calls. */
+  setAccount(account: MockAccount): void;
   reset(): void;
   close(): Promise<void>;
 }
@@ -52,7 +73,9 @@ const CHUNK = 64 * 1024;
 const ZEROES = Buffer.alloc(CHUNK, 0x47);
 
 export async function startMockProviders(opts: MockOptions): Promise<MockProviders> {
-  const files = new Map(opts.files.map((f) => [f.ref, f]));
+  let list = opts.files.slice();
+  let files = new Map(list.map((f) => [f.ref, f]));
+  let account: MockAccount = opts.account ?? {};
   const grants = new Map<string, { ref: string; expiresAt: number }>();
   const windows = new Map<string, number[]>();
   const counters = freshCounters();
@@ -88,7 +111,13 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
     const body = await readBody(req);
     if (limited(bucket, perMinute)) {
       counters.rateLimited++;
-      return json(res, 429, { error: "too_many_requests" });
+      return json(res, 429, name.startsWith("rd.") ? { error: "too_many_requests", error_code: 34 } : { success: false, error: "TOO_MANY_REQUESTS" });
+    }
+    if (account.token) {
+      const u = new URL(req.url!, "http://x");
+      const given = (req.headers.authorization ?? "").replace(/^Bearer /, "") || u.searchParams.get("token");
+      if (!given || ![account.token].flat().includes(given))
+        return json(res, 401, name.startsWith("rd.") ? { error: "bad_token", error_code: 8 } : { success: false, error: "AUTH_ERROR" });
     }
     if (latency) await sleep(latency);
     if (res.destroyed) return; // client gave up (aborted tune)
@@ -103,9 +132,10 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
 
     if (p === "/rd/rest/1.0/torrents") {
       return void api(req, res, "rd.torrents", "rd", rdLimit, () =>
-        json(res, 200, opts.files.filter((f) => f.ref.startsWith("rd:")).map((f) => ({
-          id: f.ref.slice(3), filename: f.name, bytes: f.bytes, status: "downloaded",
-          links: [`https://real-debrid.example/d/${f.ref.slice(3)}`],
+        json(res, 200, list.filter((f) => f.ref.startsWith("rd:")).map((f) => ({
+          id: f.ref.slice(3), filename: f.name, bytes: f.bytes,
+          status: f.state === "downloading" ? "downloading" : f.state === "magnet_error" ? "magnet_error" : "downloaded",
+          links: f.state && f.state !== "ready" ? [] : [`https://real-debrid.example/d/${f.ref.slice(3)}`],
         }))),
       );
     }
@@ -114,15 +144,17 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
         const link = new URLSearchParams(body).get("link") ?? "";
         const ref = `rd:${link.split("/").pop()}`;
         const f = files.get(ref);
-        if (!f) return json(res, 404, { error: "unknown_ressource" });
+        if (!f) return json(res, 404, { error: "unknown_ressource", error_code: 20 });
+        if (f.policy) return json(res, 503, { error: "infringing_file", error_code: 35 });
         json(res, 200, { id: f.ref, filename: f.name, filesize: f.bytes, download: issueGrant(ref) });
       });
     }
     if (p === "/tb/v1/api/torrents/mylist") {
       return void api(req, res, "tb.mylist", "tb.mylist", tbLimit, () =>
-        json(res, 200, { success: true, data: opts.files.filter((f) => f.ref.startsWith("tb:")).map((f) => {
+        json(res, 200, { success: true, data: list.filter((f) => f.ref.startsWith("tb:")).map((f) => {
           const [, tid, fid] = f.ref.split(":");
-          return { id: Number(tid), name: f.name, download_finished: true, download_present: true,
+          const ready = !f.state || f.state === "ready";
+          return { id: Number(tid), name: f.name, download_finished: ready, download_present: ready,
             files: [{ id: Number(fid), name: f.name, size: f.bytes }] };
         }) }),
       );
@@ -130,13 +162,30 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
     if (p === "/tb/v1/api/torrents/requestdl") {
       return void api(req, res, "tb.requestdl", "tb.requestdl", tbLimit, (q) => {
         const ref = `tb:${q.searchParams.get("torrent_id")}:${q.searchParams.get("file_id")}`;
-        if (!files.has(ref)) return json(res, 404, { success: false, error: "NOT_FOUND" });
+        const f = files.get(ref);
+        if (!f) return json(res, 404, { success: false, error: "NOT_FOUND" });
+        if (f.state && f.state !== "ready") return json(res, 400, { success: false, error: "DOWNLOAD_NOT_READY" });
         const url = issueGrant(ref);
         if (q.searchParams.get("redirect") === "true") {
           res.writeHead(302, { location: url });
           return res.end();
         }
         json(res, 200, { success: true, data: url });
+      });
+    }
+    if (p === "/rd/rest/1.0/user") {
+      return void api(req, res, "rd.user", "rd", rdLimit, () => {
+        const until = account.premiumUntilMs ?? null;
+        const left = until ? Math.max(0, Math.round((until - Date.now()) / 1000)) : 0;
+        json(res, 200, { id: 1, username: "mock", email: "mock@example.invalid", points: 0, type: left > 0 ? "premium" : "free",
+          premium: left, expiration: until ? new Date(until).toISOString() : null });
+      });
+    }
+    if (p === "/tb/v1/api/user/me") {
+      return void api(req, res, "tb.user", "tb.user", tbLimit, () => {
+        const until = account.premiumUntilMs ?? null;
+        json(res, 200, { success: true, data: { id: 1, email: "mock@example.invalid", plan: Number(account.plan ?? 2),
+          premium_expires_at: until ? new Date(until).toISOString() : null } });
       });
     }
     if (p.startsWith("/cdn/")) return serveMedia(req, res, p.slice(5));
@@ -172,6 +221,7 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
     res.writeHead(m ? 206 : 200, {
       "content-type": "video/x-matroska",
       "accept-ranges": "bytes",
+      etag: f.etag ?? `"${f.ref.replace(/\W/g, "")}-${f.bytes.toString(16)}"`,
       "content-length": String(end - start + 1),
       ...(m ? { "content-range": `bytes ${start}-${end}/${f.bytes}` } : {}),
     });
@@ -194,9 +244,10 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
         return finish(false);
       }
       const n = Math.min(CHUNK, remaining);
+      const at = end + 1 - remaining;
       remaining -= n;
       counters.mediaBytes += n;
-      const ok = res.write(n === CHUNK ? ZEROES : ZEROES.subarray(0, n));
+      const ok = res.write(f.content ? filled(f.content, at, n) : n === CHUNK ? ZEROES : ZEROES.subarray(0, n));
       if (ok) setTimeout(pump, tickMs);
       else res.once("drain", () => setTimeout(pump, tickMs));
     };
@@ -209,6 +260,13 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
   return {
     baseUrl,
     counters,
+    setFiles(next) {
+      list = next.slice();
+      files = new Map(list.map((f) => [f.ref, f]));
+    },
+    setAccount(next) {
+      account = next;
+    },
     reset() {
       Object.assign(counters, freshCounters(), { activeMedia: counters.activeMedia });
       windows.clear();
@@ -219,6 +277,13 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
         server.close(() => r());
       }),
   };
+}
+
+/** Bytes [at, at+n) of a fixture; past its end, filler (so a small fixture can pose as a big file). */
+function filled(content: Uint8Array, at: number, n: number): Buffer {
+  const out = Buffer.alloc(n, 0x47);
+  if (at < content.byteLength) out.set(content.subarray(at, Math.min(content.byteLength, at + n)));
+  return out;
 }
 
 function freshCounters(): ServerCounters {

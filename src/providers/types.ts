@@ -17,8 +17,18 @@ export interface PlaybackGrant {
   obtainedAtMs: number;
 }
 
+/** Plan facts only. No username, email or account id is kept. */
+export interface AccountInfo {
+  plan: string | null;
+  /** When paid access ends; null if the provider didn't say. */
+  premiumUntilMs: number | null;
+  /** False once the paid period is over (links then stop working). */
+  premium: boolean;
+  checkedAtMs: number;
+}
+
 export class ProviderError extends Error {
-  readonly kind: "rate-limited" | "auth" | "not-found" | "policy" | "transient" | "unknown";
+  readonly kind: "rate-limited" | "auth" | "not-found" | "not-ready" | "policy" | "transient" | "unknown";
   readonly status: number;
   constructor(kind: ProviderError["kind"], status: number, message: string) {
     super(message);
@@ -35,6 +45,17 @@ export interface ProviderClient {
   readonly id: ProviderId;
   inventory(signal?: AbortSignal): Promise<InventoryFile[]>;
   resolve(ref: string, signal?: AbortSignal): Promise<PlaybackGrant>;
+  account(signal?: AbortSignal): Promise<AccountInfo>;
+}
+
+/**
+ * Whether the provider says a file is finished and stored, in its own words.
+ * Anything else is "not ready": DebridTV never asks the provider to fetch it (gate B5).
+ */
+export function providerReady(provider: ProviderId, state: string): boolean {
+  if (provider === "realdebrid") return state === "downloaded";
+  if (provider === "torbox") return state === "download_finished";
+  return true;
 }
 
 // Provider error codes that change what we may do next. A policy denial is not a
@@ -45,12 +66,15 @@ const RD_CODES: Record<number, ProviderError["kind"]> = {
   8: "auth", // bad_token
   9: "auth", // permission_denied
   34: "rate-limited", // too_many_requests
+  20: "not-found", // unknown_ressource
   35: "policy", // infringing_file
 };
 const TB_ERRORS: Record<string, ProviderError["kind"]> = {
   AUTH_ERROR: "auth",
   BAD_TOKEN: "auth",
   NOT_FOUND: "not-found",
+  TOO_MANY_REQUESTS: "rate-limited",
+  DOWNLOAD_NOT_READY: "not-ready",
 };
 
 export function classify(status: number, body: string): ProviderError {
