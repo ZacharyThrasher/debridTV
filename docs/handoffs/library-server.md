@@ -41,10 +41,21 @@ Try it: `npm run dev:mock` → http://127.0.0.1:7338 with every file state (keys
 - **Edge cache** (`app/edgecache.ts`, ADR-0003 from A): head 1 MiB + tail 256 KiB of tuned files, LRU 256 MiB in `<data>/cache`; filled only from proxied bytes (not yet from probe reads); meters `bytes.cached` and `cache`.
 - **Panel**: Sign off after (signOffHours), bug corner/opacity, rating card, theme list from theme.js + Customize…, exclusions button, cache stat, backups.
 
+## Added in the third session (branch `claude/project-thread-rfoift`)
+
+- **PIN-locked channels (N-06b)**, `app/pinlock.ts`. One PIN for the TV, 4–8 digits, stored only as a salted scrypt hash (N=2^14, r=8) in `<data>/lock.json` (0600; never exported or backed up; "Forget everything" deletes it). Unlock lasts 4 h or until restart (memory only). Wrong guesses: 3 free, then 30 s doubling to 15 min; the wait is persisted, so restarting gives no extra guesses. Checks are serialised.
+  - Settings `locked: boolean` (needs a PIN, else 409 `pinRequired`). A lock counts only while a PIN exists; removing the PIN clears every `locked` flag.
+  - `channelView` (bootstrap, /api/now, /api/guide, /api/channels) carries `locked` and `unlocked`. Settings GET adds `locked`, `unlocked`, `pinSet`, `alsoOn [{id, number, name, programs}]` (unlocked channels that air some of the same programs; lock those too or they stay watchable there).
+  - `/media/:id`, `/media/:id/live`, `/api/prefetch` → 403 `{locked:true, final:true}` for an item that only locked channels carry (unlocked channels count only within their rating limit). Checked before any link or byte, `internal=1` included.
+  - While the guard is up (PIN set, a channel locked, not unlocked), anything that decides what airs needs the PIN (403 `pinRequired`): channel settings other than `favorite` and `locked:true`, custom channel save/delete, ratings, import, backup restore. Hiding and exclusions only shrink what airs, so they stay open.
+  - Routes: `GET /api/lock` → `{pinSet, unlocked, untilMs, retryAfterMs?, lockedChannels}`; `POST /api/lock/pin {old?, pin}` (pin `null` removes; setter is unlocked at once); `POST /api/lock/unlock {pin}` → `{ok, untilMs}` or 403/429 `{error, retryAfterMs?}`; `POST /api/lock/lock`.
+  - Panel: Privacy tab "Parental PIN" (set, unlock, lock now, change, remove); Channels tab gets a lock button per channel and a PIN row while locked. Unlocking from the panel fires `debridtv:unlocked` with `{channelId: null}` (all channels) for A's player.
+  - Tests: `test/pinlock.test.ts`.
+
 ## Open, in priority order
 
 1. **RD rerun + ETag answers**: waiting on Zachary's run. When the report arrives: record in LOG.md (D owns), and if ETags are stable across links and differ across versions, let a changed ETag reset the running time (today it only counts).
-2. **Not started**: PIN-locked channels (N-06b, needs B's scramble card); edge-cache fill from probe reads; a real PGS file check for burn-in.
+2. **Not started**: edge-cache fill from probe reads; a real PGS file check for burn-in.
 3. **Rating changes apply at once**, not at the end of the current program (the clock reads ratings directly). Rarely matters; if it does, bake ratings into the revision at sync.
 4. **Online metadata** (TMDB/OMDb) stays unbuilt until Zachary says yes (new outbound traffic).
 5. Library tests share one `library.json` per test file; filter by name in new tests.

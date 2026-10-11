@@ -9,7 +9,7 @@ export type ByteKind = "playback" | "probe" | "cached";
 
 export interface MeterEvent {
   at: number;
-  kind: "tune" | "stream-open" | "stream-close" | "cancel" | "api" | "error" | "probe" | "backup" | "cache";
+  kind: "tune" | "stream-open" | "stream-close" | "cancel" | "api" | "error" | "probe" | "backup" | "cache" | "lock";
   detail: string;
 }
 

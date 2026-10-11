@@ -296,6 +296,48 @@ body.addEventListener("click", async (e) => {
       await api.post("/api/channels/custom", { name, showKeys, movieIds, ordering: document.getElementById("cord").value, slotMinutes: Number(document.getElementById("cslot").value) });
       toast(`${name} is on the air.`);
       onChange();
+    } else if ("pinSet" in b.dataset) {
+      const a = pinVal("pin-new");
+      if (a !== pinVal("pin-new2")) return toast("The two PINs don't match.");
+      try {
+        await api.post("/api/lock/pin", { pin: a });
+        toast("PIN set. Lock channels with 🔓 on the Channels tab.", 5000);
+      } catch (err) {
+        return pinError(err);
+      }
+    } else if ("pinUnlock" in b.dataset) {
+      try {
+        const r = await api.post("/api/lock/unlock", { pin: pinVal("pin-unlock") });
+        toast(`Unlocked until ${new Date(r.untilMs).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`);
+        announceUnlock();
+        onChange();
+      } catch (err) {
+        pinError(err);
+      }
+    } else if ("pinLock" in b.dataset) {
+      await api.post("/api/lock/lock");
+      toast("Locked.");
+      onChange();
+    } else if ("pinChange" in b.dataset || "pinRemove" in b.dataset) {
+      const remove = "pinRemove" in b.dataset;
+      if (remove && !confirm("Remove the PIN? Every locked channel is unlocked for good.")) return;
+      try {
+        const r = await api.post("/api/lock/pin", { old: pinVal("pin-old"), pin: remove ? null : pinVal("pin-change") });
+        toast(remove ? `PIN removed. ${r.unlockedChannels} channel${r.unlockedChannels === 1 ? "" : "s"} unlocked.` : "PIN changed.");
+        if (remove) (announceUnlock(), onChange());
+      } catch (err) {
+        return pinError(err);
+      }
+    } else if (b.dataset.lockChannel) {
+      const lock = b.dataset.on !== "1";
+      try {
+        await api.put(`/api/channels/${b.dataset.lockChannel}/settings`, { locked: lock });
+        if (!lock) announceUnlock(b.dataset.lockChannel);
+      } catch (err) {
+        if (!err.data?.pinRequired) throw err;
+        toast("Enter the PIN above first.");
+      }
+      onChange();
     } else if (b.dataset.fav) {
       await api.put(`/api/channels/${b.dataset.fav}/settings`, { favorite: b.dataset.on !== "1" });
       onChange();
@@ -340,7 +382,9 @@ const ORDERINGS = {
 };
 
 async function channels() {
-  const r = await api.get("/api/channels");
+  const [r, lk] = await Promise.all([api.get("/api/channels"), api.get("/api/lock").catch(() => null)]);
+  const lockBtn = (c) => !lk?.pinSet ? "" : html`<button class="btn" data-lock-channel="${c.id}" data-on="${c.locked ? "1" : "0"}" aria-pressed="${String(!!c.locked)}"
+    aria-label="${c.locked ? "Unlock" : "Lock"} ${c.name}" style="${c.locked ? "color:var(--amber);border-color:var(--amber)" : "opacity:.5"}" title="${c.locked ? "Locked: needs the PIN to watch" : "Lock with the PIN"}">${c.locked ? "🔒" : "🔓"}</button>`;
   const items = r.channels.map((c) => {
     const custom = c.ruleKey.startsWith("custom:");
     return html`<div class="li ${c.hidden ? "off" : ""}" style="--h:${c.hue}">
@@ -348,6 +392,7 @@ async function channels() {
       <div><div class="t">${c.name}</div><div class="d">${c.items} programs · ${ORDERINGS[c.ordering] ?? c.ordering}</div></div>
       <div class="inline">
         <button class="btn x-fav" style="${c.favorite ? "color:var(--amber)" : ""}" data-fav="${c.id}" data-on="${c.favorite ? "1" : "0"}" aria-pressed="${String(!!c.favorite)}" aria-label="${c.favorite ? "Remove from" : "Add to"} favorites" title="Favorite">${c.favorite ? "★" : "☆"}</button>
+        ${raw(lockBtn(c))}
         <button class="btn" data-edit-channel="${c.id}">Edit</button>
         ${custom ? html`<button class="btn danger" data-delete-custom="${c.ruleKey.slice(7)}" aria-label="Delete ${c.name}">Delete</button>` : ""}
         <button class="btn" data-hide="${c.ruleKey}" data-hidden="${c.hidden ? "1" : "0"}">${c.hidden ? "Show" : "Hide"}</button>
@@ -355,6 +400,7 @@ async function channels() {
   });
   return html`<h3>Channels</h3>
     <p class="lead">Channels build themselves from your library and keep their numbers when it changes. Hide the ones you don't want, or make your own.</p>
+    ${lk?.pinSet && !lk.unlocked && lk.lockedChannels ? raw(pinRow("Some channels are locked, so changing channels needs the parental PIN.")) : ""}
     <div class="row-actions" style="margin-bottom:1em"><button class="btn primary" data-new-channel>+ New channel</button>
       <button class="btn" data-exclusions>Keep shows or genres off every channel…</button></div>
     <div class="list">${raw(items.join(""))}</div>`;
@@ -515,6 +561,44 @@ body.addEventListener("input", (e) => {
   }
 });
 
+// ------------------------------------------------------------------ parental PIN (N-06b)
+
+/** One PIN for the whole TV; the server keeps only a salted hash and forgets the unlock after four hours or a restart. */
+const pinInput = (id, label, auto = "current-password") =>
+  html`<input class="input pin-input" id="${id}" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="${auto}" aria-label="${label}" placeholder="${label}" style="width:9em">`;
+
+function pinRow(text) {
+  return html`<div class="opt"><div><div class="ol">🔒 Locked</div><div class="od">${text}</div></div>
+    <div class="inline">${raw(pinInput("pin-unlock", "PIN"))}<button class="btn primary" data-pin-unlock>Unlock</button></div></div>`;
+}
+
+async function pinBlock() {
+  const lk = await api.get("/api/lock").catch(() => null);
+  if (!lk) return "";
+  const intro = html`<h3>Parental PIN</h3>
+    <p class="lead">Lock channels so they need a PIN to watch. Locked channels stay in the guide, scrambled, and nothing is fetched for them until the PIN is entered. One PIN unlocks every locked channel for four hours, or until DebridTV restarts.</p>`;
+  if (!lk.pinSet)
+    return intro + html`<div class="opt"><div><div class="ol">Set a PIN</div><div class="od">4 to 8 digits. Then lock channels with 🔓 on the Channels tab or in a channel's editor.</div></div>
+      <div class="inline">${raw(pinInput("pin-new", "New PIN", "new-password"))}${raw(pinInput("pin-new2", "Again", "new-password"))}<button class="btn primary" data-pin-set>Set PIN</button></div></div>`;
+  const until = lk.untilMs ? new Date(lk.untilMs).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
+  const state = lk.unlocked
+    ? html`<div class="opt"><div><div class="ol">🔓 Unlocked until ${until}</div><div class="od">${lk.lockedChannels} locked channel${lk.lockedChannels === 1 ? "" : "s"} can be watched and changed until then.</div></div>
+        <button class="btn" data-pin-lock>Lock now</button></div>`
+    : raw(pinRow(`${lk.lockedChannels} channel${lk.lockedChannels === 1 ? " is" : "s are"} locked.${lk.retryAfterMs ? ` Too many wrong PINs: try again in ${Math.ceil(lk.retryAfterMs / 1000)} s.` : ""}`));
+  return intro + state + html`<div class="opt"><div><div class="ol">Change or remove the PIN</div>
+      <div class="od">Needs the current PIN. Removing it unlocks every channel. Forgot it? "Forget everything" below clears it, along with everything else.</div></div>
+    <div class="inline">${raw(pinInput("pin-old", "Current PIN"))}${raw(pinInput("pin-change", "New PIN", "new-password"))}
+      <button class="btn" data-pin-change>Change</button><button class="btn danger" data-pin-remove>Remove</button></div></div>`;
+}
+
+/** Tell the player (A) that locked channels may play now. */
+const announceUnlock = (channelId = null) => window.dispatchEvent(new CustomEvent("debridtv:unlocked", { detail: { channelId } }));
+const pinVal = (id) => document.getElementById(id)?.value.trim() ?? "";
+const pinError = (err) => {
+  const wait = err.data?.retryAfterMs;
+  toast(wait ? `${err.data.error} (${Math.ceil(wait / 1000)} s)` : err.data?.error ?? err.message, 5000);
+};
+
 // ------------------------------------------------------------------ privacy
 
 /** N-27c: daily settings backups in the data folder. */
@@ -538,6 +622,7 @@ async function privacy() {
     ${raw(gate(b.gates.sharing, "Sharing", "Letting other people or devices watch your channels. Not built yet, and off until you say so."))}
     ${raw(gate(b.gates.cloudRelay, "Cloud relay", "Streaming through a server instead of your own PC. Off: Real-Debrid treats server traffic differently, so this needs your explicit choice."))}
     ${raw(gate(b.gates.tunerExport, "Tuner export", "Showing your channels to Plex, Jellyfin or other TV apps as a tuner. Off until you say so."))}
+    ${raw(await pinBlock())}
     <h3>What leaves this PC</h3>
     <p class="lead">Only requests to the providers you connected: your account status and library list when you connect or refresh, one link request per program you watch (reused for an hour), the few KB a scan reads, and the video you actually watch. The Meters tab counts all of it.</p>
     <h3>Your data</h3>
@@ -554,6 +639,13 @@ async function privacy() {
       <span class="muted">Deletes keys, library facts, history and channels from this PC. Your provider accounts aren't touched.</span>
     </div>`;
 }
+
+// Enter in a PIN field presses its button.
+body.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || !e.target.classList?.contains("pin-input")) return;
+  e.preventDefault();
+  e.target.closest(".inline")?.querySelector("button")?.click();
+});
 
 body.addEventListener("change", async (e) => {
   if (e.target.id !== "import-file") return;

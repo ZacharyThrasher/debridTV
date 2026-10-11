@@ -31,6 +31,8 @@ import { ORDERINGS } from "../src/clock/ordering.ts";
 import { demoItems } from "./demo.ts";
 import { backupIfDue, listBackups, readBackup } from "./backups.ts";
 import { EdgeCache } from "./edgecache.ts";
+import { PinLock } from "./pinlock.ts";
+import { allowedUnder } from "../src/clock/ratings.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(HERE, "public");
@@ -69,6 +71,10 @@ const library = new Library(() => config.get(), meters, () => scheduleRebuild(),
 const liveLineup = new Lineup("lineup.json");
 const demoLineup = new Lineup("lineup-demo.json");
 const demo = demoItems();
+const pin = new PinLock();
+/** Which items only locked channels carry; recomputed after every rebuild or lock change. */
+let lockSets: { gen: number; locked: Set<string>; open: Set<string> } | null = null;
+let lockGen = 0;
 let ledger = WatchLedger.import(historyFile.get().spans);
 const ffmpeg = opts.ffmpeg === false ? null : detectFfmpeg();
 const ffprobe = ffmpeg ? detectFfprobe(ffmpeg) : null;
@@ -121,6 +127,7 @@ function scheduleRebuild() {
   }, 300);
 }
 function rebuild() {
+  lockGen++;
   const now = Date.now();
   // Live channels are kept in sync even while the demo is showing, so the switch is seamless.
   const liveItems = liveLibrary();
@@ -206,7 +213,75 @@ function channelView(c: StationChannel) {
   const st = lineup().settingsFor(c.meta.ruleKey);
   const hue = st.logo && "hue" in st.logo && st.logo.hue != null ? st.logo.hue : c.meta.hue;
   return { id: c.id, number: c.number, name: c.name, hue, kind: c.meta.kind, tagline: c.meta.tagline, ruleKey: c.meta.ruleKey,
-    favorite: !!st.favorite, logo: st.logo ?? null, kid: !!st.kid };
+    favorite: !!st.favorite, logo: st.logo ?? null, kid: !!st.kid, ...lockView(st) };
+}
+
+// ---------------------------------------------------------------- parental lock (N-06b)
+
+/** A channel counts as locked only while a PIN is set; `unlocked` = the PIN was entered recently. */
+function lockView(st: { locked?: boolean }) {
+  const locked = !!st.locked && pin.pinSet();
+  return { locked, unlocked: locked && pin.isUnlocked() };
+}
+/** The PIN guard is up: some channel is locked and nobody has entered the PIN. */
+function guarded(): boolean {
+  return pin.pinSet() && !pin.isUnlocked() && lineup().lockedKeys().length > 0;
+}
+const PIN_NEEDED = { error: "Enter the parental PIN to change this.", pinRequired: true };
+/**
+ * Items reachable only through locked channels. An item that also airs on an
+ * unlocked channel (within that channel's rating limit) stays watchable there.
+ */
+function lockedItem(id: string): boolean {
+  if (!guarded()) return false;
+  if (!lockSets || lockSets.gen !== lockGen) {
+    const l = lineup();
+    const lockedKeys = new Set(l.lockedKeys());
+    const rating = ratingLookup();
+    const locked = new Set<string>();
+    const open = new Set<string>();
+    for (const c of l.allChannels()) if (lockedKeys.has(c.meta.ruleKey)) for (const iid of channelItems(c)) locked.add(iid);
+    for (const c of l.channels()) if (!lockedKeys.has(c.meta.ruleKey)) for (const iid of channelItems(c, rating)) open.add(iid);
+    lockSets = { gen: lockGen, locked, open };
+  }
+  return lockSets.locked.has(id) && !lockSets.open.has(id);
+}
+function ratingLookup() {
+  const manual = library.manualRatings();
+  return (iid: string) => {
+    const it = itemById(iid);
+    return it ? effectiveRating(it, manual)?.rating : undefined;
+  };
+}
+/** Every item a channel can air (any revision, slot programs too); with `rating`, only those its rating limit lets through. */
+function channelItems(c: StationChannel, rating?: (id: string) => string | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const rev of c.revisions) {
+    const lists = [rev.itemIds, ...(rev.dayparts?.rules ?? []).flatMap((r) => (r.program ? [r.program.itemIds] : []))];
+    for (const ids of lists) for (const iid of ids) if (!rating || allowedUnder(rating(iid), rev.maxRating)) out.add(iid);
+  }
+  return out;
+}
+/** Unlocked channels that also air some of this channel's programs: locking this one doesn't hide those. */
+function alsoOn(c: StationChannel) {
+  const l = lineup();
+  const lockedKeys = new Set(l.lockedKeys());
+  const mine = channelItems(c);
+  const rating = ratingLookup();
+  const out: Array<{ id: string; number: number; name: string; programs: number }> = [];
+  for (const o of l.channels()) {
+    if (o.id === c.id || lockedKeys.has(o.meta.ruleKey)) continue;
+    let n = 0;
+    for (const iid of channelItems(o, rating)) if (mine.has(iid)) n++;
+    if (n) out.push({ id: o.id, number: o.number, name: o.name, programs: n });
+  }
+  return out.sort((a, b) => b.programs - a.programs);
+}
+function refuseLocked(res: http.ServerResponse, id: string): boolean {
+  if (!lockedItem(id)) return false;
+  // Final: the player shows the locked card and asks for the PIN; it never retries.
+  json(res, 403, { error: "This channel is locked. Enter the parental PIN to watch.", locked: true, final: true });
+  return true;
 }
 
 function airingView(a: Airing) {
@@ -330,6 +405,7 @@ const MIME: Record<string, string> = { ".mp4": "video/mp4", ".m4v": "video/mp4",
 async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, id: string, internal: boolean) {
   const it = itemById(id);
   if (!it || it.provider === "demo") return json(res, 404, { error: "no media for this item" });
+  if (refuseLocked(res, id)) return;
   const label = displayTitle(it).slice(0, 60);
   const range = req.headers.range ?? "bytes=0-";
 
@@ -460,9 +536,10 @@ async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, i
  * AAC, and emits fragmented MP4. Like real TV, this stream can't be seeked.
  */
 function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: string, url: URL) {
-  if (!ffmpeg) return json(res, 501, { error: "ffmpeg not found" });
   const it = itemById(id);
   if (!it) return json(res, 404, { error: "unknown item" });
+  if (refuseLocked(res, id)) return;
+  if (!ffmpeg) return json(res, 501, { error: "ffmpeg not found" });
   const start = Math.max(0, Number(url.searchParams.get("start") ?? 0));
   const canDecode = (url.searchParams.get("v") ?? "h264").split(",");
   // Track choice (N-18a): indexes count within their kind, as ffmpeg's 0:a:N / 0:s:N do.
@@ -649,6 +726,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   if (p === "/api/prefetch" && m === "POST") {
     // Resolve the playback link early (EXP-006); no media is read here.
     const it = itemById(String(body.itemId ?? ""));
+    if (it && refuseLocked(res, it.id)) return;
     if (!it || it.provider === "demo" || it.provider === "local") return json(res, 200, { ok: true, skipped: true });
     const client = library.client(it.provider);
     if (!client) return json(res, 409, { error: "not connected" });
@@ -910,6 +988,26 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       return json(res, 200, { ok: false, message: `${plainError(e)}.` });
     }
   }
+  if (p === "/api/lock" && m === "GET") return json(res, 200, { ...pin.status(), lockedChannels: pin.pinSet() ? lineup().lockedKeys().length : 0 });
+  if (p === "/api/lock/pin" && m === "POST") {
+    // Set ({pin}), change ({old, pin}) or remove ({old, pin: null}) the parental PIN.
+    const r = await pin.setPin(body.old, body.pin === undefined ? "" : body.pin);
+    if (!r.ok) return json(res, r.status, { error: r.error, ...(r.retryAfterMs ? { retryAfterMs: r.retryAfterMs } : {}) });
+    let unlockedChannels = 0;
+    if (body.pin === null) unlockedChannels = liveLineup.clearLocks() + demoLineup.clearLocks();
+    lockGen++;
+    return json(res, 200, { ok: true, ...pin.status(), ...(body.pin === null ? { unlockedChannels } : {}) });
+  }
+  if (p === "/api/lock/unlock" && m === "POST") {
+    const r = await pin.unlock(body.pin);
+    if (!r.ok) return json(res, r.status, { ok: false, error: r.error, ...(r.retryAfterMs ? { retryAfterMs: r.retryAfterMs } : {}) });
+    meters.log("lock", "Locked channels unlocked with the PIN");
+    return json(res, 200, { ok: true, untilMs: r.untilMs });
+  }
+  if (p === "/api/lock/lock" && m === "POST") {
+    pin.lock();
+    return json(res, 200, { ok: true, ...pin.status() });
+  }
   if (p === "/api/export") return download(res, "debridtv-settings.json", settingsExport());
   if (p === "/api/backups" && m === "GET") {
     const keep = config.get().backupKeep ?? 14;
@@ -924,11 +1022,12 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return json(res, 200, { keep: config.get().backupKeep ?? 14, made, backups: listBackups(backupDir()) });
   }
   if (p === "/api/backups/restore" && m === "POST") {
+    if (guarded()) return json(res, 403, PIN_NEEDED);
     const data = readBackup(backupDir(), String(body.name ?? ""));
     if (!data) return json(res, 404, { error: "No such backup." });
     return importSettings(res, data as Record<string, unknown>);
   }
-  if (p === "/api/import" && m === "POST") return importSettings(res, body);
+  if (p === "/api/import" && m === "POST") return guarded() ? json(res, 403, PIN_NEEDED) : importSettings(res, body);
   if (p === "/api/forget" && m === "POST") {
     // Everything DebridTV knows, gone: keys, library facts, history, channels.
     if (body.confirm !== "forget everything") return json(res, 400, { error: "confirmation missing" });
@@ -941,6 +1040,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     demoLineup.reset();
     rmSync(backupDir(), { recursive: true, force: true });
     edge.clear();
+    pin.clear();
     meters.cache = { bytes: 0, files: 0 };
     rebuild();
     return json(res, 200, { ok: true });
@@ -986,6 +1086,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return json(res, 200, { scale: RATINGS, shows: [...shows.values()].sort((a, b) => a.name.localeCompare(b.name)), movies: movies.sort((a, b) => a.title.localeCompare(b.title)) });
   }
   if (p === "/api/ratings" && m === "POST") {
+    if (guarded()) return json(res, 403, PIN_NEEDED);
     const b = body as { showKey?: unknown; itemId?: unknown; rating?: unknown };
     const rating = b.rating === null || b.rating === "" ? null : normalizeRating(String(b.rating ?? ""));
     if (b.rating != null && b.rating !== "" && !rating) return json(res, 400, { error: "Ratings are G, PG, PG-13, R or NC-17 (TV ratings like TV-14 are accepted too)." });
@@ -1007,6 +1108,10 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     if (!ch) return json(res, 404, { error: "no such channel" });
     if (m === "PUT" || m === "POST") {
       const b = body as Record<string, unknown>;
+      // Locking a channel is always allowed; turning one off or changing what airs needs the PIN while the guard is up.
+      if (b.locked === true && !pin.pinSet()) return json(res, 409, { error: "Set a parental PIN first (Settings, Privacy).", pinRequired: true });
+      const free = new Set(["favorite", "locked"]);
+      if (guarded() && (b.locked === false || Object.keys(b).some((k) => !free.has(k)))) return json(res, 403, PIN_NEEDED);
       const logo = b.logo === null ? null : b.logo === undefined ? undefined : cleanLogo(b.logo);
       if (b.logo != null && !logo) return json(res, 400, { error: "A logo is up to 6 letters (badge or text), or an inline image (data: URL). No outside images." });
       const restrictedHours = b.restrictedHours === undefined ? undefined : cleanRestricted(b.restrictedHours);
@@ -1032,7 +1137,9 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
         premieres: typeof b.premieres === "boolean" ? b.premieres : undefined,
         watched: b.watched === "all" || b.watched === "unwatched" || b.watched === "resume" ? b.watched : undefined,
         exclude: exclude ?? undefined,
+        locked: typeof b.locked === "boolean" ? b.locked : undefined,
       });
+      lockGen++;
       if (!r.ok) return json(res, 409, { error: r.error });
       scheduleRebuild();
       if (r.swappedWith) settingsNote = `Swapped numbers with ${r.swappedWith}.`;
@@ -1045,7 +1152,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       weights: st.weights ?? {}, balance: st.balance ?? "episodes", marathons: !!st.marathons, premieres: !!st.premieres,
       watched: st.watched ?? "all", exclude: st.exclude ?? {}, groups: channelGroups(c),
       // The clock enforces all three; changes start once the program on now ends (C7).
-      enforced: true, timeZone: stationTimeZone(), ratings: ratingCoverage(c),
+      enforced: true, timeZone: stationTimeZone(), ratings: ratingCoverage(c), ...lockView(st), pinSet: pin.pinSet(), alsoOn: alsoOn(c),
       ...(settingsNote ? { note: settingsNote } : {}) });
   }
   const refresh = /^\/api\/channels\/([\w-]+)\/refresh$/.exec(p);
@@ -1093,6 +1200,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return json(res, 200, { ok: true });
   }
   if (p === "/api/channels/custom" && m === "POST") {
+    if (guarded()) return json(res, 403, PIN_NEEDED);
     const c = body as unknown as CustomChannel;
     if (!c.name || !Array.isArray(c.showKeys) || !Array.isArray(c.movieIds)) return json(res, 400, { error: "bad channel" });
     lineup().saveCustom({ id: c.id || Math.random().toString(36).slice(2, 9), name: String(c.name).slice(0, 40), showKeys: c.showKeys.map(String), movieIds: c.movieIds.map(String),
@@ -1101,6 +1209,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return json(res, 200, { ok: true });
   }
   if (p === "/api/channels/custom/delete" && m === "POST") {
+    if (guarded()) return json(res, 403, PIN_NEEDED);
     lineup().deleteCustom(String(body.id));
     rebuild();
     return json(res, 200, { ok: true });
