@@ -305,3 +305,19 @@ sign-off (a sleeping viewer streams all night), and mid-program breaks.
 
 **Next.** Re-run the audit after each merge; add checks as B and C ship (Prevue breaks,
 exclusions, export). Fold the playback checks (A20/A21/A25) into `npm test`.
+
+### PARITY-002 — Audit round 2 (2026-10-11)
+
+**Change to the audit.** Episode 8 of the test show now runs 8 min with a chapter at 4:00.
+The first try put chapters into 90 s files, and A17 still failed. The cause was the
+audit, not the app: breaks are never placed in a program's first or last 3 min
+(`breakpoints()`), so a 90 s file can't hold one. Added A28 (Z cycles picture shape).
+
+**Result.** Shared `cffbc0d` + C `446sg8` `4a73787`: **28/28**, `npm test` 169/169. An earlier
+trial merge (C `6ed75dd` + B `f5aca03`) caught an integration crash: C's settings API
+returns `logo: null`, B's editor read `null.kind`, so the channel editor would not open
+for any channel without a logo. Reported, and B fixed it in `2b17a5c`.
+
+**Register v0.3.** 61 rows: V 14, P/V 18, P 2, C 1, G 1, not started 23, N/A 2 (round 1:
+V 9, P/V 13). Top remaining gaps: auto sign-off, audio/subtitle track choice, and playback
+checks in `npm test` (A); weights/premieres, random marathons, watched-only (C).

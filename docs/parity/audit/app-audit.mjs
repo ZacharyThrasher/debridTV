@@ -42,10 +42,17 @@ function makeMedia(dir) {
   mkdirSync(dir, { recursive: true });
   const ff = (args) => execFileSync("ffmpeg", ["-loglevel", "error", "-y", ...args]);
   // VP9/Opus WebM: Playwright's Chromium has no H.264, so direct play needs VP9.
-  for (let i = 1; i <= 8; i++)
-    ff(["-f", "lavfi", "-i", "testsrc2=size=320x180:rate=24:duration=90", "-f", "lavfi", "-i", `sine=frequency=${300 + i * 40}:duration=90`,
+  // Episode 8 runs 8 min with a chapter at 4:00, so the lineup has a legal place for a
+  // mid-program break (breaks stay out of the first and last 3 min of a program).
+  const chapters = join(dir, "chapters.txt");
+  writeFileSync(chapters, ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=240000\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=240000\nEND=480000\n");
+  for (let i = 1; i <= 8; i++) {
+    const secs = i === 8 ? 480 : 90;
+    ff(["-f", "lavfi", "-i", `testsrc2=size=320x180:rate=24:duration=${secs}`, "-f", "lavfi", "-i", `sine=frequency=${300 + i * 40}:duration=${secs}`,
+      ...(i === 8 ? ["-i", chapters, "-map", "0", "-map", "1", "-map_chapters", "2"] : []),
       "-c:v", "libvpx-vp9", "-b:v", "150k", "-deadline", "realtime", "-cpu-used", "8", "-g", "48", "-c:a", "libopus", "-b:a", "32k",
       join(dir, `Audit Show S01E0${i}.webm`)]);
+  }
   // AC-3 audio: the browser can't decode it, so this must take compatibility mode.
   ff(["-f", "lavfi", "-i", "testsrc=size=320x180:rate=24:duration=120", "-f", "lavfi", "-i", "sine=frequency=500:duration=120",
     "-c:v", "libvpx-vp9", "-b:v", "150k", "-deadline", "realtime", "-cpu-used", "8", "-g", "48", "-c:a", "ac3", "-b:a", "96k",
@@ -258,8 +265,11 @@ try {
   check("A16", ["N-22a"], "slot padding: programs start on the quarter hour, the rest is a break",
     segs.some((s) => s.kind === "break" && s.reason === "padding") && showRow.airings.every((a) => new Date(a.start).getMinutes() % 15 === 0),
     segs.map((s) => `${s.kind}${s.reason ? ":" + s.reason : ""}`).join(","));
-  const anyMid = g.rows.some((r) => r.airings.some((a) => a.segments.some((s) => s.reason === "mid")));
-  check("A17", ["N-22b"], "mid-program breaks appear on some channel", anyMid, "no auto or custom rule sets midBreakMs and probe reads no chapters");
+  const day = await get(`/api/guide?from=${Date.now()}&to=${Date.now() + 24 * 60 * MIN}`);
+  const midAiring = day.rows.flatMap((r) => r.airings.map((a) => ({ ch: r.channel.name, a }))).find(({ a }) => a.segments.some((s) => s.reason === "mid"));
+  const anyMid = !!midAiring;
+  check("A17", ["N-22b"], "files with chapters get mid-program breaks on a slotted channel", anyMid,
+    anyMid ? `${midAiring.ch}: ${midAiring.a.episode} ` + midAiring.a.segments.map((s) => `${s.kind}${s.reason ? ":" + s.reason : ""}`).join(",") : "no mid break in 24 h (episode 8 has a chapter at 4:00)");
 
   // Custom channels: back to back, numbered 50+, then a compat-only channel.
   const lib = await get("/api/library");
@@ -387,6 +397,15 @@ try {
   const overflow = await p3.evaluate(() => document.documentElement.scrollWidth - innerWidth);
   await p3.screenshot({ path: join(outDir, "a26-phone-guide.png") });
   check("A26", ["N-34"], "phone-width guide opens without horizontal overflow", overflow <= 1, { overflow });
+
+  // Picture shape: Z cycles it (auto, fill, 4:3, zoom) where the build has it.
+  const shapes = [];
+  for (let i = 0; i < 4; i++) {
+    await page2.keyboard.press("z");
+    await page2.waitForTimeout(250);
+    shapes.push(await page2.evaluate(() => JSON.parse(localStorage.getItem("debridtv.prefs") || "{}").aspect ?? null));
+  }
+  check("A28", ["N-17a"], "Z cycles the picture shape, including 4:3", new Set(shapes).size >= 3 && shapes.some((s) => /4.?3/.test(String(s))), { shapes });
 
   // Every settings tab renders (catches a tab button without a renderer).
   const broken = [];
