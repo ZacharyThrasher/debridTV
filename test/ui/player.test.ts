@@ -6,7 +6,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -37,6 +37,7 @@ let browser: any = null;
 let home = "";
 let skip: string | false = !chromium ? "Playwright isn't installed" : !ffmpeg ? "ffmpeg isn't installed" : false;
 let direct: { id: string; number: number } | null = null;
+let langs: { id: string; number: number } | null = null;
 
 const get = async (p: string) => (await fetch(BASE + p)).json();
 const post = async (p: string, body: unknown) =>
@@ -59,6 +60,17 @@ before(async () => {
     execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=24:duration=45",
       "-f", "lavfi", "-i", `sine=frequency=${300 + i * 50}:duration=45`, "-c:v", "libvpx-vp9", "-b:v", "150k", "-deadline", "realtime",
       "-cpu-used", "8", "-g", "48", "-c:a", "libopus", "-b:a", "32k", join(media, `Player Test S01E0${i}.webm`)]);
+  // Two audio languages (English default, Spanish) and English captions with a
+  // numbered line every 2 s, so a cue's text says which file second it belongs to.
+  const srt = join(home, "lines.srt");
+  const t = (x: number) => `00:00:${String(Math.floor(x)).padStart(2, "0")},${String(Math.round((x % 1) * 1000)).padStart(3, "0")}`;
+  writeFileSync(srt, Array.from({ length: 22 }, (_, i) => `${i + 1}\n${t(i * 2)} --> ${t(i * 2 + 1.8)}\nLine ${i + 1}\n`).join("\n"));
+  for (let i = 1; i <= 4; i++)
+    execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=24:duration=45",
+      "-f", "lavfi", "-i", "sine=frequency=440:duration=45", "-f", "lavfi", "-i", "sine=frequency=880:duration=45", "-i", srt,
+      "-map", "0", "-map", "1", "-map", "2", "-map", "3", "-c:v", "libvpx-vp9", "-b:v", "150k", "-deadline", "realtime", "-cpu-used", "8", "-g", "48",
+      "-c:a", "libopus", "-b:a", "32k", "-c:s", "srt", "-metadata:s:a:0", "language=eng", "-metadata:s:a:1", "language=spa",
+      "-metadata:s:s:0", "language=eng", "-disposition:a:0", "default", join(media, `Lang Test S01E0${i}.mkv`)]);
   server = spawn(process.execPath, ["app/server.ts"], { env: { ...process.env, PORT: String(PORT), DEBRIDTV_HOME: home }, stdio: "ignore" });
   for (let i = 0; i < 100; i++) {
     try {
@@ -70,15 +82,20 @@ before(async () => {
   await post("/api/scan/start", { perMinute: 600 });
   let lib: any = null;
   let showKey: string | undefined;
-  for (let i = 0; i < 150 && !showKey; i++) {
+  let langKey: string | undefined;
+  for (let i = 0; i < 150 && !(showKey && langKey); i++) {
     await sleep(200);
     lib = await get("/api/library");
     showKey = lib.shows.find((s: any) => s.name === "Player Test" && s.timed === 8)?.key;
+    langKey = lib.shows.find((s: any) => s.name === "Lang Test" && s.timed === 4)?.key;
   }
   await post("/api/channels/custom", { name: "Player Direct", showKeys: [showKey], movieIds: [], ordering: "cyclic", slotMinutes: 0 });
-  for (let i = 0; i < 30 && !direct; i++) {
+  if (langKey) await post("/api/channels/custom", { name: "Player Langs", showKeys: [langKey], movieIds: [], ordering: "cyclic", slotMinutes: 0 });
+  for (let i = 0; i < 30 && !(direct && langs); i++) {
     await sleep(200);
-    direct = (await get("/api/bootstrap")).channels.find((c: any) => c.name === "Player Direct") ?? null;
+    const chs = (await get("/api/bootstrap")).channels;
+    direct = chs.find((c: any) => c.name === "Player Direct") ?? null;
+    langs = chs.find((c: any) => c.name === "Player Langs") ?? null;
   }
   if (!direct) skip = "the test channel didn't go on air";
 });
@@ -89,9 +106,9 @@ after(async () => {
   if (home) rmSync(home, { recursive: true, force: true });
 });
 
-async function open(prefs: object = {}) {
+async function open(prefs: object = {}, ch = direct!) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
-  await ctx.addInitScript(`localStorage.setItem("debridtv.prefs", ${JSON.stringify(JSON.stringify({ welcomed: true, startup: `ch:${direct!.id}`, ...prefs }))})`);
+  await ctx.addInitScript(`localStorage.getItem("debridtv.prefs") || localStorage.setItem("debridtv.prefs", ${JSON.stringify(JSON.stringify({ welcomed: true, startup: `ch:${ch.id}`, ...prefs }))})`);
   const page = await ctx.newPage();
   const media: string[] = [];
   const errors: string[] = [];
@@ -111,10 +128,10 @@ const playing = (page: any, timeout = 15_000) =>
   }, null, { timeout });
 
 /** Picture position minus station position, for the channel on screen. */
-async function drift(page: any) {
+async function drift(page: any, ch = direct!) {
   const [vt, n] = await Promise.all([
     page.evaluate(() => (document.getElementById("video") as HTMLVideoElement).currentTime * 1000),
-    get(`/api/now?channel=${direct!.id}`),
+    get(`/api/now?channel=${ch.id}`),
   ]);
   return { driftMs: Math.round(vt - n.fileOffsetMs), item: n.airing?.itemId };
 }
@@ -255,6 +272,79 @@ describe("player", () => {
     assert.ok(od.some((w) => w.fromMs >= 29_500 && w.fromMs < 31_000), "a span starts where On Demand started");
     assert.deepEqual(errors, []);
     await ctx.close();
+  });
+
+  it("A picks another audio language and C turns captions on, in step with the picture, and both carry over (N-18a)", async (t) => {
+    if (skip) return t.skip(skip);
+    if (!langs) return t.skip("the language test channel didn't go on air");
+    // Start early in a program, so the whole check stays inside one file.
+    for (let i = 0; i < 40; i++) {
+      const n = await get(`/api/now?channel=${langs.id}`);
+      if (n.segment?.kind === "program" && n.airing.end - n.now > 32_000) break;
+      await sleep(500);
+    }
+    const { page, ctx, errors } = await open({}, langs);
+    const src = () => page.evaluate(() => document.getElementById("video")!.getAttribute("src") ?? "");
+    const prefs = () => page.evaluate(() => JSON.parse(localStorage.getItem("debridtv.prefs") || "{}"));
+    const tracks = (await get(`/api/item?id=${(await get(`/api/now?channel=${langs!.id}`)).airing.itemId}`)).tracks;
+    assert.deepEqual(tracks.filter((x: any) => x.kind !== "video").map((x: any) => `${x.kind}:${x.index}:${x.lang}`), ["audio:0:eng", "audio:1:spa", "subtitle:0:eng"]);
+    await playing(page);
+    assert.doesNotMatch(await src(), /\/live/, "the default track plays the file directly");
+    // Playwright's Chromium has no AAC. A server that can't send Opus sound in
+    // compatibility mode (&ac=opus) can't be checked end to end here.
+    const itemId = (await get(`/api/now?channel=${langs!.id}`)).airing.itemId;
+    const head = Buffer.from(await (await fetch(`${BASE}/media/${itemId}/live?start=1&v=vp9&ac=opus`)).arrayBuffer()).subarray(0, 4096);
+    if (!head.includes("Opus")) return void (await ctx.close(), t.skip("this server sends only AAC sound in compatibility mode"));
+
+    await page.keyboard.press("a");
+    await page.waitForFunction(() => /\/live\?.*&a=1/.test(document.getElementById("video")!.getAttribute("src") ?? ""));
+    await playing(page);
+    assert.equal((await prefs()).audioLang, "spa", "remembers the language");
+    assert.match(await page.evaluate(() => document.getElementById("osd-num")!.textContent ?? ""), /Spanish/i);
+
+    await page.keyboard.press("c");
+    await page.waitForFunction(() => /&a=1&s=0/.test(document.getElementById("video")!.getAttribute("src") ?? ""));
+    await playing(page);
+    assert.equal((await prefs()).subLang, "eng");
+    // The cue on screen is the one for this second of the file.
+    await page.waitForFunction(() => {
+      const tt = (document.getElementById("video") as HTMLVideoElement).textTracks;
+      return [...tt].some((x) => x.mode === "showing" && (x.activeCues?.length ?? 0) > 0);
+    }, null, { timeout: 15_000 });
+    const [cue, n] = await Promise.all([
+      page.evaluate(() => {
+        const x = [...(document.getElementById("video") as HTMLVideoElement).textTracks].find((x) => x.mode === "showing")!;
+        return { text: (x.activeCues![0] as VTTCue).text };
+      }),
+      get(`/api/now?channel=${langs!.id}`),
+    ]);
+    const line = Number(/Line (\d+)/.exec(cue.text)?.[1]);
+    const expected = Math.floor(n.fileOffsetMs / 2000) + 1;
+    assert.ok(Math.abs(line - expected) <= 1, `cue "${cue.text}" at file ${(n.fileOffsetMs / 1000).toFixed(1)} s (expected Line ${expected})`);
+    // The next lines follow as the program plays.
+    const shown = await page.evaluate(async () => {
+      const x = [...(document.getElementById("video") as HTMLVideoElement).textTracks].find((x) => x.mode === "showing")!;
+      const seen = new Set<string>();
+      for (let i = 0; i < 25; i++) {
+        for (const c of [...(x.activeCues ?? [])]) seen.add((c as VTTCue).text);
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      return [...seen];
+    });
+    assert.ok(shown.length >= 2, `captions keep coming: ${JSON.stringify(shown)}`);
+
+    // Another program (a fresh start here) uses the remembered choices straight away.
+    await ctx.close();
+    const next = await open({ audioLang: "spa", subLang: "eng" }, langs);
+    await playing(next.page);
+    assert.match(await next.page.evaluate(() => document.getElementById("video")!.getAttribute("src") ?? ""), /&a=1&s=0/);
+    // C past the last track turns captions off but keeps the Spanish sound.
+    await next.page.keyboard.press("c");
+    await next.page.waitForFunction(() => !/&s=/.test(document.getElementById("video")!.getAttribute("src") ?? "x&s="));
+    assert.match(await next.page.evaluate(() => document.getElementById("video")!.getAttribute("src") ?? ""), /&a=1/);
+    assert.equal(await next.page.evaluate(() => JSON.parse(localStorage.getItem("debridtv.prefs")!).subLang), "off");
+    assert.deepEqual([...errors, ...next.errors], []);
+    await next.ctx.close();
   });
 
   it("a locked channel asks for no link and opens no media until unlocked (N-06b)", async (t) => {
