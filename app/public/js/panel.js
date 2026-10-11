@@ -225,6 +225,10 @@ body.addEventListener("click", async (e) => {
     } else if ("gotoLibrary" in b.dataset) {
       lib = { ...lib, status: b.dataset.gotoLibrary, provider: b.dataset.provider === "local" ? "local" : b.dataset.provider ?? "", q: "", limit: 50 };
       return showTab("library");
+    } else if ("exclusions" in b.dataset) {
+      const mod = await import("./channel-editor.js").catch(() => null);
+      if (mod?.openExclusions) return void mod.openExclusions({ onSaved: () => (onChange(), render()) });
+      return toast("This needs the newer channel editor.");
     } else if ("backupNow" in b.dataset) {
       await api.post("/api/backups", { now: true });
       toast("Settings backed up.");
@@ -351,7 +355,8 @@ async function channels() {
   });
   return html`<h3>Channels</h3>
     <p class="lead">Channels build themselves from your library and keep their numbers when it changes. Hide the ones you don't want, or make your own.</p>
-    <div class="row-actions" style="margin-bottom:1em"><button class="btn primary" data-new-channel>+ New channel</button></div>
+    <div class="row-actions" style="margin-bottom:1em"><button class="btn primary" data-new-channel>+ New channel</button>
+      <button class="btn" data-exclusions>Keep shows or genres off every channel…</button></div>
     <div class="list">${raw(items.join(""))}</div>`;
 }
 
@@ -408,6 +413,8 @@ async function meters() {
       <div class="stat"><b>${m.apiTotal}</b><span>API calls</span></div>
       <div class="stat"><b>${fmtBytes(m.bytes.playback)}</b><span>watched bytes</span></div>
       <div class="stat"><b>${fmtBytes(m.bytes.probe)}</b><span>scan bytes</span></div>
+      ${m.cache ? html`<div class="stat" title="The first 1 MB and last 256 KB of files you've tuned, kept on this PC so channel changes start sooner. Never fetched ahead.">
+        <b>${fmtBytes(m.bytes.cached ?? 0)}</b><span>served from cache (${fmtBytes(m.cache.bytes)} in ${m.cache.files} files)</span></div>` : ""}
       <div class="stat"><b>${m.tunes}</b><span>channel changes</span></div>
       <div class="stat"><b>${m.streamsOpened}</b><span>streams opened</span></div>
       <div class="stat"><b>${m.streamsCancelled}</b><span>cancelled</span></div>

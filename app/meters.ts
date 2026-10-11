@@ -4,7 +4,8 @@
 
 import { CallCounter } from "../src/providers/clients.ts";
 
-export type ByteKind = "playback" | "probe";
+/** playback and probe are fetched from a host; cached was answered from the edge cache, no host involved. */
+export type ByteKind = "playback" | "probe" | "cached";
 
 export interface MeterEvent {
   at: number;
@@ -44,7 +45,9 @@ class RateCounter extends CallCounter {
 
 export class Meters {
   readonly api = new RateCounter();
-  readonly bytes: Record<ByteKind, number> = { playback: 0, probe: 0 };
+  readonly bytes: Record<ByteKind, number> = { playback: 0, probe: 0, cached: 0 };
+  /** Edge cache size on disk, set by the server. */
+  cache = { bytes: 0, files: 0 };
   streamsOpened = 0;
   streamsCancelled = 0;
   activeStreams = 0;
@@ -87,6 +90,7 @@ export class Meters {
         return { bucket, peak, limit: LIMITS[provider].perMinute, scope: LIMITS[provider].scope };
       }),
       bytes: { ...this.bytes },
+      cache: { ...this.cache },
       streamsOpened: this.streamsOpened,
       streamsCancelled: this.streamsCancelled,
       activeStreams: this.activeStreams,
