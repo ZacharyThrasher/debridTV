@@ -401,3 +401,23 @@ Shared release `97666b5`: audit **28/28**, `npm test` **214/214**. A20/A21/A25 n
 V 28, P/V 11, P 1, G 1, not started 18, N/A 2 (round 2: V 14, P/V 18). Every round-2 gap
 shipped with tests. Remaining gaps are product areas (content groups, seasonal lineups,
 trailers, On Demand) and items that need Zachary (LAN access, outside sources, profiles).
+
+### EXP-010 — What silence-detected breaks cost, local files only (2026-10-11, C4)
+
+**Question.** N-22c finds break points by decoding a file's whole soundtrack. What does that
+cost on this PC, and does it find a planted silence?
+
+**Method.** ffmpeg `silencedetect=noise=-45dB:duration=0.5`, audio only (`-vn -sn -dn`), on
+(a) the test's 8-minute file with a 2 s gap at 4:00 (16 kb/s mono AAC) and (b) a 44-minute
+720p episode stand-in, stereo AAC 160 kb/s, with 1.5 s and 2 s gaps at 10:00 and 25:00. Cloud
+container CPU, not Zachary's PC.
+
+**Result.** (a) about 0.34 s per file, break at 4:00.5 as planted (`test/silence.test.ts`).
+(b) 10.7 s wall (6.3 s user) for the 44-minute file; both gaps found (600.0–601.5 s and
+1500.0–1502.0 s), so break points at 10:00.8 and 25:01. Provider calls 0, provider bytes 0.
+
+**Decision.** Ship it as a viewer-started job over local episodes without chapters, one file
+at a time, stoppable. Never for Real-Debrid or TorBox files: the same check would download
+every episode in full (about 1 GB per hour of HD) for media nobody is watching.
+`breakpoints()` ignores silence data on anything that isn't local, so a stray value can't
+place a break in a debrid file either.
