@@ -37,7 +37,32 @@ export interface ProviderClient {
   resolve(ref: string, signal?: AbortSignal): Promise<PlaybackGrant>;
 }
 
+// Provider error codes that change what we may do next. A policy denial is not a
+// transport failure: it is never retried, and never "repaired" by trying another
+// provider or account (handoff §5.4, gate E6). Codes from R02; LIVE-001 observed
+// RD 35 on a file the inventory listed as "downloaded".
+const RD_CODES: Record<number, ProviderError["kind"]> = {
+  8: "auth", // bad_token
+  9: "auth", // permission_denied
+  34: "rate-limited", // too_many_requests
+  35: "policy", // infringing_file
+};
+const TB_ERRORS: Record<string, ProviderError["kind"]> = {
+  AUTH_ERROR: "auth",
+  BAD_TOKEN: "auth",
+  NOT_FOUND: "not-found",
+};
+
 export function classify(status: number, body: string): ProviderError {
+  let parsed: { error_code?: unknown; error?: unknown } = {};
+  try {
+    const j: unknown = JSON.parse(body);
+    if (j && typeof j === "object") parsed = j;
+  } catch {}
+  const byCode =
+    (typeof parsed.error_code === "number" && RD_CODES[parsed.error_code]) ||
+    (typeof parsed.error === "string" && TB_ERRORS[parsed.error]);
+  if (byCode) return new ProviderError(byCode, status, body);
   if (status === 429) return new ProviderError("rate-limited", status, body);
   if (status === 401 || status === 403) return new ProviderError("auth", status, body);
   if (status === 404) return new ProviderError("not-found", status, body);

@@ -20,7 +20,7 @@
 
 import { writeFileSync, mkdirSync } from "node:fs";
 import { RealDebridClient, TorBoxClient } from "../src/providers/clients.ts";
-import type { InventoryFile, ProviderClient } from "../src/providers/types.ts";
+import { ProviderError, type InventoryFile, type ProviderClient } from "../src/providers/types.ts";
 
 const MAX_BYTES = Number(process.env.MAX_MB ?? 16) * 1_000_000;
 const WATCH_MIN = Number(process.env.WATCH_MIN ?? 0);
@@ -137,7 +137,10 @@ for (const [provider, token] of runs) {
   try {
     await probe(provider, token);
   } catch (e) {
-    note("error", { provider, message: String(e).replaceAll(token, "<redacted>") });
+    const pe = e instanceof ProviderError ? { kind: e.kind, status: e.status } : {};
+    note("error", { provider, ...pe, message: String(e).replaceAll(token, "<redacted>") });
+    // A policy block is reported, never worked around by picking another file
+    // automatically. Choosing a different file is the account holder's call (PICK=n).
   }
 }
 

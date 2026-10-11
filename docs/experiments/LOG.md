@@ -199,3 +199,29 @@ meters must count from the provider's side of the socket where possible.
 
 Questions it answers: real API latency, link host, stated vs actual link lifetime,
 range/seek support and timing, first-chunk time after a cancel.
+
+### LIVE-001 run 1 — 2026-10-11 03:22 UTC (Windows, Node 24.11, Zachary's PC)
+
+**Real-Debrid**
+- Account read OK: premium, expires 2027-02-17. Latency 509 ms.
+- Library page: 100 entries (one page), 99 `downloaded`, 1 `error`. Latency 292 ms.
+- The auto-picked file (mkv, 0.70 GB, listed `downloaded`) was **refused at link time:
+  `infringing_file` (RD error_code 35)**. No media was read.
+- So far that's 3 API calls and 0 media bytes.
+
+**TorBox:** `AUTH_ERROR` on both calls. The key was not accepted, most likely
+because it had just been reset. No further calls.
+
+**What this shows**
+1. **"downloaded" in the library ≠ playable.** A file can be listed as ready and still
+   be refused when you ask for a link. This is the first real-world evidence for the
+   handoff's warning (§5.4) that listed / cached / playable / scheduled are different
+   facts. The scheduler is already built for it: the slot stays, and the guide shows
+   an honest "unavailable".
+2. **Policy refusals need their own error class.** `classify()` now reads provider
+   error codes (RD 35 → `policy`, TorBox `AUTH_ERROR` → `auth`), so a policy block is
+   never retried and never "fixed" by trying another provider (gate E6). The probe
+   now records the error kind and HTTP status.
+3. **Not tested yet:** link lifetime, seek, and cancel. These need a file that is not
+   policy-blocked, chosen by Zachary (`PICK=n`). The probe deliberately does not
+   hunt through the library for one.
