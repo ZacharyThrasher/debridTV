@@ -202,6 +202,12 @@ function ratingCoverage(c: StationChannel) {
   return { total: ids.length, byRating: counts, unrated: counts.unrated!, kidSafe: kidOk };
 }
 
+/** How many season-0 specials this channel's rule could air (shown or not). */
+function specialsOf(c: StationChannel): number {
+  const rule = autoRules(allItems(), lineup().custom()).find((r) => r.key === c.meta.ruleKey);
+  return rule?.specialIds?.length ?? 0;
+}
+
 function availabilityView(it: LibItem | undefined) {
   if (!it) return { availability: "unknown", availabilityReason: undefined };
   if (it.provider === "demo") return { availability: it.availability, availabilityReason: it.availabilityReason };
@@ -810,6 +816,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
         kid: typeof b.kid === "boolean" ? b.kid : undefined,
         restrictedHours,
         slots,
+        specials: typeof b.specials === "boolean" ? b.specials : undefined,
       });
       if (!r.ok) return json(res, 409, { error: r.error });
       scheduleRebuild();
@@ -819,6 +826,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     const st = l.settingsFor(c.meta.ruleKey);
     return json(res, 200, { name: c.name, number: c.number, favorite: !!st.favorite, logo: st.logo ?? null,
       kid: !!st.kid, restrictedHours: st.restrictedHours ?? [], slots: st.slots ?? [],
+      specials: !!st.specials, specialsAvailable: specialsOf(c),
       // The clock enforces all three; changes start once the program on now ends (C7).
       enforced: true, timeZone: stationTimeZone(), ratings: ratingCoverage(c),
       ...(settingsNote ? { note: settingsNote } : {}) });

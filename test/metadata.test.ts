@@ -205,3 +205,20 @@ test("N-06a/N-09a: kid, restricted hours and slots reach the clock, and change o
   assert.equal(lastRev().dayparts!.timeZone, "America/Chicago");
   assert.deepEqual(scheduleRules({}, new Map(), "UTC"), { maxRating: undefined, dayparts: undefined });
 });
+
+test("N-05: season-0 specials stay off a show's channel unless asked for, then air after the last season", () => {
+  const regular = show("Echo", 6);
+  const specials = [item("Echo.S00E01.Holiday.mkv"), item("Echo.S00E02.Reunion.mkv")];
+  const all = [...specials, ...regular];
+  const clock = new StationClock(all.map((i) => ({ id: i.id, title: i.name, durationMs: i.durationMs, source: { provider: "local" as const, ref: i.ref } })));
+  const lu = new Lineup("lineup-specials.json");
+  const t0 = Date.UTC(2026, 9, 11, 12, 7);
+  lu.sync(clock, autoRules(all, []), t0);
+  const ch = () => lu.allChannels().find((c) => c.meta.ruleKey === "show:echo")!;
+  const ids = () => ch().revisions[ch().revisions.length - 1]!.itemIds;
+  assert.deepEqual(ids(), regular.map((i) => i.id));
+  lu.updateSettings("show:echo", { specials: true });
+  lu.sync(clock, autoRules(all, []), t0 + MIN);
+  assert.deepEqual(ids(), [...regular, ...specials].map((i) => i.id), "specials come after the regular seasons");
+  assert.equal(lu.settingsFor("show:echo").specials, true);
+});

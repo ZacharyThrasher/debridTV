@@ -68,6 +68,8 @@ export interface ChannelSettings {
   kid?: boolean;
   restrictedHours?: RestrictedHours[];
   slots?: TimeSlot[];
+  /** Air season-0 specials too (after the regular seasons). Off by default (N-05). */
+  specials?: boolean;
 }
 
 export const RATINGS = RATING_SCALE;
@@ -82,6 +84,8 @@ export interface Rule {
   slotMs?: number;
   midBreakMs?: number;
   preferredNumber?: number;
+  /** Season-0 specials among itemIds; they stay off unless the channel's settings ask for them. */
+  specialIds?: string[];
 }
 
 export class Lineup {
@@ -138,7 +142,7 @@ export class Lineup {
    */
   updateSettings(
     ruleKey: string,
-    patch: { name?: string | null; number?: number; favorite?: boolean; logo?: ChannelLogo | null; kid?: boolean; restrictedHours?: RestrictedHours[]; slots?: TimeSlot[] },
+    patch: { name?: string | null; number?: number; favorite?: boolean; logo?: ChannelLogo | null; kid?: boolean; restrictedHours?: RestrictedHours[]; slots?: TimeSlot[]; specials?: boolean },
   ): { ok: true; swappedWith?: string } | { ok: false; error: string } {
     const s = this.file.get();
     const ch = s.channels.find((c) => c.meta.ruleKey === ruleKey);
@@ -171,6 +175,7 @@ export class Lineup {
     if (patch.kid !== undefined) cur.kid = patch.kid || undefined;
     if (patch.restrictedHours !== undefined) cur.restrictedHours = patch.restrictedHours.length ? patch.restrictedHours : undefined;
     if (patch.slots !== undefined) cur.slots = patch.slots.length ? patch.slots : undefined;
+    if (patch.specials !== undefined) cur.specials = patch.specials || undefined;
     s.settings = { ...s.settings, [ruleKey]: cur };
     if (cur.name) ch.name = cur.name;
     this.file.set(s);
@@ -226,11 +231,18 @@ export class Lineup {
    * boundary so they look like they've been on air all along; existing channels
    * change only at the end of what is airing now.
    */
-  sync(clock: StationClock, rules: Rule[], now: number, opts: { timeZone?: string } = {}): { added: number; revised: number; removed: number } {
+  sync(clock: StationClock, rulesIn: Rule[], now: number, opts: { timeZone?: string } = {}): { added: number; revised: number; removed: number } {
     const s = this.file.get();
-    const byKey = new Map(rules.map((r) => [r.key, r]));
+    let rules = rulesIn;
     const timeZone = opts.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     const audience = (r: Rule) => scheduleRules(s.settings?.[r.key] ?? {}, byKey, timeZone);
+    // Specials stay off unless asked for (N-05).
+    rules = rules.map((r) => {
+      if (!r.specialIds?.length || s.settings?.[r.key]?.specials) return r;
+      const sp = new Set(r.specialIds);
+      return { ...r, itemIds: r.itemIds.filter((id) => !sp.has(id)) };
+    });
+    const byKey = new Map(rules.map((r) => [r.key, r]));
     let added = 0;
     let revised = 0;
     const live = new Set(rules.map((r) => r.key));
@@ -312,6 +324,7 @@ export function cleanSettings(v: unknown): ChannelSettings | null {
   if (rh?.length) out.restrictedHours = rh;
   const sl = cleanSlots(x.slots);
   if (sl?.length) out.slots = sl;
+  if (x.specials === true) out.specials = true;
   return out;
 }
 
@@ -432,6 +445,10 @@ export function autoRules(items: LibItem[], custom: CustomChannel[]): Rule[] {
 
   // Mid-program breaks where the files have chapters, sized so no program spills into an extra slot.
   const byId = new Map(usable.map((i) => [i.id, i]));
+  for (const r of rules) {
+    const sp = r.itemIds.filter((id) => { const p = byId.get(id)?.parsed; return p?.kind === "episode" && p.season === 0; });
+    if (sp.length) r.specialIds = sp;
+  }
   for (const r of rules) if (r.slotMs && r.kind !== "movies") r.midBreakMs = midBreakFor(r.itemIds.map((id) => byId.get(id)!), r.slotMs);
   return rules;
 }
@@ -532,7 +549,9 @@ function sortEpisodes(list: LibItem[]): LibItem[] {
   return list.slice().sort((a, b) => {
     const pa = a.parsed, pb = b.parsed;
     if (pa.kind !== "episode" || pb.kind !== "episode") return 0;
-    return pa.showKey.localeCompare(pb.showKey) || pa.season - pb.season || pa.episode - pb.episode || a.id.localeCompare(b.id);
+    // Season 0 (specials) sorts after the regular seasons.
+    const sa = pa.season === 0 ? 1e6 : pa.season, sb = pb.season === 0 ? 1e6 : pb.season;
+    return pa.showKey.localeCompare(pb.showKey) || sa - sb || pa.episode - pb.episode || a.id.localeCompare(b.id);
   });
 }
 
