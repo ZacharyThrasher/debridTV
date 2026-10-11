@@ -167,15 +167,6 @@ body.guide-open .banner, body.guide-open .osd-num, body.panel-open .osd-num { di
   box-shadow: 0 0 calc(var(--u)*2) hsla(var(--h), 90%, 60%, .45);
 }
 .card-sub { font-size: calc(var(--u)*1.25); color: rgba(255,255,255,.82); margin-top: calc(var(--u)*.4); }
-.card-next {
-  margin: calc(var(--u)*2.2) auto 0; display: inline-flex; align-items: center; gap: calc(var(--u)*1.1);
-  padding: calc(var(--u)*.9) calc(var(--u)*1.4); border-radius: calc(var(--u)*.8);
-  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14); backdrop-filter: blur(6px);
-  text-align: left;
-}
-.card-next .label { font-family: var(--display); font-weight: 700; letter-spacing: .2em; text-transform: uppercase; font-size: calc(var(--u)*.85); color: hsl(var(--h) 90% 75%); }
-.card-next .what { font-family: var(--display); font-weight: 700; font-size: calc(var(--u)*1.7); line-height: 1.05; }
-.card-next .when { white-space: nowrap; font-family: var(--mono); font-size: calc(var(--u)*2.1); color: #fff; }
 .card-countdown { margin-top: calc(var(--u)*1.4); font-family: var(--mono); font-size: calc(var(--u)*1.5); color: rgba(255,255,255,.7); }
 .card-bars { position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--u)*.6); display: grid; grid-template-columns: repeat(7, 1fr); }
 .card-bars i:nth-child(1) { background: #c0c0c0; } .card-bars i:nth-child(2) { background: #c0c000; }
