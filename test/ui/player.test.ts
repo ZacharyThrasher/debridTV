@@ -203,36 +203,35 @@ describe("player", () => {
 
   it("a locked channel asks for no link and opens no media until unlocked (N-06b)", async (t) => {
     if (skip) return t.skip(skip);
-    const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
-    await ctx.addInitScript(`localStorage.setItem("debridtv.prefs", ${JSON.stringify(JSON.stringify({ welcomed: true, startup: `ch:${direct!.id}` }))})`);
-    // Until the server marks channels, lock the test channel in the responses.
-    const lockIn = async (route: any) => {
-      const resp = await route.fetch();
-      const o = await resp.json();
-      for (const c of o.channels ?? []) if (c.id === direct!.id) Object.assign(c, { locked: true, unlocked: false });
-      if (o.channel?.id === direct!.id || new URL(route.request().url()).searchParams.get("channel") === direct!.id) Object.assign(o, { locked: true, unlocked: false });
-      await route.fulfill({ response: resp, json: o });
-    };
-    await ctx.route("**/api/bootstrap", lockIn);
-    await ctx.route("**/api/now?*", lockIn);
-    const page = await ctx.newPage();
-    const costly: string[] = [];
-    page.on("request", (r: any) => {
-      const u = new URL(r.url()).pathname;
-      if (u.startsWith("/media/") || u === "/api/prefetch") costly.push(u);
-    });
-    await page.goto(BASE + "/");
-    await sleep(3000);
-    assert.deepEqual(costly, [], "no link request and no media while locked");
-    assert.equal(await page.evaluate(() => document.getElementById("video")!.getAttribute("src")), null);
-    assert.ok(await page.locator("#card").isVisible(), "the locked card shows");
-    // Unlocking is global: the server stops marking the channel, and the event names none.
-    await ctx.unroute("**/api/bootstrap");
-    await ctx.unroute("**/api/now?*");
-    await page.evaluate(() => dispatchEvent(new CustomEvent("debridtv:unlocked", { detail: { channelId: null } })));
-    await playing(page);
-    assert.ok(costly.some((u) => u.startsWith("/media/")), "plays once unlocked");
-    await ctx.close();
+    // The real server's lock: set a PIN, lock the test channel.
+    const pinSet = await fetch(BASE + "/api/lock/pin", { method: "POST", headers: { "content-type": "application/json", origin: BASE }, body: JSON.stringify({ pin: "2468" }) });
+    if (!pinSet.ok) return t.skip("this server has no parental lock");
+    try {
+      const locked = await post(`/api/channels/${direct!.id}/settings`, { locked: true });
+      assert.ok(locked.ok !== false, `locked the channel: ${JSON.stringify(locked)}`);
+      await post("/api/lock/lock", {}); // setting the PIN leaves it entered; lock it again
+      const now = await get(`/api/now?channel=${direct!.id}`);
+      assert.equal(now.airing?.itemId ?? null, null, "the server redacts the airing");
+      const { page, ctx } = await open();
+      const costly: string[] = [];
+      page.on("request", (r: any) => {
+        const u = new URL(r.url()).pathname;
+        if (u.startsWith("/media/") || u === "/api/prefetch" || u === "/api/item") costly.push(u);
+      });
+      await sleep(3000);
+      assert.deepEqual(costly, [], "no link, item or media request while locked");
+      assert.equal(await page.evaluate(() => document.getElementById("video")!.getAttribute("src")), null);
+      assert.ok(await page.locator("#card").isVisible(), "the locked card shows");
+      // Unlocking is global: the server unlocks, the PIN entry fires the event with no channel.
+      const un = await post("/api/lock/unlock", { pin: "2468" });
+      assert.equal(un.ok, true);
+      await page.evaluate(() => dispatchEvent(new CustomEvent("debridtv:unlocked", { detail: { channelId: null } })));
+      await playing(page);
+      assert.ok(costly.some((u) => u.startsWith("/media/")), "plays once unlocked");
+      await ctx.close();
+    } finally {
+      await post("/api/lock/pin", { old: "2468", pin: null });
+    }
   });
 
   it("signs off after the idle limit, stops streaming, and comes back live on a key (N-17b)", async (t) => {

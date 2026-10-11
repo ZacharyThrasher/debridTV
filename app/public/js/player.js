@@ -448,11 +448,16 @@ addEventListener("pagehide", () => flushWatch(true));
 
 const unlockedHere = new Set();
 
-/** Locked and not unlocked in this session. Reads the channel and /api/now flags. */
+/**
+ * Locked unless something says it was unlocked. Any source can lock (the channel,
+ * /api/now, the airing); any source can unlock (the server's flag, or the PIN entry's
+ * event in this page). Erring towards "unlocked" is safe: the server still answers a
+ * locked item's link or media request with a final 403, which shows the locked card.
+ */
 function isLocked(ch, info) {
-  const locked = info?.channel?.locked ?? info?.locked ?? ch.locked;
-  const unlocked = info?.channel?.unlocked ?? info?.unlocked ?? ch.unlocked;
-  return !!locked && !unlocked && !unlockedHere.has(ch.id);
+  const locked = !!(info?.channel?.locked || info?.locked || info?.airing?.locked || ch.locked);
+  const unlocked = !!(info?.channel?.unlocked || info?.unlocked || ch.unlocked || unlockedHere.has(ch.id));
+  return locked && !unlocked;
 }
 
 function showLocked(ch, info) {
