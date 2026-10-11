@@ -1,6 +1,6 @@
 # Handoff: workstream C, library, accounts and server (2026-10-11, second session)
 
-Branch: `claude/project-thread-446sg8` (contains y7lgyq and a merge of `claude/debridtv-rnd-9768mu` at 2110fe4, so shared fast-forwards onto it).
+Branch (third session): `claude/project-thread-rfoift`, on top of `claude/project-thread-k2fnes` 4dcd97d. Earlier: `claude/project-thread-446sg8` (contains y7lgyq and a merge of `claude/debridtv-rnd-9768mu` at 2110fe4, so shared fast-forwards onto it).
 Tests: `npm test` = 183 green (`test/server.test.ts` end-to-end vs the mock, `test/library.test.ts`, probe tests). `npm run typecheck` clean.
 Try it: `npm run dev:mock` → http://127.0.0.1:7338 with every file state (keys printed; type `expire`/`renew` to flip premium).
 
@@ -52,14 +52,18 @@ Try it: `npm run dev:mock` → http://127.0.0.1:7338 with every file state (keys
   - Redaction: on a locked, not-unlocked channel, /api/guide and /api/now airings become `{start, end, itemId: null, locked: true, title: "Locked", rating: null, segments (times only)}`; /api/now adds top-level `locked: true`, `fileOffsetMs: null`, no `segment.fileFrom`. Channel name and number stay. `/api/item` → 403 for a locked item.
   - Panel: Privacy tab "Parental PIN" (set, unlock, lock now, change, remove); Channels tab gets a lock button per channel and a PIN row while locked. Unlocking from the panel fires `debridtv:unlocked` with `{channelId: null}` (all channels) for A's player.
   - Tests: `test/pinlock.test.ts`.
+- **Local artwork (N-01c)**: `localArt()` in `app/library.ts`, found during the local folder walk with Kodi names: `<name>-poster/-fanart/-thumb/-clearlogo` beside the file; `poster|folder|cover`, `fanart|backdrop|landscape`, `clearlogo|logo` in a movie's own folder (only if it's the only video there); for episodes, `seasonNN-poster`, then the show folder's pictures up to two levels up, never the chosen folder itself. jpg/png/webp, ≤ 8 MiB. Stored as `LibItem.art` (paths, server only). Airings and Library rows carry `art: {poster?, fanart?, thumb?, logo?}` as `/api/art/:id/:kind` URLs; show channels carry `channel.art` (logo/poster from their episodes). `/api/art` refuses locked items. No online artwork (gate). Tests: `test/art.test.ts`.
+- **Export channels only (N-26a)**: `/api/export?only=lineup` → `debridtv-lineup.json` with `lineup` alone; imports like the full file. Privacy tab button.
+- **Runbook step 6**: real PGS/VobSub burn-in check on Zachary's PC (no provider traffic).
 
 ## Open, in priority order
 
 1. **RD rerun + ETag answers**: waiting on Zachary's run. When the report arrives: record in LOG.md (D owns), and if ETags are stable across links and differ across versions, let a changed ETag reset the running time (today it only counts).
-2. **Not started**: edge-cache fill from probe reads; a real PGS file check for burn-in.
+2. **Not started**: edge-cache fill from probe reads (ADR-0003 says fill only from bytes a viewer streamed, so leave it); a real PGS file check (runbook step 6, Zachary's PC). Local trailers channel (N-23c): trailer files are parsed as `other/extra` today and never timed; a "Coming Attractions" channel would need the scanner to time `-trailer` files.
 3. **Rating changes apply at once**, not at the end of the current program (the clock reads ratings directly). Rarely matters; if it does, bake ratings into the revision at sync.
 4. **Online metadata** (TMDB/OMDb) stays unbuilt until Zachary says yes (new outbound traffic).
-5. Library tests share one `library.json` per test file; filter by name in new tests.
+5. A channel whose rule vanished (e.g. a mix drops under 8 shorts) stays until the next sync; an import or any rebuild then removes it. Tests that import mid-file can drop a channel later tests expect.
+6. Library tests share one `library.json` per test file; filter by name in new tests.
 
 ## Gotchas
 

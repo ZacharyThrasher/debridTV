@@ -1064,7 +1064,13 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     pin.lock();
     return json(res, 200, { ok: true, ...pin.status() });
   }
-  if (p === "/api/export") return download(res, "debridtv-settings.json", settingsExport());
+  if (p === "/api/export") {
+    // N-26a: everything (choices, ratings, folders) or the channel lineup alone.
+    const all = settingsExport();
+    if (url.searchParams.get("only") !== "lineup") return download(res, "debridtv-settings.json", all);
+    return download(res, "debridtv-lineup.json", { exportedAt: all.exportedAt, app: all.app, version: all.version,
+      note: "Channel lineup only: numbers, names, custom channels and per-channel choices.", lineup: all.lineup });
+  }
   if (p === "/api/backups" && m === "GET") {
     const keep = config.get().backupKeep ?? 14;
     return json(res, 200, { keep, folder: backupDir(), backups: listBackups(backupDir()) });

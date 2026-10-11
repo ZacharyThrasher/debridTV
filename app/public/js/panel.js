@@ -629,6 +629,7 @@ async function privacy() {
     <p class="lead">Everything lives in one folder on this PC. Exports never include your API keys.</p>
     <div class="row-actions">
       <a class="btn" href="/api/export" download>Export settings</a>
+      <a class="btn" href="/api/export?only=lineup" download title="Numbers, names, custom channels and per-channel choices; no ratings or folders">Export channels only</a>
       <button class="btn" data-import-settings>Import settings…</button>
       <input type="file" id="import-file" accept="application/json,.json" hidden>
       <a class="btn" href="/api/history/export" download>Export history</a>
