@@ -252,7 +252,7 @@ function render() {
             <button class="btn" data-export>Download .json</button>
             <button class="btn" data-copy>Copy</button>
             <button class="btn" data-import>Import file…</button>
-            <button class="btn" data-paste aria-expanded="${pasting}">Paste…</button>
+            <button class="btn" data-paste aria-expanded="${String(pasting)}">Paste…</button>
           </div>
           ${pasting ? html`<div class="field"><label for="thm-paste">Paste a theme</label>
             <textarea id="thm-paste" class="input thm-paste" rows="5" spellcheck="false" placeholder='{"format":"debridtv-theme", …}'></textarea>

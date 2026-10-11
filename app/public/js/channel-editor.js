@@ -92,7 +92,7 @@ function render() {
       <div class="ced-title"><div class="k">Edit channel</div><div class="t">${draft.name || "Untitled"}</div></div>
       <button class="icon-btn" data-close aria-label="Close">✕</button>
     </header>
-    <nav class="tabs" role="tablist">${Object.entries(tabs).map(([k, v]) => html`<button role="tab" data-tab="${k}" aria-selected="${k === tab}">${v}</button>`)}</nav>
+    <nav class="tabs" role="tablist">${Object.entries(tabs).map(([k, v]) => html`<button role="tab" data-tab="${k}" aria-selected="${String(k === tab)}">${v}</button>`)}</nav>
     <div class="ced-body">${raw(({ identity, mix, schedule, audience })[tab]())}</div>
     <footer class="ced-foot">
       ${live ? "" : html`<span class="muted">Preview only: this build can't save channel settings yet.</span>`}
@@ -121,13 +121,13 @@ function identity() {
         <input id="ced-num" class="input" data-k="number" type="number" min="1" max="999" value="${draft.number}">
         ${taken ? html`<span class="ced-warn">${taken.name} is on ${draft.number}. Saving swaps them.</span>` : ""}</div>
       <div class="opt" style="border:0;align-self:end"><div><div class="ol">Favorite</div><div class="od">Listed first in the guide, with a star.</div></div>
-        <label class="switch"><input type="checkbox" data-k="favorite" ${draft.favorite ? "checked" : ""}><i></i></label></div>
+        <label class="switch"><input type="checkbox" data-k="favorite" aria-label="Favorite" ${draft.favorite ? "checked" : ""}><i></i></label></div>
     </div>
     <h4>Logo</h4>
     <div class="seg" role="radiogroup" aria-label="Logo kind">
-      <button role="radio" data-logo-kind="badge" aria-checked="${l.kind !== "text"}">Number badge</button>
-      <button role="radio" data-logo-kind="text" aria-checked="${l.kind === "text"}">Wordmark</button>
-      <button role="radio" data-logo-kind="image" aria-checked="${l.kind === "image"}">Image</button>
+      <button role="radio" data-logo-kind="badge" aria-checked="${String(l.kind !== "text")}">Number badge</button>
+      <button role="radio" data-logo-kind="text" aria-checked="${String(l.kind === "text")}">Wordmark</button>
+      <button role="radio" data-logo-kind="image" aria-checked="${String(l.kind === "image")}">Image</button>
     </div>
     ${l.kind === "image" ? html`<div class="field"><label for="ced-img">Logo image (PNG, JPEG, WebP or SVG, up to 200 KB). It stays on this PC.</label>
       <input id="ced-img" class="input" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" data-logo-file></div>` : ""}
@@ -135,7 +135,7 @@ function identity() {
       <div class="ced-row">
         <div class="field"><label for="ced-lt">Wordmark (up to 6 letters)</label><input id="ced-lt" class="input" data-logo="text" maxlength="6" value="${l.text ?? ""}"></div>
         <div class="field"><label>Style</label><div class="seg">${Object.entries(LOGO_STYLES).map(([k, v]) =>
-          html`<button data-logo-style="${k}" aria-pressed="${(l.style || "block") === k}">${v}</button>`)}</div></div>
+          html`<button data-logo-style="${k}" aria-pressed="${String((l.style || "block") === k)}">${v}</button>`)}</div></div>
       </div>` : ""}
     ${l.kind === "image" ? "" : html`<div class="field"><label for="ced-hue">Color</label><input id="ced-hue" class="hue" type="range" min="0" max="359" data-logo="hue" value="${l.hue ?? ch.hue}"></div>`}
     <h4>Preview</h4>
@@ -150,7 +150,7 @@ function identity() {
 const WEIGHT_WORDS = [[1, "Never"], [25, "Rarely"], [45, "Less"], [60, "Normal"], [85, "More"], [101, "Lots"]];
 const weightWord = (w) => WEIGHT_WORDS.find(([max]) => w < max)?.[1] ?? "Lots";
 const weightOf = (k) => draft.weights?.[k] ?? 50;
-const WATCHED = { all: ["Everything", "Watched or not, in station order."], unwatched: ["Skip watched", "What you've seen drops out until you've seen it all."], resume: ["Unseen first", "What you haven't seen airs first, then the rest."] };
+const WATCHED = { all: ["Everything", "Watched or not, in station order."], unwatched: ["Skip watched", "Only what you haven't seen, until you've seen it all."], resume: ["Pick up", "Each show carries on after the last episode you watched."] };
 const genreOut = (g) => g.genres?.some((x) => draft.exclude.genres.includes(x));
 
 /** The share of picks each show gets from its weight; shows kept off get none. */
@@ -167,9 +167,9 @@ function mix() {
   const many = groups.length > 1;
   const onAir = groups.filter((g, i) => sh[i] > 0).length;
   const seg = (k, opts) => html`<div class="seg" role="radiogroup">${Object.entries(opts).map(([v, label]) =>
-    html`<button role="radio" data-set="${k}:${v}" aria-checked="${(draft[k] ?? Object.keys(opts)[0]) === v}">${label}</button>`)}</div>`;
+    html`<button role="radio" data-set="${k}:${v}" aria-checked="${String((draft[k] ?? Object.keys(opts)[0]) === v)}">${label}</button>`)}</div>`;
   const sw = (k, label, desc) => html`<div class="opt"><div><div class="ol">${label}</div><div class="od">${desc}</div></div>
-    <label class="switch"><input type="checkbox" data-k="${k}" ${draft[k] ? "checked" : ""}><i></i></label></div>`;
+    <label class="switch"><input type="checkbox" data-k="${k}" aria-label="${label}" ${draft[k] ? "checked" : ""}><i></i></label></div>`;
   return html`
     <p class="lead">What this channel plays, and how often. Changes start when the program on now ends.</p>
     ${!info?.groups ? html`<div class="muted">This build can't read the channel's lineup yet.</div>` : !groups.length ? html`<div class="muted">Nothing in this channel's lineup yet.</div>` : ""}
@@ -188,7 +188,7 @@ function mix() {
       </div>`;
     })}</div>
     ${genres.length ? html`<h4>Keep genres off</h4>
-      <div class="chips">${genres.map((x) => html`<button class="chip" data-genre="${x}" aria-pressed="${draft.exclude.genres.includes(x)}">${x}</button>`)}</div>` : ""}
+      <div class="chips">${genres.map((x) => html`<button class="chip" data-genre="${x}" aria-pressed="${String(draft.exclude.genres.includes(x))}">${x}</button>`)}</div>` : ""}
     <h4>Order</h4>
     ${many ? html`<div class="opt"><div><div class="ol">Balance</div><div class="od">${draft.balance === "time" ? "Each show gets its share of the hours, so long shows air fewer episodes." : "Each show gets its share of episodes, however long they run."}</div></div>
       ${seg("balance", { episodes: "Episodes", time: "Time" })}</div>` : ""}
@@ -209,10 +209,10 @@ function schedule() {
     <p class="lead">Pin what plays at set times, like Saturday-morning cartoons. Outside its slots the channel plays its usual lineup.${info?.timeZone ? ` Times are in ${info.timeZone}.` : ""} Changes start when the program on now ends.</p>
     ${info?.specialsAvailable > 0 ? html`<div class="opt"><div><div class="ol">Include specials</div>
       <div class="od">${info.specialsAvailable} season 0 episode${info.specialsAvailable === 1 ? "" : "s"}. They air after the last season.</div></div>
-      <label class="switch"><input type="checkbox" data-k="specials" ${draft.specials ? "checked" : ""}><i></i></label></div>` : ""}
+      <label class="switch"><input type="checkbox" data-k="specials" aria-label="Include specials" ${draft.specials ? "checked" : ""}><i></i></label></div>` : ""}
     ${raw(weekStrip(slots))}
     <div class="list ced-slots">${slots.length ? slots.map((s, i) => html`<div class="slot">
-      <div class="days">${DAYS.map((d, di) => html`<button data-slot-day="${i}:${di + 1}" aria-pressed="${s.days.includes(di + 1)}">${d.slice(0, 2)}</button>`)}</div>
+      <div class="days">${DAYS.map((d, di) => html`<button data-slot-day="${i}:${di + 1}" aria-pressed="${String(s.days.includes(di + 1))}">${d.slice(0, 2)}</button>`)}</div>
       <input class="input" type="time" data-slot="${i}:from" value="${s.from}" aria-label="From">
       <span class="muted">to</span>
       <input class="input" type="time" data-slot="${i}:to" value="${s.to}" aria-label="To">
@@ -233,7 +233,7 @@ function audience() {
     </div>` : "";
   return html`${cover}
     <div class="opt"><div><div class="ol">Kid channel</div><div class="od">Only plays programs rated G, PG, TV-Y, TV-Y7 or TV-G. Unrated programs are left out.</div></div>
-      <label class="switch"><input type="checkbox" data-k="kid" data-first ${draft.kid ? "checked" : ""}><i></i></label></div>
+      <label class="switch"><input type="checkbox" data-k="kid" aria-label="Kid channel" data-first ${draft.kid ? "checked" : ""}><i></i></label></div>
     <h4>Daytime limit</h4>
     <p class="lead">Keep stronger programs for late at night. Between these times the channel skips anything rated above the limit; the rest of the night, anything in its lineup can play.</p>
     <div class="list">${rh.map((r, i) => html`<div class="slot">
@@ -486,7 +486,7 @@ function renderEx() {
     <div class="ced-body">
       <p class="lead">Shows and genres picked here never air on any channel. They stay in your library. A channel left with nothing to play goes off the guide. Changes start when the programs on now end.</p>
       <h4>Genres</h4>
-      ${ex.options.genres.length ? html`<div class="chips">${ex.options.genres.map((g) => html`<button class="chip" data-ex-genre="${g.name}" aria-pressed="${ex.genres.has(g.name)}">${g.name}</button>`)}</div>`
+      ${ex.options.genres.length ? html`<div class="chips">${ex.options.genres.map((g) => html`<button class="chip" data-ex-genre="${g.name}" aria-pressed="${String(ex.genres.has(g.name))}">${g.name}</button>`)}</div>`
         : html`<div class="muted">Your files don't name any genres yet.</div>`}
       <h4>Shows</h4>
       ${ex.options.shows.length > 8 ? html`<input class="input ex-q" type="search" placeholder="Find a show" value="${ex.q}" data-ex-q data-first aria-label="Find a show">` : ""}

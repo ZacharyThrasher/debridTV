@@ -388,7 +388,7 @@ body.guide-open { background: var(--bg); }
 .brand { display: inline-flex; align-items: center; gap: .5em; font-family: var(--display); font-weight: 800; letter-spacing: .14em; text-transform: uppercase; font-size: calc(var(--u)*1.2); }
 .brand-mark { width: 1.2em; height: .85em; border-radius: .22em; background: linear-gradient(135deg, var(--amber), var(--magenta)); box-shadow: 0 0 .8em rgba(255,95,162,.35); }
 .guide-date { color: var(--dim); font-weight: 600; font-size: calc(var(--u)*.95); }
-.guide-hints { display: flex; gap: calc(var(--u)*1.2); justify-content: flex-end; color: var(--faint); font-size: calc(var(--u)*.8); }
+.guide-hints { display: flex; gap: calc(var(--u)*1.2); justify-content: flex-end; color: var(--dim); font-size: calc(var(--u)*.8); }
 .guide-clock { font-family: var(--mono); font-size: calc(var(--u)*2); color: var(--ink); line-height: 1; }
 
 .grid { touch-action: none; position: relative; overflow: hidden; background: var(--panel-solid); min-height: 0; --label: calc(var(--u)*15); --row: calc(var(--u)*3.6); }
@@ -409,7 +409,7 @@ body.guide-open { background: var(--bg); }
   background: linear-gradient(180deg, hsl(var(--h) 95% 72%), hsl(var(--h) 85% 55%));
 }
 .row-label .nm { font-family: var(--display); font-weight: 700; font-size: calc(var(--u)*1.12); line-height: 1.05; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row-label .tg { display: block; font-family: var(--body); font-weight: 500; font-size: calc(var(--u)*.72); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-label .tg { display: block; font-family: var(--body); font-weight: 500; font-size: calc(var(--u)*.72); color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row.current .row-label { box-shadow: inset 4px 0 0 var(--amber); }
 .row-track { position: relative; flex: 1; overflow: hidden; }
 .cell {
@@ -734,7 +734,7 @@ body.guide-open { background: var(--bg); }
 .tp-banner > div { flex: 1; min-width: 0; }
 .tp-banner b { font-family: var(--display); font-weight: 800; font-size: 1.25em; display: block; line-height: 1.05; }
 .tp-banner small { color: var(--dim); }
-.tp-banner small i { font-style: normal; font-weight: 700; font-size: .85em; padding: 0 .4em; border-radius: .3em; margin-left: .4em; color: #000; background: var(--ok); }
+.tp-banner small i { font-style: normal; font-weight: 700; font-size: .85em; padding: 0 .4em; border-radius: .3em; margin-left: .4em; color: var(--panel-solid); background: var(--ok); }
 .tp-num { font-family: var(--mono); font-size: 1.8em; padding: 0 .25em; border-radius: .2em; color: #000; background: linear-gradient(180deg, var(--amber), color-mix(in srgb, var(--amber) 70%, var(--magenta))); }
 .tp-bar { height: .3em; margin-top: .35em; border-radius: 99px; background: var(--line); overflow: hidden; }
 .tp-bar i { display: block; width: 58%; height: 100%; background: linear-gradient(90deg, var(--cyan), var(--amber)); }
@@ -755,7 +755,8 @@ body.guide-open { background: var(--bg); }
 @media (max-width: 760px) {
   .thm-body { grid-template-columns: 1fr; }
   .thm-slots { grid-template-columns: 1fr; }
-  .thm-side { position: static; order: -1; }
+  .thm-side { position: static; }
+  .thm-io .muted { display: none; } /* no drag and drop on phones */
 }
 
 
