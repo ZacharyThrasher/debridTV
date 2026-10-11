@@ -48,3 +48,11 @@ printf ';FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=2000\ntitle=One\n
 ffmpeg -y -i fixture-h264-aac-faststart.mp4 -i ch.txt -map 0 -map_metadata 1 -map_chapters 1 -c copy -movflags +faststart fixture-chapters.mp4
 ffmpeg -y -i fixture-h264-aac-faststart.mp4 -i ch.txt -map 0 -map_metadata 1 -map_chapters 1 -c copy -movflags +disable_chpl fixture-chapters-qt.mp4
 ```
+
+`fixture-hdr10-51.mkv` / `.mp4` (HEVC 10-bit tagged PQ/BT.2020, 5.1 AAC, 1 s):
+
+```sh
+ffmpeg -y $V $A -t 1 -c:v libx265 -preset ultrafast -crf 40 -x265-params log-level=none -pix_fmt yuv420p10le \
+  -color_primaries bt2020 -color_trc smpte2084 -colorspace bt2020nc -c:a aac -ac 6 -b:a 64k fixture-hdr10-51.mkv
+ffmpeg -y -i fixture-hdr10-51.mkv -c copy -tag:v hvc1 -movflags +faststart fixture-hdr10-51.mp4
+```

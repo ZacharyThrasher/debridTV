@@ -24,7 +24,7 @@ import { JsonFile, dataDir } from "./store.ts";
 import { validTimeZone } from "../src/clock/dayparts.ts";
 import { parseVttBlock } from "../src/library/vtt.ts";
 import { RATINGS, normalizeRating, ratingRank } from "../src/clock/ratings.ts";
-import { Library, displayTitle, effectiveRating, fileStatus, plainError, PROVIDER_NAMES, STATUS_ORDER, type Config, type LibItem, type ProviderBases, type RemoteProvider } from "./library.ts";
+import { Library, displayTitle, effectiveRating, mediaBadges, fileStatus, plainError, PROVIDER_NAMES, STATUS_ORDER, type Config, type LibItem, type ProviderBases, type RemoteProvider } from "./library.ts";
 import { Lineup, autoRules, cleanLogo, cleanRestricted, cleanSlots, type StationChannel, type CustomChannel } from "./lineup.ts";
 import { Meters } from "./meters.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
@@ -175,7 +175,7 @@ function airingView(a: Airing) {
     durationMs: it?.durationMs ?? null,
     ...availabilityView(it),
     provider: it?.provider,
-    codecs: it ? { container: it.container, video: it.video, audio: it.audio } : undefined,
+    codecs: it ? { container: it.container, video: it.video, audio: it.audio, ...mediaBadges(it) } : undefined,
     watched: isWatched(a.itemId, it?.durationMs),
     segments: a.segments.map((s) => (s.kind === "program" ? { kind: s.kind, start: s.startMs, end: s.endMs, fileFrom: s.fileFromMs } : { kind: s.kind, start: s.startMs, end: s.endMs, reason: s.reason })),
   };

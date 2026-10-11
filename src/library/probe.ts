@@ -21,6 +21,12 @@ export interface Track {
   name?: string;
   default?: boolean;
   forced?: boolean;
+  /** Video: picture height in pixels. */
+  height?: number;
+  /** Video: high dynamic range as signalled in the header ("dv" = Dolby Vision). HDR10+ lives in frames, not headers. */
+  hdr?: "dv" | "hdr10" | "hlg";
+  /** Audio: channel count. */
+  channels?: number;
 }
 export type RangeReader = (start: number, length: number) => Promise<Uint8Array>; // may return fewer bytes
 
@@ -41,6 +47,12 @@ function finish(durationMs: number | null, video: string | undefined, audio: str
 function addTrack(list: Track[], kind: Track["kind"], t: Omit<Track, "kind" | "index">): void {
   const index = list.filter((x) => x.kind === kind).length;
   list.push({ kind, index, ...t });
+}
+
+/** Height and HDR kind from header fields: transfer 16 = PQ (HDR10), 18 = HLG; Dolby Vision config wins. */
+function picture(height: number | undefined, transfer: number | undefined, dv: boolean | undefined): Pick<Track, "height" | "hdr"> {
+  const hdr = dv ? "dv" : transfer === 16 ? "hdr10" : transfer === 18 ? "hlg" : undefined;
+  return { ...(height ? { height } : {}), ...(hdr ? { hdr } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +76,16 @@ const ID_CHAPTERS = 0x1043a770;
 const ID_EDITION = 0x45b9;
 const ID_CHAPTER_ATOM = 0xb6;
 const ID_CHAPTER_START = 0x91;
+const ID_VIDEO = 0xe0;
+const ID_AUDIO = 0xe1;
+const ID_PIXEL_HEIGHT = 0xba;
+const ID_COLOUR = 0x55b0;
+const ID_TRANSFER = 0x55ba;
+const ID_CHANNELS = 0x9f;
+const ID_BLOCK_ADDITION_MAPPING = 0x41e4;
+const ID_BLOCK_ADD_ID_TYPE = 0x41e7;
+const DVCC = 0x64766343; // "dvcC"
+const DVVC = 0x64767643; // "dvvC"
 const ID_SEEK_HEAD = 0x114d9b74;
 const ID_SEEK = 0x4dbb;
 const ID_SEEK_ID = 0x53ab;
@@ -145,7 +167,7 @@ interface MkvState {
   /** Chapters' position per the SeekHead, relative to segStart. */
   chaptersAt?: number;
   seek?: { id?: number; pos?: number };
-  cur?: { type?: number; codec?: string; lang?: string; bcp47?: string; name?: string; def?: boolean; forced?: boolean };
+  cur?: { height?: number; transfer?: number; dv?: boolean; channels?: number; type?: number; codec?: string; lang?: string; bcp47?: string; name?: string; def?: boolean; forced?: boolean };
   done: boolean;
 }
 
@@ -208,7 +230,9 @@ function mkvWalk(b: Uint8Array, start: number, end: number, st: MkvState): void 
           else if (cur.type === 2) st.audio.push(name);
           // Matroska's defaults: language "eng" when absent, FlagDefault 1, FlagForced 0.
           if (kind) addTrack(st.tracks, kind, { codec: name, lang: cur.bcp47 ?? cur.lang ?? "eng", ...(cur.name ? { name: cur.name } : {}),
-            default: cur.def ?? true, forced: cur.forced ?? false });
+            default: cur.def ?? true, forced: cur.forced ?? false,
+            ...(kind === "video" ? picture(cur.height, cur.transfer, cur.dv) : {}),
+            ...(kind === "audio" && cur.channels ? { channels: cur.channels } : {}) });
         }
         break;
       }
@@ -243,6 +267,24 @@ function mkvWalk(b: Uint8Array, start: number, end: number, st: MkvState): void 
         if (dataEnd <= b.length && (szr.size === 4 || szr.size === 8)) {
           const dv = new DataView(b.buffer, b.byteOffset + dataStart, szr.size);
           st.duration = szr.size === 4 ? dv.getFloat32(0) : dv.getFloat64(0);
+        }
+        break;
+      case ID_VIDEO:
+      case ID_AUDIO:
+      case ID_COLOUR:
+      case ID_BLOCK_ADDITION_MAPPING:
+        if (st.cur) mkvWalk(b, dataStart, clipped, st);
+        break;
+      case ID_PIXEL_HEIGHT:
+      case ID_TRANSFER:
+      case ID_CHANNELS:
+      case ID_BLOCK_ADD_ID_TYPE:
+        if (st.cur && dataEnd <= b.length && szr.size > 0 && szr.size <= 8) {
+          const v = readUint(b, dataStart, dataEnd);
+          if (idr.id === ID_PIXEL_HEIGHT) st.cur.height = v;
+          else if (idr.id === ID_TRANSFER) st.cur.transfer = v;
+          else if (idr.id === ID_CHANNELS) st.cur.channels = v;
+          else if (v === DVCC || v === DVVC) st.cur.dv = true;
         }
         break;
       case ID_TRACK_TYPE:
@@ -366,6 +408,7 @@ interface Trak {
   stts: Array<[number, number]>;
   /** Track ids this track names as its chapter track (tref/chap). */
   chap: number[];
+  extra: Pick<Track, "height" | "hdr" | "channels">;
 }
 
 function parseTrak(b: Uint8Array, box: Box, end: number, st: Mp4State): void {
@@ -375,6 +418,10 @@ function parseTrak(b: Uint8Array, box: Box, end: number, st: Mp4State): void {
   let lang = "und";
   let id = 0;
   let timescale = 0;
+  let sampleHeight = 0;
+  let sampleChannels = 0;
+  let transfer: number | undefined;
+  let dv = false;
   const stts: Array<[number, number]> = [];
   const chap: number[] = [];
   const walk = (start: number, stop: number, path: string[]): void => {
@@ -404,11 +451,25 @@ function parseTrak(b: Uint8Array, box: Box, end: number, st: Mp4State): void {
       } else if (c.type === "stsd" && bodyStart + 16 <= cend && u32(b, bodyStart + 4) > 0) {
         const f = fourcc(b, bodyStart + 12);
         codec = MP4_CODECS[f] ?? f;
+        // First sample entry: visual entries carry height and child boxes (colr, dvcC) after 78 bytes; audio has the channel count.
+        const entry = bodyStart + 8;
+        const entryEnd = Math.min(cend, entry + u32(b, entry));
+        if (entry + 36 <= entryEnd) {
+          sampleHeight = (b[entry + 34]! << 8) | b[entry + 35]!;
+          sampleChannels = (b[entry + 24]! << 8) | b[entry + 25]!;
+        }
+        if (entry + 86 <= entryEnd)
+          for (const sub of children(b, entry + 86, entryEnd)) {
+            if (sub.type === "dvcC" || sub.type === "dvvC") dv = true;
+            else if (sub.type === "colr" && sub.at + sub.header + 8 <= entryEnd && fourcc(b, sub.at + sub.header) === "nclx")
+              transfer = (b[sub.at + sub.header + 6]! << 8) | b[sub.at + sub.header + 7]!;
+          }
       }
     }
   };
   walk(box.at + box.header, trakEnd, []);
-  st.traks.push({ id, handler, codec, lang, timescale, stts, chap });
+  st.traks.push({ id, handler, codec, lang, timescale, stts, chap,
+    extra: handler === "vide" ? picture(sampleHeight || undefined, transfer, dv) : handler === "soun" && sampleChannels ? { channels: sampleChannels } : {} });
 }
 
 /** Tracks become the track list; a track another one names as its chapters becomes chapter times instead. */
@@ -419,7 +480,7 @@ function finishTraks(st: Mp4State): number[] {
     if (t.handler === "vide") st.video ??= t.codec;
     else if (t.handler === "soun") st.audio.push(t.codec);
     const kind = t.handler === "vide" ? "video" : t.handler === "soun" ? "audio" : ["sbtl", "subt", "text"].includes(t.handler) ? "subtitle" : null;
-    if (kind) addTrack(st.tracks, kind, { codec: t.codec, lang: t.lang });
+    if (kind) addTrack(st.tracks, kind, { codec: t.codec, lang: t.lang, ...t.extra });
   }
   if (st.chpl.length) return st.chpl;
   const ct = st.traks.find((t) => chapterIds.has(t.id) && t.timescale > 0);

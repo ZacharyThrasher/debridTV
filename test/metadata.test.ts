@@ -222,3 +222,16 @@ test("N-05: season-0 specials stay off a show's channel unless asked for, then a
   assert.deepEqual(ids(), [...regular, ...specials].map((i) => i.id), "specials come after the regular seasons");
   assert.equal(lu.settingsFor("show:echo").specials, true);
 });
+
+test("N-37: banner badges prefer header facts and fall back to release-name tags", async () => {
+  const { mediaBadges } = await import("../app/library.ts");
+  assert.deepEqual(mediaBadges(item("Show.S01E01.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR10.H.265.mkv")), { hdr: "dv", height: 2160, audioChannels: 6, atmos: true });
+  assert.deepEqual(mediaBadges(item("Movie.2019.1080p.BluRay.HDR10+.x265.TrueHD.7.1.mkv")), { hdr: "hdr10+", height: 1080, audioChannels: 8 });
+  assert.deepEqual(mediaBadges(item("Old.Show.S01E01.AAC2.0.mkv")), { audioChannels: 2 });
+  const probed = item("Plain.Name.S01E01.mkv", { tracks: [
+    { kind: "video", index: 0, codec: "hevc", lang: "und", height: 1080, hdr: "hlg" },
+    { kind: "audio", index: 0, codec: "aac", lang: "eng", channels: 2 },
+    { kind: "audio", index: 1, codec: "eac3", lang: "eng", channels: 6, default: true },
+  ] });
+  assert.deepEqual(mediaBadges(probed), { hdr: "hlg", height: 1080, audioChannels: 6 }, "the default audio track counts");
+});

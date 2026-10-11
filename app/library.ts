@@ -668,6 +668,26 @@ export class Library {
   }
 }
 
+/**
+ * Picture and sound facts for banner badges (N-37): from the file header when
+ * probed, else from release-name tags. HDR10+ and Atmos only show in names (their
+ * signalling lives inside frames, not headers).
+ */
+export function mediaBadges(i: LibItem): { hdr?: "dv" | "hdr10+" | "hdr10" | "hlg"; height?: number; audioChannels?: number; atmos?: boolean } {
+  const n = i.name.replace(/[._]/g, " ");
+  const v = i.tracks?.find((t) => t.kind === "video");
+  const auds = i.tracks?.filter((t) => t.kind === "audio") ?? [];
+  const a = auds.find((t) => t.default) ?? auds[0];
+  const named = /\b(dv|dovi|dolby ?vision)\b/i.test(n) ? "dv" : /\bhdr10(\+|plus)/i.test(n) ? "hdr10+" : /\bhdr(10)?\b/i.test(n) ? "hdr10" : /\bhlg\b/i.test(n) ? "hlg" : undefined;
+  const hdr = v?.hdr === "dv" || named === "dv" ? "dv" : v?.hdr === "hdr10" && named === "hdr10+" ? "hdr10+" : v?.hdr ?? named;
+  const res = /\b(2160|1080|720|576|480)p\b/i.exec(n)?.[1] ?? (/\b4k\b|\buhd\b/i.test(n) ? "2160" : undefined);
+  const height = v?.height ?? (res ? Number(res) : undefined);
+  const ch = /\b([1-7]) ([01])\b/.exec(n.replace(/(dd|ddp|aac|ac3|eac3|dts|truehd|flac|opus)(?=[1-7] [01]\b)/gi, "$1 "));
+  const audioChannels = a?.channels ?? (ch ? Number(ch[1]) + Number(ch[2]) : undefined);
+  const atmos = /\batmos\b/i.test(n) || undefined;
+  return { ...(hdr ? { hdr } : {}), ...(height ? { height } : {}), ...(audioChannels ? { audioChannels } : {}), ...(atmos ? { atmos } : {}) };
+}
+
 /** The rating the clock uses and where it came from: the viewer's pick, then the .nfo. */
 export function effectiveRating(i: LibItem, manual: ManualRatings): { rating: Rating; from: "you" | "nfo" | "demo" } | null {
   const byItem = manual.items[i.id];

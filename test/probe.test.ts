@@ -313,3 +313,15 @@ function concat(parts: Uint8Array[]): Uint8Array {
   for (const p of parts) (out.set(p, at), (at += p.length));
   return out;
 }
+
+test("N-37: picture height, HDR transfer and audio channels from the header (Matroska and MP4)", async () => {
+  for (const name of ["fixture-hdr10-51.mkv", "fixture-hdr10-51.mp4"]) {
+    const data = fx(name);
+    const r = await probe(memoryReader(data).read, data.byteLength);
+    const v = r.tracks!.find((t) => t.kind === "video")!;
+    const a = r.tracks!.find((t) => t.kind === "audio")!;
+    assert.deepEqual([v.height, v.hdr, a.channels], [90, "hdr10", 6], name);
+  }
+  const sdr = fx("fixture-h264-aac.mkv");
+  assert.equal((await probe(memoryReader(sdr).read, sdr.byteLength)).tracks!.find((t) => t.kind === "video")!.hdr, undefined);
+});

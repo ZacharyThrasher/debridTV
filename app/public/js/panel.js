@@ -225,6 +225,9 @@ body.addEventListener("click", async (e) => {
     } else if ("gotoLibrary" in b.dataset) {
       lib = { ...lib, status: b.dataset.gotoLibrary, provider: b.dataset.provider === "local" ? "local" : b.dataset.provider ?? "", q: "", limit: 50 };
       return showTab("library");
+    } else if ("themeEdit" in b.dataset) {
+      const { openThemeEditor } = await import("./theme.js");
+      return void openThemeEditor({ onSaved: () => render() });
     } else if (b.dataset.libView) {
       lib = { ...lib, view: b.dataset.libView };
       return void render();
@@ -419,10 +422,14 @@ async function meters() {
 async function look() {
   const sw = (k, label, desc) => html`<div class="opt"><div><div class="ol">${label}</div><div class="od">${desc}</div></div>
     <label class="switch"><input type="checkbox" data-pref="${k}" ${pref(k) ? "checked" : ""}><i></i></label></div>`;
-  const themes = [["midnight", "Midnight"], ["cable92", "Cable '92"], ["daylight", "Daylight"]];
+  // theme.js (B) lists built-in and custom themes and owns the editor; fall back to the built-ins.
+  const themeMod = await import("./theme.js").catch(() => null);
+  const themes = themeMod?.themeOptions?.().map((o) => [o.value, o.label]) ?? [["midnight", "Midnight"], ["cable92", "Cable '92"], ["daylight", "Daylight"]];
   return html`<h3>Look &amp; feel</h3>
     <div class="opt"><div><div class="ol">Theme</div><div class="od">Colors for the guide and menus.</div></div>
-      <select class="input" style="width:auto" data-pref-select="theme">${raw(themes.map(([k, v]) => `<option value="${k}" ${pref("theme") === k ? "selected" : ""}>${v}</option>`).join(""))}</select></div>
+      <span style="display:flex;gap:.4em;flex-wrap:wrap">
+      <select class="input" style="width:auto" data-pref-select="theme">${raw(themes.map(([k, v]) => `<option value="${esc(k)}" ${pref("theme") === k ? "selected" : ""}>${esc(v)}</option>`).join(""))}</select>
+      ${themeMod?.openThemeEditor ? html`<button class="btn" data-theme-edit>Customize…</button>` : ""}</span></div>
     ${raw(sw("crt", "CRT screen", "Scanlines and a soft vignette, like an old set."))}
     ${raw(sw("static", "Static between channels", "Snow while the next channel tunes in."))}
     ${raw(sw("sound", "Tuner sounds", "A click and a hiss when you change channel."))}
