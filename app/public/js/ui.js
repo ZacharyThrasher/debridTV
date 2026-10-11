@@ -1,8 +1,9 @@
 // On-screen display: the green channel number, the info banner, and the channel bug.
 
-import { html, raw, fmtTime, fmtDur, now, clamp, pref, onPrefsApplied } from "./util.js";
+import { html, raw, fmtTime, fmtDur, fmtClock, now, clamp, pref, onPrefsApplied } from "./util.js";
 import { logoHtml, hasLogo } from "./channel-editor.js";
 import { isLocked, isRedacted } from "./lock.js";
+import { onDemandItem } from "./ondemand.js";
 
 const hasMark = hasLogo;
 
@@ -85,7 +86,7 @@ export function setBanner(ch, info, route) {
 }
 
 export function showBanner(ms = 5200) {
-  if (!bannerState) return;
+  if (!bannerState && !od) return;
   renderBanner();
   bannerEl.hidden = false;
   document.body.classList.add("banner-open");
@@ -133,7 +134,49 @@ function ratingCard(info) {
 
 const ROUTE_LABEL = { direct: "Direct play", live: "Compatibility mode", demo: "Demo picture", card: "" };
 
+// Watching from On Demand (N-30): the player says when a pick starts and ends. The
+// banner then shows the file's own position instead of the station's, and no LIVE.
+let od = null; // { itemId, fromMs, durationMs, at }
+addEventListener("debridtv:ondemand", (e) => {
+  od = e.detail ? { ...e.detail, at: Date.now() } : null;
+  ratingEl.hidden = true;
+  if (bannerState || od) showBanner();
+});
+/** Where in the file we are: the player's own answer when it has one, else time since the start. */
+function odPosition() {
+  const p = typeof od.positionMs === "function" ? od.positionMs() : null;
+  return Number.isFinite(p) ? p : od.fromMs + (Date.now() - od.at);
+}
+
+function renderOnDemand() {
+  const it = onDemandItem() ?? {};
+  const dur = od.durationMs ?? it.durationMs ?? 0;
+  const pos = clamp(odPosition(), 0, dur || Infinity);
+  const bits = [it.label && html`<span class="ep">${it.label}</span>`, it.kind === "episode" && it.subtitle && html`<span>“${it.subtitle}”</span>`,
+    it.year && html`<span>${it.year}</span>`, it.rating && html`<span class="rating">${it.rating}</span>`, raw(formatChips(it)),
+    html`<span class="badge od">ON DEMAND</span>`].filter((x) => x && String(x));
+  const art = it.kind === "episode" ? artOf(it, "thumb", "poster") : artOf(it, "poster", "thumb");
+  const wide = !!art && art === artOf(it, "thumb");
+  bannerEl.style.setProperty("--h", 300);
+  bannerEl.innerHTML = html`
+    <div class="chan od-chan"><div class="num od-num">OD</div><div class="cname">On Demand</div></div>
+    <div class="b-main ${art ? "has-art" : ""}" data-art-box>
+      ${raw(artImg(art, `b-art ${wide ? "wide" : "tall"}`))}
+      <div class="b-text">
+      <div class="title">${it.title ?? "On Demand"}</div>
+      <div class="meta">${bits}</div>
+      ${dur ? raw(`<div class="progress od"><i style="width:${((pos / dur) * 100).toFixed(2)}%"></i></div>`) : ""}
+      </div>
+    </div>
+    <div style="display:grid;gap:calc(var(--u)*.5);justify-items:end">
+      <div class="clock">${fmtTime(now())}</div>
+      <div class="times">${dur ? `${fmtClock(pos)} / ${fmtClock(dur)}` : fmtClock(pos)}</div>
+      <div class="next"><span class="kb-only"><kbd>L</kbd> back to live</span><span class="tv-only"><kbd>Back</kbd> back to live</span></div>
+    </div>`;
+}
+
 function renderBanner() {
+  if (od) return renderOnDemand();
   const { ch, info, route } = bannerState;
   const a = info.airing;
   const seg = info.segment;

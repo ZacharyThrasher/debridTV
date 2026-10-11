@@ -9,6 +9,7 @@ import { logoHtml, hasLogo } from "./channel-editor.js";
 import { formatChips, artOf, artImg } from "./ui.js";
 import { isLocked, isRedacted } from "./lock.js";
 import { openPanel } from "./panel.js";
+import { openOnDemand } from "./ondemand.js";
 
 const wordmark = (c) => (hasLogo(c) ? raw(logoHtml(c, "sm")) : null);
 
@@ -274,6 +275,9 @@ root.querySelector(".guide-tools").addEventListener("click", (e) => {
   if (act === "settings") {
     closeGuide();
     openPanel();
+  } else if (act === "ondemand") {
+    closeGuide();
+    openOnDemand();
   } else if (act === "now") {
     leaveTools();
     guideKey({ key: "Home" });
