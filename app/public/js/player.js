@@ -271,6 +271,10 @@ async function playMedia(ch, info, my, forced = null, hold = 0) {
     clearTimeout(stallTimer);
     const route = media?.route;
     stopMedia();
+    // A home-network device that was un-paired mid-program gets a 401 the page can't
+    // see on /media; ask who we are now, and go to pairing instead of an error card.
+    if (await unpaired()) return location.replace("/pair");
+    if (my !== token) return;
     if (!info.onDemand && isLocked(ch, info)) return staticOff(), showLocked(ch, info);
     // Ask the server what happened before doing anything else. A refusal (451) or a
     // file the account can't serve (409) is final: no retry, no compatibility-mode
@@ -677,6 +681,19 @@ function endOnDemand() {
 function onDemandFailed(why) {
   toast(why);
   backToLive();
+}
+
+// ------------------------------------------------------------------ home network
+
+/** True when this browser is no longer a paired device (its pairing was revoked). */
+async function unpaired() {
+  try {
+    const r = await fetch("/api/lan/hello", { cache: "no-store" });
+    if (r.status === 401) return true;
+    return r.ok && (await r.json())?.where === "stranger";
+  } catch {
+    return false;
+  }
 }
 
 // ------------------------------------------------------------------ locked channels
