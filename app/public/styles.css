@@ -122,7 +122,18 @@ body.crt #crt {
 }
 body.banner-open .bug, body.guide-open .bug { opacity: 0; }
 body.guide-open .banner, body.guide-open .osd-num, body.panel-open .osd-num { display: none; }
-.bug { transition: opacity .3s ease; }
+.bug { transition: opacity .3s ease; opacity: var(--bug-o, 1); }
+.bug[data-pos="bl"] { right: auto; left: calc(var(--u)*2); }
+.bug[data-pos="tr"] { bottom: auto; top: calc(var(--u)*2); }
+.bug[data-pos="tl"] { bottom: auto; top: calc(var(--u)*2); right: auto; left: calc(var(--u)*2); }
+.rating-card {
+  position: absolute; left: calc(var(--u)*2.4); top: calc(var(--u)*2.4); display: grid; justify-items: center; padding: .4em .8em .5em;
+  border: .18em solid #fff; border-radius: .3em; background: rgba(0,0,0,.72); color: #fff; font-family: var(--display); font-weight: 800;
+  font-size: calc(var(--u)*1.3); letter-spacing: .06em; text-transform: uppercase; animation: rise .4s var(--ease); pointer-events: none;
+}
+.rating-card small { font-size: .55em; letter-spacing: .3em; }
+.rating-card b { font-size: 1.8em; line-height: 1; }
+body.guide-open .rating-card { display: none; }
 .bug b { font-family: var(--mono); font-size: 1.6em; font-weight: 400; color: rgba(255,255,255,.6); }
 
 .paused {

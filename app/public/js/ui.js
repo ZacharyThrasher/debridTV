@@ -1,6 +1,6 @@
 // On-screen display: the green channel number, the info banner, and the channel bug.
 
-import { html, raw, fmtTime, fmtDur, now, clamp } from "./util.js";
+import { html, raw, fmtTime, fmtDur, now, clamp, pref } from "./util.js";
 import { logoHtml } from "./channel-editor.js";
 
 const hasMark = (c) => c?.logo?.kind === "text" && c.logo.text;
@@ -23,12 +23,16 @@ export function osdHide() {
 
 export function bug(ch) {
   if (!ch) return void (bugEl.hidden = true);
+  // Position and opacity are viewer prefs (N-16): bugPos "br" | "bl" | "tr" | "tl", bugOpacity 0.1–1.
+  bugEl.dataset.pos = pref("bugPos") ?? "br";
+  bugEl.style.setProperty("--bug-o", String(pref("bugOpacity") ?? 1));
   bugEl.innerHTML = hasMark(ch) ? logoHtml(ch) : html`<b>${ch.number}</b>${ch.name}`.html;
   bugEl.hidden = false;
 }
 
 export function setBanner(ch, info, route) {
   bannerState = { ch, info, route };
+  ratingCard(info);
   if (!bannerEl.hidden) renderBanner();
 }
 
@@ -58,6 +62,25 @@ function padAt(a) {
   const pad = a.segments?.find((x) => x.kind === "break" && x.reason === "padding" && x.end - x.start >= 2 * 60_000);
   if (!pad) return "";
   return `<b style="left:${(((pad.start - a.start) / (a.end - a.start)) * 100).toFixed(2)}%"></b>`;
+}
+
+// Rating card (N-16): a rated program shows its rating top-left for a few seconds
+// when it starts or when you tune into it. Pref ratingCard (default on).
+const ratingEl = Object.assign(document.createElement("div"), { className: "rating-card", hidden: true });
+ratingEl.setAttribute("aria-live", "polite");
+document.getElementById("stage").append(ratingEl);
+let ratedKey = "", ratingTimer = 0;
+function ratingCard(info) {
+  const a = info?.airing;
+  const key = a ? `${a.itemId}:${a.start}` : "";
+  if (key === ratedKey) return;
+  ratedKey = key;
+  ratingEl.hidden = true;
+  if (!a?.rating || info.segment?.kind !== "program" || pref("ratingCard") === false) return;
+  ratingEl.innerHTML = html`<small>Rated</small><b>${a.rating}</b>`.html;
+  ratingEl.hidden = false;
+  clearTimeout(ratingTimer);
+  ratingTimer = setTimeout(() => (ratingEl.hidden = true), 6000);
 }
 
 const ROUTE_LABEL = { direct: "Direct play", live: "Compatibility mode", demo: "Demo picture", card: "" };
