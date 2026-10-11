@@ -34,6 +34,9 @@ async function bootstrap({ keepChannel = true } = {}) {
     try {
       saved = localStorage.getItem("debridtv.lastChannel");
     } catch {}
+    // Startup choice (N-14): "last" channel (default), "guide", or a fixed "ch:<id>".
+    const start = String(pref("startup") ?? "last");
+    if (start.startsWith("ch:")) saved = start.slice(3);
     target = tv.channels.find((c) => c.id === saved) ?? tv.channels[0];
   }
   if (!tv.channels.length) return;
@@ -208,5 +211,7 @@ setInterval(() => !panelOpen() && !guideOpen() && api.get("/api/bootstrap").then
   if (boot && sig(b) !== sig(boot)) bootstrap();
 }).catch(() => {}), 60_000);
 
-bootstrap().catch((e) => toast(`Couldn't start: ${e.message}`, 8000));
+bootstrap()
+  .then(() => pref("startup") === "guide" && pref("welcomed") && !guideOpen() && openGuide())
+  .catch((e) => toast(`Couldn't start: ${e.message}`, 8000));
 if (!pref("welcomed")) showWelcome();

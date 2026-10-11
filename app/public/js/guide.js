@@ -3,7 +3,7 @@
 // media bytes (EXP-001). The picture keeps playing in the top-left preview.
 
 import { api } from "./api.js";
-import { html, raw, fmtTime, fmtDur, now, clamp, toast } from "./util.js";
+import { html, raw, fmtTime, fmtDur, now, clamp, toast, pref } from "./util.js";
 import { tv, tune } from "./player.js";
 
 const MIN = 60_000;
@@ -31,6 +31,7 @@ export async function openGuide() {
   viewFrom = floor30(now());
   at = now();
   row = Math.max(0, tv.channels.findIndex((c) => c.id === tv.current?.id));
+  poke();
   await load();
   clearInterval(refreshTimer);
   refreshTimer = setInterval(() => (guideOpen() ? load() : clearInterval(refreshTimer)), 60_000);
@@ -40,7 +41,25 @@ export function closeGuide() {
   root.hidden = true;
   document.body.classList.remove("guide-open");
   clearInterval(refreshTimer);
+  clearTimeout(idleTimer);
 }
+
+// Idle action (N-15): after a while with no input, the guide can close back to the
+// picture or tune the highlighted channel. Default is to stay open, like a real box.
+export const IDLE_ACTIONS = { stay: "Stay open", close: "Close the guide", tune: "Tune the highlighted channel" };
+let idleTimer = 0;
+function poke() {
+  clearTimeout(idleTimer);
+  const action = pref("guideIdle") ?? "stay";
+  if (action === "stay" || !guideOpen()) return;
+  const mins = Number(pref("guideIdleMin")) || 2;
+  idleTimer = setTimeout(() => {
+    if (!guideOpen()) return;
+    if (action === "tune" && data) pick(row, airingAt(row, at));
+    else closeGuide();
+  }, mins * MIN);
+}
+for (const t of ["keydown", "pointerdown", "wheel", "touchstart"]) addEventListener(t, () => guideOpen() && poke(), { passive: true, capture: true });
 
 async function load() {
   const from = floor30(now()) - 30 * MIN;
