@@ -751,7 +751,9 @@ async function libList() {
       f.watched ? "watched" : f.seenMs ? `seen ${fmtDur(f.seenMs)}` : null,
     ].filter(Boolean).join(" · ");
     const canCheck = ["ready", "needs-scan", "problem"].includes(f.status) && f.provider !== "local";
-    return html`<div class="li x-file" style="grid-template-columns:1fr auto">
+    const pic = f.art?.thumb ?? f.art?.poster;
+    return html`<div class="li x-file" style="grid-template-columns:${pic ? "auto " : ""}1fr auto">
+      ${pic ? html`<img class="x-art" src="${pic}" alt="" loading="lazy" style="width:3.2em;height:4.6em;object-fit:cover;border-radius:6px;background:var(--line)" onerror="this.remove()">` : ""}
       <div><div class="t">${f.title}</div>
         <div class="d">${facts}</div>
         ${f.status === "ready" ? "" : html`<div class="d x-why ${cls}">${f.message}</div>`}

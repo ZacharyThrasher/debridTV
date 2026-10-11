@@ -73,7 +73,12 @@ export interface LibItem {
   meta?: NfoMeta;
   /** When DebridTV first saw this file (premieres). Missing for files seen before this was recorded. */
   addedAt?: number;
+  /** Kodi-style artwork beside a local file (absolute paths; the browser only ever sees /api/art URLs). */
+  art?: LocalArt;
 }
+
+export type ArtKind = "poster" | "fanart" | "thumb" | "logo";
+export type LocalArt = Partial<Record<ArtKind, string>>;
 
 export interface AccountState extends Partial<AccountInfo> {
   /** Why the last account check failed, in plain words. */
@@ -314,6 +319,7 @@ export class Library {
     const seen = new Set<string>();
     let n = 0;
     const shows = new Map<string, NfoMeta | null>();
+    const listings = new Map<string, Map<string, string>>();
     for (const dir of dirs) {
       for (const path of walk(dir, 6)) {
         const st = statSync(path);
@@ -324,6 +330,9 @@ export class Library {
         const meta = localMeta(path, dir, it.parsed.kind, shows);
         if (meta) it.meta = meta;
         else delete it.meta;
+        const art = localArt(path, dir, it.parsed.kind, listings);
+        if (art) it.art = art;
+        else delete it.art;
         n++;
       }
     }
@@ -737,6 +746,82 @@ export function localMeta(path: string, root: string, kind: Parsed["kind"], show
     d = dirname(d);
   }
   return withShow(own?.kind === "episode" ? own : null, show);
+}
+
+const ART_EXT = [".jpg", ".jpeg", ".png", ".webp"];
+export const ART_MAX_BYTES = 8 * 1024 * 1024;
+/** Lower-cased name → real name for one folder, read once per refresh. */
+function listing(dir: string, cache: Map<string, Map<string, string>>): Map<string, string> {
+  let m = cache.get(dir);
+  if (!m) {
+    m = new Map();
+    try {
+      for (const n of readdirSync(dir)) m.set(n.toLowerCase(), n);
+    } catch {}
+    cache.set(dir, m);
+  }
+  return m;
+}
+function findImage(dir: string, stems: string[], cache: Map<string, Map<string, string>>): string | undefined {
+  const names = listing(dir, cache);
+  for (const stem of stems)
+    for (const ext of ART_EXT) {
+      const real = names.get(`${stem}${ext}`.toLowerCase());
+      if (!real) continue;
+      const p = join(dir, real);
+      try {
+        const st = statSync(p);
+        if (st.isFile() && st.size > 0 && st.size <= ART_MAX_BYTES) return p;
+      } catch {}
+    }
+  return undefined;
+}
+
+/**
+ * Artwork for one local video, following Kodi's names
+ * (https://kodi.wiki/view/Artwork_types): "<name>-poster/-fanart/-thumb/-clearlogo"
+ * beside the file; for a movie alone in its folder, "poster", "folder", "fanart",
+ * "clearlogo" there too; for an episode, the season poster and the show's poster,
+ * fanart and clearlogo up to two folders above. Never looks above the chosen
+ * folder and never touches the network.
+ */
+export function localArt(path: string, root: string, kind: Parsed["kind"], cache = new Map<string, Map<string, string>>()): LocalArt | null {
+  if (kind !== "movie" && kind !== "episode") return null;
+  const dir = dirname(path);
+  const stem = basename(path, extname(path));
+  const art: LocalArt = {};
+  const put = (k: ArtKind, p: string | undefined) => {
+    if (p && !art[k]) art[k] = p;
+  };
+  put("poster", findImage(dir, [`${stem}-poster`], cache));
+  put("fanart", findImage(dir, [`${stem}-fanart`, `${stem}-landscape`], cache));
+  put("thumb", findImage(dir, [`${stem}-thumb`, stem], cache));
+  put("logo", findImage(dir, [`${stem}-clearlogo`, `${stem}-logo`], cache));
+  const inside = (d: string) => {
+    const r = relative(root, d);
+    return !r.startsWith("..");
+  };
+  if (kind === "movie") {
+    // Folder-wide names belong to this film only if it's the only video there.
+    const videos = [...listing(dir, cache).keys()].filter((n) => VIDEO_EXT.has(extname(n)) && !/-trailer\.|sample/.test(n));
+    if (videos.length === 1 && relative(root, dir) !== "") {
+      put("poster", findImage(dir, ["poster", "folder", "cover"], cache));
+      put("fanart", findImage(dir, ["fanart", "backdrop", "landscape"], cache));
+      put("logo", findImage(dir, ["clearlogo", "logo"], cache));
+    }
+  } else {
+    const season = /^season\s*(\d+)$/i.exec(basename(dir))?.[1];
+    let d = dir;
+    // The chosen folder itself may hold many shows, so its pictures belong to none of them.
+    for (let up = 0; up < 3 && inside(d) && relative(root, d) !== ""; up++) {
+      if (season != null) put("poster", findImage(d, [`season${season.padStart(2, "0")}-poster`, `season${Number(season)}-poster`], cache));
+      put("poster", findImage(d, ["poster", "folder"], cache));
+      put("fanart", findImage(d, ["fanart", "backdrop", "landscape"], cache));
+      put("logo", findImage(d, ["clearlogo", "logo"], cache));
+      d = dirname(d);
+    }
+  }
+  return Object.keys(art).length ? art : null;
 }
 
 /**

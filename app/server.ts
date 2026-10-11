@@ -24,7 +24,7 @@ import { JsonFile, dataDir } from "./store.ts";
 import { validTimeZone } from "../src/clock/dayparts.ts";
 import { parseVttBlock } from "../src/library/vtt.ts";
 import { RATINGS, normalizeRating, ratingRank } from "../src/clock/ratings.ts";
-import { Library, displayTitle, effectiveRating, mediaBadges, fileStatus, plainError, PROVIDER_NAMES, STATUS_ORDER, type Config, type LibItem, type ProviderBases, type RemoteProvider } from "./library.ts";
+import { Library, ART_MAX_BYTES, type ArtKind, displayTitle, effectiveRating, mediaBadges, fileStatus, plainError, PROVIDER_NAMES, STATUS_ORDER, type Config, type LibItem, type ProviderBases, type RemoteProvider } from "./library.ts";
 import { Lineup, autoRules, cleanExclusions, cleanLogo, cleanRestricted, cleanSlots, cleanWeights, type ItemInfo, type StationChannel, type CustomChannel } from "./lineup.ts";
 import { Meters } from "./meters.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
@@ -213,7 +213,7 @@ function channelView(c: StationChannel) {
   const st = lineup().settingsFor(c.meta.ruleKey);
   const hue = st.logo && "hue" in st.logo && st.logo.hue != null ? st.logo.hue : c.meta.hue;
   return { id: c.id, number: c.number, name: c.name, hue, kind: c.meta.kind, tagline: c.meta.tagline, ruleKey: c.meta.ruleKey,
-    favorite: !!st.favorite, logo: st.logo ?? null, kid: !!st.kid, ...lockView(st) };
+    favorite: !!st.favorite, logo: st.logo ?? null, kid: !!st.kid, ...lockView(st), art: channelArt(c) };
 }
 
 // ---------------------------------------------------------------- parental lock (N-06b)
@@ -284,6 +284,24 @@ function refuseLocked(res: http.ServerResponse, id: string): boolean {
   return true;
 }
 
+/** URLs for a local file's own artwork (N-01c); paths stay on the server. */
+function artView(it: LibItem | undefined): Partial<Record<ArtKind, string>> | undefined {
+  if (!it?.art || it.provider !== "local") return undefined;
+  const out: Partial<Record<ArtKind, string>> = {};
+  for (const k of Object.keys(it.art) as ArtKind[]) out[k] = `/api/art/${it.id}/${k}`;
+  return out;
+}
+/** A show channel's clear logo, if its folder has one; the editor can offer it as the channel's logo. */
+function channelArt(c: StationChannel) {
+  if (c.meta.kind !== "show") return undefined;
+  const ids = c.revisions[c.revisions.length - 1]!.itemIds;
+  for (const id of ids.slice(0, 50)) {
+    const it = itemById(id);
+    if (it?.art?.logo || it?.art?.poster) return artView({ ...it, art: { ...(it.art.logo ? { logo: it.art.logo } : {}), ...(it.art.poster ? { poster: it.art.poster } : {}) } });
+  }
+  return undefined;
+}
+
 /**
  * What a locked channel shows until the PIN is entered: when things start and end
  * (so the guide grid and breaks still line up), and nothing that says what they are.
@@ -320,6 +338,7 @@ function airingView(a: Airing) {
     provider: it?.provider,
     codecs: it ? { container: it.container, video: it.video, audio: it.audio, ...mediaBadges(it) } : undefined,
     watched: isWatched(a.itemId, it?.durationMs),
+    art: artView(it),
     segments: a.segments.map((s) => (s.kind === "program" ? { kind: s.kind, start: s.startMs, end: s.endMs, fileFrom: s.fileFromMs } : { kind: s.kind, start: s.startMs, end: s.endMs, reason: s.reason })),
   };
 }
@@ -764,6 +783,23 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       return json(res, 200, { ok: false, error: plainError(e) });
     }
   }
+  const art = /^\/api\/art\/([\w-]+)\/(poster|fanart|thumb|logo)$/.exec(p);
+  if (art && m === "GET") {
+    const it = itemById(art[1]!);
+    const file = it?.provider === "local" ? it.art?.[art[2] as ArtKind] : undefined;
+    if (!it || !file) return json(res, 404, { error: "no picture" });
+    if (refuseLocked(res, it.id)) return;
+    let size = 0;
+    try {
+      size = statSync(file).size;
+    } catch {}
+    if (!size || size > ART_MAX_BYTES) return json(res, 404, { error: "no picture" });
+    const types: Record<string, string> = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp" };
+    res.writeHead(200, { "content-type": types[extname(file).toLowerCase()] ?? "application/octet-stream", "content-length": String(size),
+      "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" });
+    createReadStream(file).pipe(res);
+    return;
+  }
   if (p === "/api/item") {
     const it = itemById(url.searchParams.get("id") ?? "");
     if (!it) return json(res, 404, {});
@@ -967,7 +1003,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return json(res, 200, {
       counts, total: rows.length, offset, limit,
       files: rows.slice(offset, offset + limit).map(({ it, status, message }) => ({
-        id: it.id, title: displayTitle(it), name: it.name, provider: it.provider, status, message,
+        id: it.id, title: displayTitle(it), name: it.name, provider: it.provider, status, message, art: artView(it),
         kind: it.parsed.kind, durationMs: it.durationMs, bytes: it.bytes, providerState: it.providerState,
         container: it.container, video: it.video, audio: it.audio, excluded: !!it.excluded,
         checkedAt: it.availabilityAt ?? null, playableAt: it.playableAt ?? null, goneAt: it.goneAt ?? null,
