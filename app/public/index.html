@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>DebridTV</title>
+  <meta name="color-scheme" content="dark" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="fonts/fonts.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main id="stage" aria-label="Television">
+    <video id="video" playsinline preload="none" aria-label="Now playing"></video>
+    <canvas id="synth" aria-hidden="true"></canvas>
+    <section id="card" class="card" hidden aria-live="polite"></section>
+    <canvas id="static" aria-hidden="true"></canvas>
+    <div id="crt" aria-hidden="true"></div>
+
+    <div id="osd-num" class="osd-num" aria-live="assertive"></div>
+    <div id="bug" class="bug" hidden></div>
+    <div id="paused" class="paused" hidden>
+      <div class="paused-icon">❚❚</div>
+      <div>Paused · press <kbd>Space</kbd> to return to live</div>
+    </div>
+
+    <section id="banner" class="banner" hidden aria-live="polite"></section>
+  </main>
+
+  <section id="guide" class="guide" hidden aria-label="Program guide">
+    <header class="guide-top">
+      <div class="guide-preview" aria-hidden="true"><span class="preview-label">Now watching</span></div>
+      <div id="guide-details" class="guide-details"></div>
+    </header>
+    <div class="guide-bar">
+      <div class="brand"><span class="brand-mark"></span>DebridTV</div>
+      <div id="guide-date" class="guide-date"></div>
+      <div class="guide-hints">
+        <span><kbd>↑↓←→</kbd> browse</span><span><kbd>Enter</kbd> watch</span><span><kbd>G</kbd> close</span><span><kbd>S</kbd> settings</span>
+      </div>
+      <div id="guide-clock" class="guide-clock"></div>
+    </div>
+    <div id="grid" class="grid" role="grid" aria-label="Channels and programs"></div>
+  </section>
+
+  <aside id="panel" class="panel" hidden aria-label="Settings">
+    <header class="panel-head">
+      <div class="brand"><span class="brand-mark"></span>DebridTV</div>
+      <button class="icon-btn" data-close aria-label="Close settings">✕</button>
+    </header>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="sources">Sources</button>
+      <button role="tab" data-tab="channels">Channels</button>
+      <button role="tab" data-tab="history">History</button>
+      <button role="tab" data-tab="meters">Meters</button>
+      <button role="tab" data-tab="look">Look &amp; feel</button>
+      <button role="tab" data-tab="privacy">Privacy</button>
+    </nav>
+    <div id="panel-body" class="panel-body"></div>
+  </aside>
+
+  <div id="welcome" class="welcome" hidden></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <nav id="dock" class="dock" aria-label="Controls">
+    <button data-act="down" aria-label="Channel down">▼</button>
+    <button data-act="up" aria-label="Channel up">▲</button>
+    <button data-act="guide">Guide</button>
+    <button data-act="settings">Settings</button>
+    <button data-act="mute" aria-label="Mute">🔊</button>
+    <button data-act="full" aria-label="Fullscreen">⛶</button>
+  </nav>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

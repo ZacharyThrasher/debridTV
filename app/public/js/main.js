@@ -1,0 +1,212 @@
+// DebridTV front end: wires the remote (keyboard, mouse, touch) to the tuner,
+// guide and settings, and keeps the clock ticking.
+
+import { api } from "./api.js";
+import { html, pref, setPref, applyPrefs, syncClock, toast } from "./util.js";
+import { tv, tune, channelStep, lastChannel, byNumber, togglePause, applyVolume } from "./player.js";
+import { openGuide, closeGuide, guideOpen, guideKey } from "./guide.js";
+import { initPanel, openPanel, closePanel, panelOpen } from "./panel.js";
+import { toggleBanner, tickBanner, osd } from "./ui.js";
+import { tickCard } from "./cards.js";
+import { unlockAudio } from "./static.js";
+
+applyPrefs();
+applyVolume();
+// The demo picture draws text on a canvas, which only uses fonts already loaded.
+for (const f of ['800 20px "Barlow Condensed"', "20px VT323", "600 20px Inter"]) document.fonts?.load(f).catch(() => {});
+
+let boot = null;
+
+async function bootstrap({ keepChannel = true } = {}) {
+  const sent = Date.now();
+  boot = await api.get("/api/bootstrap");
+  syncClock(boot.now, sent);
+  const before = tv.current?.id;
+  const wasDemo = tv.demo;
+  tv.channels = boot.channels;
+  tv.ffmpeg = boot.ffmpeg;
+  tv.demo = boot.demo;
+  document.body.classList.toggle("demo", boot.demo);
+  if (wasDemo !== undefined && wasDemo !== boot.demo) toast(boot.demo ? "Showing the demo channels." : "Your library is on the air!");
+  let target = keepChannel && before ? tv.channels.find((c) => c.id === before) : null;
+  if (!target) {
+    let saved = null;
+    try {
+      saved = localStorage.getItem("debridtv.lastChannel");
+    } catch {}
+    target = tv.channels.find((c) => c.id === saved) ?? tv.channels[0];
+  }
+  if (!tv.channels.length) return;
+  if (!tv.current || tv.current.id !== target.id || wasDemo !== boot.demo) await tune(target);
+}
+
+/** Called after settings change the lineup (connect, scan, hide, new channel). */
+async function lineupChanged() {
+  await new Promise((r) => setTimeout(r, 400)); // the server debounces rebuilds
+  await bootstrap();
+}
+
+// ------------------------------------------------------------------ remote
+
+let digits = "";
+let digitTimer = 0;
+
+function enterDigit(d) {
+  digits = (digits + d).slice(-3);
+  osd(digits.padEnd(2, "-"), "", 0);
+  clearTimeout(digitTimer);
+  const go = () => {
+    const ch = byNumber(Number(digits));
+    digits = "";
+    if (ch) tune(ch);
+    else {
+      osd("--", "No such channel", 1500);
+    }
+  };
+  // Tune as soon as the number can't grow into another channel.
+  const n = Number(digits);
+  const longer = tv.channels.some((c) => String(c.number).startsWith(digits) && c.number !== n);
+  if (!longer && byNumber(n)) return go();
+  digitTimer = setTimeout(go, 1200);
+}
+
+addEventListener("keydown", (e) => {
+  unlockAudio();
+  if (pref("muted") === false && document.getElementById("video").muted && tv.route !== "demo") applyVolume();
+  if (e.target.matches?.("input, textarea, select")) {
+    if (e.key === "Escape") e.target.blur();
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key;
+  if (!document.getElementById("welcome").hidden) {
+    if (k === "Enter" || k === "Escape" || k === " ") closeWelcome();
+    e.preventDefault();
+    return;
+  }
+  if (panelOpen()) {
+    if (k === "Escape" || k === "s" || k === "S") closePanel();
+    return;
+  }
+  if (guideOpen()) {
+    if (k === "Escape" || k === "g" || k === "G" || k === "Backspace") closeGuide();
+    else if (k === "s" || k === "S") {
+      closeGuide();
+      openPanel();
+    } else if (!guideKey(e)) return;
+    e.preventDefault();
+    return;
+  }
+  switch (k) {
+    case "ArrowUp": case "PageUp": case "+": case "=": channelStep(1); break;
+    case "ArrowDown": case "PageDown": case "-": case "_": channelStep(-1); break;
+    case "g": case "G": case "Enter": openGuide(); break;
+    case "s": case "S": openPanel(); break;
+    case "i": case "I": case "ArrowRight": case "ArrowLeft": toggleBanner(); break;
+    case "Backspace": case "l": case "L": lastChannel(); break;
+    case " ": case "k": case "K": togglePause(); break;
+    case "m": case "M": toggleMute(); break;
+    case "f": case "F": toggleFull(); break;
+    case "?": showWelcome(); break;
+    default:
+      if (/^[0-9]$/.test(k)) enterDigit(k);
+      else return;
+  }
+  e.preventDefault();
+});
+
+function toggleMute() {
+  setPref("muted", !pref("muted"));
+  applyVolume();
+  osd(pref("muted") ? "MUTE" : `VOL ${Math.round(pref("volume") * 100)}`, "", 1500);
+  document.querySelector('[data-act="mute"]').textContent = pref("muted") ? "🔇" : "🔊";
+}
+
+function toggleFull() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen?.().catch(() => {});
+}
+
+// Mouse and touch: show the dock while the pointer moves, hide it when it rests.
+let pointerTimer = 0;
+addEventListener("pointermove", () => {
+  document.body.classList.add("pointer");
+  clearTimeout(pointerTimer);
+  pointerTimer = setTimeout(() => document.body.classList.remove("pointer"), 2600);
+});
+addEventListener("pointerdown", () => {
+  unlockAudio();
+  applyVolume();
+});
+document.getElementById("dock").addEventListener("click", (e) => {
+  const act = e.target.closest("[data-act]")?.dataset.act;
+  ({ up: () => channelStep(1), down: () => channelStep(-1), guide: openGuide, settings: () => openPanel(), mute: toggleMute, full: toggleFull })[act]?.();
+});
+document.getElementById("stage").addEventListener("click", (e) => {
+  if (e.target.closest("#card, #video, #synth, #crt, #static")) toggleBanner();
+});
+let touchY = null;
+addEventListener("touchstart", (e) => (touchY = e.touches[0].clientY), { passive: true });
+addEventListener("touchend", (e) => {
+  if (touchY == null || guideOpen() || panelOpen()) return;
+  const dy = e.changedTouches[0].clientY - touchY;
+  if (Math.abs(dy) > 60) channelStep(dy < 0 ? 1 : -1);
+  touchY = null;
+});
+
+// ------------------------------------------------------------------ welcome
+
+function showWelcome() {
+  const el = document.getElementById("welcome");
+  const demo = boot?.demo;
+  el.innerHTML = html`<div class="welcome-card">
+    <div class="brand" style="justify-content:center"><span class="brand-mark"></span>DebridTV</div>
+    <h1>Your library,<br><span>always on the air.</span></h1>
+    <p>Channels play around the clock, like cable. Flip around, check the guide, and drop into whatever's on.
+      ${demo ? "You're watching demo channels with made-up shows. Connect TorBox, Real-Debrid or a folder in Settings to put your own library on the air." : ""}</p>
+    <div class="keys">
+      <div><kbd>↑</kbd><kbd>↓</kbd> change channel</div>
+      <div><kbd>G</kbd> program guide</div>
+      <div><kbd>0-9</kbd> go to a number</div>
+      <div><kbd>I</kbd> what's on</div>
+      <div><kbd>L</kbd> last channel</div>
+      <div><kbd>Space</kbd> pause</div>
+      <div><kbd>M</kbd> mute</div>
+      <div><kbd>F</kbd> full screen</div>
+      <div><kbd>S</kbd> settings</div>
+    </div>
+    <button class="btn primary" data-start>Start watching</button>
+    ${demo ? html`<button class="btn" data-sources style="margin-left:.5em">Connect my library</button>` : ""}
+  </div>`;
+  el.hidden = false;
+  el.querySelector("[data-start]").focus();
+  el.querySelector("[data-start]").onclick = closeWelcome;
+  const s = el.querySelector("[data-sources]");
+  if (s) s.onclick = () => {
+    closeWelcome();
+    openPanel("sources");
+  };
+}
+
+function closeWelcome() {
+  document.getElementById("welcome").hidden = true;
+  setPref("welcomed", true);
+  unlockAudio();
+  applyVolume();
+}
+
+// ------------------------------------------------------------------ start
+
+initPanel(lineupChanged);
+setInterval(() => {
+  tickCard();
+  tickBanner();
+}, 1000);
+// Pick up lineup changes made elsewhere (a scan finishing adds channels).
+setInterval(() => !panelOpen() && !guideOpen() && api.get("/api/bootstrap").then((b) => {
+  const sig = (x) => x.channels.map((c) => c.id + c.number).join() + x.demo;
+  if (boot && sig(b) !== sig(boot)) bootstrap();
+}).catch(() => {}), 60_000);
+
+bootstrap().catch((e) => toast(`Couldn't start: ${e.message}`, 8000));
+if (!pref("welcomed")) showWelcome();

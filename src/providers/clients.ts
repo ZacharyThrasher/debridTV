@@ -27,18 +27,49 @@ export class RealDebridClient implements ProviderClient {
     this.counter = counter;
   }
 
+  /**
+   * One entry per torrent. Single-file torrents carry their one link as `ref`;
+   * multi-file packs are returned with `ref = "pack:<id>"` and need `expand()`
+   * (one extra call each), which callers do deliberately and at a polite rate.
+   */
   async inventory(signal?: AbortSignal): Promise<InventoryFile[]> {
-    this.counter.add("rd.torrents");
-    const res = await fetch(`${this.base}/rest/1.0/torrents`, { headers: this.auth(), signal });
+    const out: InventoryFile[] = [];
+    for (let page = 1; page <= 20; page++) {
+      this.counter.add("rd.torrents");
+      const q = new URLSearchParams({ limit: "500", page: String(page) });
+      const res = await fetch(`${this.base}/rest/1.0/torrents?${q}`, { headers: this.auth(), signal });
+      if (res.status === 204) break;
+      if (!res.ok) throw classify(res.status, await res.text());
+      const rows = (await res.json()) as Array<{ id: string; filename: string; bytes: number; status: string; links: string[] }>;
+      for (const r of rows)
+        out.push({
+          provider: "realdebrid",
+          ref: r.links.length === 1 ? r.links[0]! : `pack:${r.id}`,
+          name: r.filename,
+          bytes: r.bytes,
+          providerState: r.status,
+        });
+      if (rows.length < 500) break;
+    }
+    return out;
+  }
+
+  /** Per-file entries of a multi-file torrent (selected files pair with links in order). */
+  async expand(torrentId: string, signal?: AbortSignal): Promise<InventoryFile[]> {
+    this.counter.add("rd.torrents.info");
+    const res = await fetch(`${this.base}/rest/1.0/torrents/info/${encodeURIComponent(torrentId)}`, { headers: this.auth(), signal });
     if (!res.ok) throw classify(res.status, await res.text());
-    const rows = (await res.json()) as Array<{ id: string; filename: string; bytes: number; status: string; links: string[] }>;
-    return rows.map((r) => ({
-      provider: "realdebrid",
-      ref: r.links[0] ?? r.id,
-      name: r.filename,
-      bytes: r.bytes,
-      providerState: r.status,
-    }));
+    const t = (await res.json()) as {
+      status: string;
+      files: Array<{ id: number; path: string; bytes: number; selected: number }>;
+      links: string[];
+    };
+    const selected = t.files.filter((f) => f.selected === 1);
+    return selected.flatMap((f, i) =>
+      t.links[i]
+        ? [{ provider: "realdebrid" as const, ref: t.links[i]!, name: f.path.replace(/^\//, ""), bytes: f.bytes, providerState: t.status }]
+        : [],
+    );
   }
 
   async resolve(ref: string, signal?: AbortSignal): Promise<PlaybackGrant> {

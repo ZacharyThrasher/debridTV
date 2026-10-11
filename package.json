@@ -4,13 +4,16 @@
   "private": true,
   "description": "Personal pseudo-live television over user-authorized libraries (Real-Debrid, TorBox, local).",
   "type": "module",
-  "engines": { "node": ">=22.18" },
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "test": "node --test \"test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "exp:001": "node experiments/exp001-clock.ts",
     "exp:002": "node experiments/exp002-surf.ts",
-    "exp:003": "node experiments/exp003-chunk-amplification.ts"
+    "exp:003": "node experiments/exp003-chunk-amplification.ts",
+    "start": "node app/server.ts"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

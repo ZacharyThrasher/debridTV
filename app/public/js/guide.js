@@ -1,0 +1,195 @@
+// The program guide. Built from the local station clock only: opening it, browsing
+// it for hours, or scrolling 12 hours ahead costs zero provider calls and zero
+// media bytes (EXP-001). The picture keeps playing in the top-left preview.
+
+import { api } from "./api.js";
+import { html, raw, fmtTime, fmtDur, now, clamp, toast } from "./util.js";
+import { tv, tune } from "./player.js";
+
+const MIN = 60_000;
+const root = document.getElementById("guide");
+const grid = document.getElementById("grid");
+const details = document.getElementById("guide-details");
+const dateEl = document.getElementById("guide-date");
+const clockEl = document.getElementById("guide-clock");
+
+let data = null; // { from, to, rows }
+let viewFrom = 0;
+let row = 0;
+let at = 0; // cursor time
+let scrollRow = 0;
+let refreshTimer = 0;
+
+const span = () => (innerWidth < 760 ? 90 : 150) * MIN;
+const floor30 = (t) => t - (t % (30 * MIN));
+
+export const guideOpen = () => !root.hidden;
+
+export async function openGuide() {
+  root.hidden = false;
+  document.body.classList.add("guide-open");
+  viewFrom = floor30(now());
+  at = now();
+  row = Math.max(0, tv.channels.findIndex((c) => c.id === tv.current?.id));
+  await load();
+  clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => (guideOpen() ? load() : clearInterval(refreshTimer)), 60_000);
+}
+
+export function closeGuide() {
+  root.hidden = true;
+  document.body.classList.remove("guide-open");
+  clearInterval(refreshTimer);
+}
+
+async function load() {
+  const from = floor30(now()) - 30 * MIN;
+  try {
+    data = await api.get(`/api/guide?from=${from}&to=${from + 12 * 60 * MIN}`);
+  } catch (e) {
+    grid.innerHTML = html`<div style="padding:2em;color:var(--dim)">Couldn't load the guide: ${e.message}</div>`;
+    return;
+  }
+  render();
+}
+
+function airingAt(r, t) {
+  const list = data?.rows[r]?.airings ?? [];
+  return list.find((a) => a.start <= t && t < a.end) ?? list.find((a) => a.start >= t) ?? list[list.length - 1];
+}
+
+function render() {
+  if (!data) return;
+  const s = span();
+  const viewTo = viewFrom + s;
+  const t = now();
+  const rowsVisible = Math.max(1, Math.floor((grid.clientHeight - (grid.querySelector(".grid-times")?.clientHeight || 0)) / rowPx()) || 6);
+  if (row < scrollRow) scrollRow = row;
+  if (row >= scrollRow + rowsVisible) scrollRow = row - rowsVisible + 1;
+  scrollRow = clamp(scrollRow, 0, Math.max(0, data.rows.length - rowsVisible));
+
+  const pct = (ms) => ((ms - viewFrom) / s) * 100;
+  const times = [];
+  for (let m = viewFrom; m < viewTo; m += 30 * MIN) times.push(html`<span style="left:${pct(m)}%">${fmtTime(m)}</span>`);
+  const focus = airingAt(row, at);
+
+  const rows = data.rows.map((r, ri) => {
+    const ch = r.channel;
+    const cells = r.airings
+      .filter((a) => a.end > viewFrom && a.start < viewTo)
+      .map((a) => {
+        const left = Math.max(0, pct(a.start));
+        const right = Math.min(100, pct(a.end));
+        const cls = ["cell"];
+        if (a.end <= t) cls.push("past");
+        else if (a.start <= t) cls.push("now");
+        if (a.availability === "policy-blocked" || a.availability === "unavailable") cls.push("unavail");
+        if (a.start < viewFrom) cls.push("cut-left");
+        if (ri === row && focus && a.start === focus.start) cls.push("focus");
+        const sub = [a.episode, a.subtitle, a.year].filter(Boolean).join(" · ");
+        return html`<div class="${cls.join(" ")}" style="left:calc(${left}% + 2px);width:calc(${right - left}% - 4px)" data-row="${ri}" data-start="${a.start}" role="gridcell"
+          aria-label="${a.title}, ${fmtTime(a.start)}">
+          ${a.start < viewFrom ? raw('<span class="cont">◂</span>') : ""}
+          ${a.watched ? raw('<span class="watched" title="Watched">✓</span>') : ""}
+          <div class="ct">${a.title}</div>${sub ? html`<div class="cs">${sub}</div>` : ""}</div>`;
+      });
+    const nowLine = t >= viewFrom && t < viewTo ? raw(`<div class="now-line" style="left:${pct(t)}%"></div>`) : "";
+    return html`<div class="row ${tv.current?.id === ch.id ? "current" : ""}" style="--h:${ch.hue}" role="row">
+      <div class="row-label" data-tune="${ri}"><span class="n">${ch.number}</span><span class="nm">${ch.name}<span class="tg">${ch.tagline}</span></span></div>
+      <div class="row-track">${raw(cells.join(""))}${nowLine}</div></div>`;
+  });
+
+  grid.innerHTML = html`<div class="grid-times">${raw(times.join(""))}</div>
+    <div class="grid-rows"><div class="grid-scroll" style="transform:translateY(calc(${-scrollRow} * var(--row)))">${raw(rows.join(""))}</div></div>`;
+
+  dateEl.textContent = new Date(viewFrom).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  clockEl.textContent = fmtTime(t);
+  renderDetails(data.rows[row]?.channel, focus);
+}
+
+function rowPx() {
+  const probe = grid.querySelector(".row");
+  return probe ? probe.getBoundingClientRect().height : 50;
+}
+
+function renderDetails(ch, a) {
+  if (!ch || !a) return void (details.innerHTML = "");
+  const t = now();
+  const state = a.end <= t ? "Ended" : a.start <= t ? `On now · ${Math.round((a.end - t) / MIN)} min left` : `Starts in ${fmtDur(a.start - t)}`;
+  const bits = [a.episode && html`<span>${a.episode}</span>`, a.year && html`<span>${a.year}</span>`, a.genre && html`<span>${a.genre}</span>`,
+    a.durationMs && html`<span>${fmtDur(a.durationMs)}</span>`, a.watched && raw('<span class="badge ok">✓ Watched</span>'),
+    a.availability === "policy-blocked" && raw('<span class="badge bad">Refused by provider</span>'),
+    a.availability === "unavailable" && raw('<span class="badge warn">Unavailable</span>'),
+    a.availability === "playable" && a.provider !== "demo" && raw('<span class="badge ok">Plays</span>')].filter(Boolean);
+  details.innerHTML = html`<div class="when">${fmtTime(a.start)} – ${fmtTime(a.end)}</div>
+    <div class="t">${a.title}</div>
+    <div class="s">${raw(bits.join(""))}</div>
+    <div class="desc">${a.subtitle ? html`“${a.subtitle}”. ` : ""}${state}. On <b>${ch.number} ${ch.name}</b>: ${ch.tagline}.</div>`;
+}
+
+// ------------------------------------------------------------------ input
+
+export function guideKey(e) {
+  if (!data) return false;
+  const k = e.key;
+  const list = data.rows[row]?.airings ?? [];
+  const cur = airingAt(row, at);
+  const idx = list.indexOf(cur);
+  if (k === "ArrowDown" || k === "ArrowUp" || k === "PageDown" || k === "PageUp") {
+    const step = k === "PageDown" ? 6 : k === "PageUp" ? -6 : k === "ArrowDown" ? 1 : -1;
+    row = clamp(row + step, 0, data.rows.length - 1);
+  } else if (k === "ArrowRight") {
+    const nx = list[idx + 1];
+    if (nx && nx.start < data.to) {
+      at = nx.start + 1;
+      if (nx.start >= viewFrom + span() - 15 * MIN) viewFrom = floor30(nx.start) - 30 * MIN;
+    }
+  } else if (k === "ArrowLeft") {
+    const pv = list[idx - 1];
+    const floor = floor30(now());
+    if (pv && pv.end > floor - 30 * MIN) {
+      at = Math.max(pv.start, floor - 30 * MIN) + 1;
+      if (pv.start < viewFrom) viewFrom = Math.max(floor - 30 * MIN, floor30(pv.start));
+    } else if (viewFrom > floor) viewFrom = floor;
+  } else if (k === "Home") {
+    viewFrom = floor30(now());
+    at = now();
+  } else if (k === "Enter" || k === "OK") {
+    pick(row, cur);
+    return true;
+  } else return false;
+  render();
+  return true;
+}
+
+function pick(r, a) {
+  const ch = data.rows[r]?.channel;
+  const target = tv.channels.find((c) => c.id === ch?.id);
+  if (!target) return;
+  closeGuide();
+  if (a && a.start > now()) toast(`${a.title} starts at ${fmtTime(a.start)}. Tuning to ${target.name} now.`);
+  if (tv.current?.id !== target.id) tune(target);
+}
+
+grid.addEventListener("click", (e) => {
+  const label = e.target.closest("[data-tune]");
+  if (label) return pick(Number(label.dataset.tune), null);
+  const cell = e.target.closest(".cell");
+  if (!cell) return;
+  const r = Number(cell.dataset.row);
+  const start = Number(cell.dataset.start);
+  if (cell.classList.contains("focus")) return pick(r, airingAt(r, start + 1));
+  row = r;
+  at = start + 1;
+  render();
+});
+grid.addEventListener("wheel", (e) => {
+  if (!data) return;
+  e.preventDefault();
+  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) guideKey({ key: e.deltaX > 0 ? "ArrowRight" : "ArrowLeft" });
+  else {
+    row = clamp(row + Math.sign(e.deltaY), 0, data.rows.length - 1);
+    render();
+  }
+}, { passive: false });
+addEventListener("resize", () => guideOpen() && render());

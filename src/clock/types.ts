@@ -2,7 +2,7 @@
 // separate facts on purpose (handoff §5.4): an item can be on the schedule while
 // its file is currently unavailable, and the timeline must not move because of it.
 
-export type ProviderId = "realdebrid" | "torbox" | "local";
+export type ProviderId = "realdebrid" | "torbox" | "local" | "demo";
 
 /** What the provider last told us about the file. Never feeds the schedule. */
 export type Availability =

@@ -25,6 +25,17 @@ export class WatchLedger {
     return (this.spans.get(itemId) ?? []).reduce((n, [a, b]) => n + (b - a), 0);
   }
 
+  /** Plain data for persistence. */
+  export(): Record<string, Array<[number, number]>> {
+    return Object.fromEntries(this.spans);
+  }
+
+  static import(data: Record<string, Array<[number, number]>>): WatchLedger {
+    const w = new WatchLedger();
+    for (const [id, spans] of Object.entries(data)) for (const [a, b] of spans) w.record(id, a, b);
+    return w;
+  }
+
   isWatched(itemId: string, durationMs: number, policy: WatchedPolicy = DEFAULT_POLICY): boolean {
     return durationMs > 0 && this.seenMs(itemId) / durationMs >= policy.threshold;
   }
