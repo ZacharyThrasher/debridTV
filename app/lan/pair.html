@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Pair with DebridTV</title>
+  <meta name="color-scheme" content="dark" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/fonts/fonts.css" />
+  <style>
+    :root {
+      --bg: #060816; --ink: #eef0ff; --dim: #98a1d4; --panel: #0e1230; --panel-2: #161c48;
+      --line: rgba(140, 160, 255, 0.18); --amber: #ffb547; --magenta: #ff5fa2; --ok: #6ff2a8; --bad: #ff6b6b;
+      --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+      --body: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+      --mono: VT323, ui-monospace, Consolas, monospace;
+      --u: clamp(12px, min(1.6vw, 1.75vh), 26px);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--body); }
+    body {
+      display: grid; place-items: center; padding: max(16px, 5vh) 16px;
+      background:
+        radial-gradient(120vmax 80vmax at 20% -10%, rgba(255, 95, 162, 0.16), transparent 60%),
+        radial-gradient(100vmax 70vmax at 110% 110%, rgba(79, 227, 255, 0.12), transparent 60%),
+        var(--bg);
+    }
+    main {
+      width: min(100%, calc(var(--u) * 34)); background: var(--panel); border: 1px solid var(--line);
+      border-radius: calc(var(--u) * 1.1); padding: calc(var(--u) * 2.2) calc(var(--u) * 2);
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55); text-align: center;
+    }
+    .mark { width: calc(var(--u) * 3.2); height: calc(var(--u) * 3.2); }
+    h1 { font-family: var(--display); font-weight: 700; letter-spacing: 0.02em; font-size: calc(var(--u) * 2.6); margin: calc(var(--u) * 0.6) 0 calc(var(--u) * 0.3); }
+    p { color: var(--dim); font-size: calc(var(--u) * 1.05); line-height: 1.45; margin: 0 0 calc(var(--u) * 1.2); }
+    .slots { display: flex; justify-content: center; gap: calc(var(--u) * 0.55); margin: calc(var(--u) * 1.2) 0 calc(var(--u) * 0.6); }
+    .slot {
+      width: calc(var(--u) * 3.3); height: calc(var(--u) * 4.3); border-radius: calc(var(--u) * 0.55);
+      background: var(--panel-2); border: 2px solid var(--line); display: grid; place-items: center;
+      font-family: var(--mono); font-size: calc(var(--u) * 3.6); color: var(--ink); transition: border-color .15s, transform .15s;
+    }
+    .slot.next { border-color: var(--amber); box-shadow: 0 0 0 4px rgba(255, 181, 71, 0.18); }
+    .slot.filled { transform: translateY(-2px); }
+    .bad .slot { border-color: var(--bad); animation: shake .35s; }
+    @keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+    #msg { min-height: 1.6em; font-size: calc(var(--u) * 1.05); margin: 0 0 calc(var(--u) * 0.8); }
+    #msg.err { color: var(--bad); } #msg.ok { color: var(--ok); }
+    .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: calc(var(--u) * 0.5); width: min(100%, calc(var(--u) * 17)); margin: 0 auto; }
+    .pad button {
+      font-family: var(--display); font-weight: 600; font-size: calc(var(--u) * 1.9); color: var(--ink);
+      background: var(--panel-2); border: 2px solid transparent; border-radius: calc(var(--u) * 0.55);
+      padding: calc(var(--u) * 0.45) 0; cursor: pointer; outline: none;
+    }
+    .pad button:focus-visible, .pad button:focus, .pad button:hover { border-color: var(--amber); }
+    .pad button.go { background: linear-gradient(135deg, var(--amber), var(--magenta)); color: #1a0d1e; }
+    label { display: block; margin: calc(var(--u) * 1.4) auto 0; width: min(100%, calc(var(--u) * 17)); text-align: left; color: var(--dim); font-size: calc(var(--u) * 0.9); }
+    input {
+      width: 100%; margin-top: 6px; font: inherit; font-size: calc(var(--u) * 1.1); color: var(--ink);
+      background: var(--panel-2); border: 2px solid var(--line); border-radius: calc(var(--u) * 0.45); padding: calc(var(--u) * 0.5) calc(var(--u) * 0.7);
+    }
+    input:focus { border-color: var(--amber); outline: none; }
+    .fine { margin-top: calc(var(--u) * 1.4); font-size: calc(var(--u) * 0.85); color: var(--dim); opacity: .85; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb547"/><stop offset="1" stop-color="#ff5fa2"/></linearGradient></defs>
+      <rect x="6" y="12" width="52" height="38" rx="8" fill="none" stroke="url(#g)" stroke-width="5"/>
+      <path d="M24 4l8 8 8-8" fill="none" stroke="url(#g)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M22 58h20" stroke="url(#g)" stroke-width="5" stroke-linecap="round"/>
+    </svg>
+    <h1 id="title">Pair this device</h1>
+    <p id="lead">On the PC running DebridTV, open <b>Home network</b> and choose <b>Pair a device</b>. Type the six-digit code it shows.</p>
+
+    <div id="slots" class="slots" aria-live="polite" aria-label="Pairing code"></div>
+    <div id="msg" role="status"></div>
+
+    <div class="pad" id="pad">
+      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+      <button data-k="back" aria-label="Delete">⌫</button><button data-k="0">0</button><button data-k="go" class="go" aria-label="Pair">✓</button>
+    </div>
+
+    <label id="namebox">Name this device (optional)
+      <input id="name" maxlength="40" autocomplete="off" placeholder="Living room TV" />
+    </label>
+    <div class="fine">Works only on your home Wi-Fi. The PC can remove this device at any time.</div>
+  </main>
+
+  <script>
+    const slots = document.getElementById("slots");
+    const msg = document.getElementById("msg");
+    const nameEl = document.getElementById("name");
+    let code = "";
+    let busy = false;
+    for (let i = 0; i < 6; i++) slots.appendChild(Object.assign(document.createElement("div"), { className: "slot" }));
+
+    function draw() {
+      [...slots.children].forEach((s, i) => {
+        s.textContent = code[i] ?? "";
+        s.classList.toggle("filled", i < code.length);
+        s.classList.toggle("next", i === code.length);
+      });
+    }
+    function say(text, kind) { msg.textContent = text; msg.className = kind || ""; }
+
+    function press(k) {
+      if (busy) return;
+      slots.classList.remove("bad");
+      if (k === "back") code = code.slice(0, -1);
+      else if (k === "go") return submit();
+      else if (/^\d$/.test(k) && code.length < 6) code += k;
+      draw();
+      if (code.length === 6) submit();
+    }
+
+    async function submit() {
+      if (code.length !== 6) return say("The code has six digits.", "err");
+      busy = true;
+      say("Pairing…");
+      try {
+        const res = await fetch("/api/lan/pair", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code, name: nameEl.value }) });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || "Pairing failed.");
+        document.getElementById("title").textContent = "Paired";
+        say(`This device is “${body.device.name}”. Tuning in…`, "ok");
+        setTimeout(() => location.replace("/"), 1200);
+      } catch (e) {
+        slots.classList.add("bad");
+        say(e.message, "err");
+        code = "";
+        draw();
+        busy = false;
+      }
+    }
+
+    document.getElementById("pad").addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (b) press(b.dataset.k);
+    });
+
+    // Remote and keyboard: digits, delete/back, OK, and arrows to move around the keypad.
+    const BACK = new Set(["Backspace", "Escape", "BrowserBack", "GoBack"]);
+    document.addEventListener("keydown", (e) => {
+      if (e.target === nameEl) {
+        if (e.key === "Enter") submit();
+        return;
+      }
+      const digit = /^\d$/.test(e.key) ? e.key : e.keyCode >= 96 && e.keyCode <= 105 ? String(e.keyCode - 96) : null;
+      if (digit) { press(digit); e.preventDefault(); return; }
+      if (BACK.has(e.key) || e.keyCode === 461 || e.keyCode === 10009) { press("back"); e.preventDefault(); return; }
+      const keys = [...document.querySelectorAll("#pad button")];
+      const i = keys.indexOf(document.activeElement);
+      const move = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -3, ArrowDown: 3 }[e.key];
+      if (move !== undefined) {
+        e.preventDefault();
+        if (i < 0) return keys[4].focus();
+        const j = i + move;
+        if (j >= 0 && j < keys.length) keys[j].focus();
+        else if (move === 3) nameEl.focus();
+      }
+    });
+
+    fetch("/api/lan/hello").then((r) => r.json()).then((h) => {
+      if (h.where === "device" || h.where === "pc") return location.replace("/");
+      if (!nameEl.value) nameEl.placeholder = h.suggestedName === "TV" ? "Living room TV" : `My ${h.suggestedName.toLowerCase()}`;
+      if (!h.pairing) say("Waiting for a code. Choose Pair a device on the PC.");
+    }).catch(() => {});
+    draw();
+    document.querySelector('#pad button[data-k="5"]').focus({ preventScroll: true });
+  </script>
+</body>
+</html>

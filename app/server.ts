@@ -1,6 +1,7 @@
-// DebridTV local server. Runs on the viewer's own PC and listens on 127.0.0.1 only:
-// nothing here is reachable from other devices (sharing and tuner export stay
-// behind their gates). Provider keys live in the local data folder and never reach
+// DebridTV local server. Runs on the viewer's own PC and listens on 127.0.0.1.
+// Other devices can reach it only when the owner turns on Home network access on
+// the PC (app/lan/access.ts: private addresses, paired devices); tuner export and
+// cloud relay stay behind their gates. Provider keys live in the local data folder and never reach
 // the browser. Media is proxied so every byte and every cancellation is measured.
 //
 //   node app/server.ts            then open http://127.0.0.1:7337
@@ -21,18 +22,21 @@ import { WatchLedger } from "../src/history/watched.ts";
 import { ProviderError } from "../src/providers/types.ts";
 import { Gates } from "../src/gates.ts";
 import { JsonFile, dataDir } from "./store.ts";
-import { validTimeZone } from "../src/clock/dayparts.ts";
+import { seasonState, validTimeZone } from "../src/clock/dayparts.ts";
 import { parseVttBlock } from "../src/library/vtt.ts";
 import { RATINGS, normalizeRating, ratingRank } from "../src/clock/ratings.ts";
 import { Library, ART_MAX_BYTES, type ArtKind, displayTitle, effectiveRating, mediaBadges, fileStatus, plainError, PROVIDER_NAMES, STATUS_ORDER, type Config, type LibItem, type ProviderBases, type RemoteProvider } from "./library.ts";
-import { Lineup, autoRules, cleanExclusions, cleanLogo, cleanRestricted, cleanSlots, cleanWeights, type ItemInfo, type StationChannel, type CustomChannel } from "./lineup.ts";
+import { Lineup, autoRules, cleanGroup, cleanDates, cleanExclusions, cleanLogo, cleanRestricted, cleanSlots, cleanWeights, type ItemInfo, type StationChannel, type CustomChannel } from "./lineup.ts";
 import { Meters } from "./meters.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
 import { demoItems } from "./demo.ts";
 import { backupIfDue, listBackups, readBackup } from "./backups.ts";
 import { EdgeCache } from "./edgecache.ts";
 import { PinLock } from "./pinlock.ts";
+import { OnlineMetadata } from "./metadata/tmdb.ts";
 import { allowedUnder } from "../src/clock/ratings.ts";
+import { browse as onDemandBrowse, continueWatching, show as onDemandShow, type OnDemandDeps } from "./ondemand.ts";
+import { LanAccess, type LanOptions } from "./lan/access.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(HERE, "public");
@@ -49,6 +53,10 @@ export interface AppOptions {
   ffmpeg?: boolean;
   /** Background timers (periodic lineup refresh). */
   timers?: boolean;
+  /** TMDB API and image bases; tests point these at a recorded mock. */
+  tmdb?: { apiBase?: string; imageBase?: string; spacingMs?: number };
+  /** Home network access options (tests simulate a TV's address with `peer`). */
+  lan?: Pick<LanOptions, "peer" | "addresses" | "listen" | "now">;
 }
 
 interface HistoryState {
@@ -66,12 +74,15 @@ let port = opts.port ?? Number(process.env.PORT ?? 7337);
 const config = new JsonFile<Config>("config.json", () => ({}));
 const historyFile = new JsonFile<HistoryState>("history.json", () => ({ spans: {}, recent: [], manual: {} }));
 const meters = new Meters();
-const gates = new Gates(); // Nothing is granted; no code path here asks for a gate.
+const gates = new Gates(); // Only Home network access (lan) can grant "sharing", from the PC.
+const lan = new LanAccess({ gates, ...opts.lan });
 const library = new Library(() => config.get(), meters, () => scheduleRebuild(), opts.bases);
 const liveLineup = new Lineup("lineup.json");
 const demoLineup = new Lineup("lineup-demo.json");
 const demo = demoItems();
 const pin = new PinLock();
+// Online posters and descriptions (off until the viewer enters a TMDB key). Reads its disk cache only, never waits on TMDB.
+const online = new OnlineMetadata({ ...opts.tmdb, log: (d) => meters.log("api", d) });
 /** Which items only locked channels carry; recomputed after every rebuild or lock change. */
 let lockSets: { gen: number; locked: Set<string>; open: Set<string> } | null = null;
 let lockGen = 0;
@@ -140,10 +151,12 @@ function rebuild() {
   });
   meters.cache = { bytes: edge.bytes(), files: edge.entries() };
   const timeZone = stationTimeZone();
-  liveLineup.sync(liveClock, autoRules(liveItems, liveLineup.custom()), now, { timeZone, info: itemInfo(liveItems, now) });
+  liveLineup.sync(liveClock, autoRules(liveItems, liveLineup.custom(), liveLineup.groups()), now, { timeZone, info: itemInfo(liveItems, now) });
   const demoClock = new StationClock(demoMedia());
-  demoLineup.sync(demoClock, autoRules(demo, demoLineup.custom()), now, { timeZone, info: itemInfo(demo, now) });
+  demoLineup.sync(demoClock, autoRules(demo, demoLineup.custom(), demoLineup.groups()), now, { timeZone, info: itemInfo(demo, now) });
   clock = isDemo() ? demoClock : liveClock;
+  // Fill in posters and descriptions the files lack; skips PIN-locked items. No-op without a TMDB key.
+  if (!isDemo()) void online.sync(liveItems, lockedItem);
 }
 const PREMIERE_DAYS = 14;
 /** Show, genres, watched and "new" per item, for exclusions, watched rules and premieres. */
@@ -213,7 +226,11 @@ function channelView(c: StationChannel) {
   const st = lineup().settingsFor(c.meta.ruleKey);
   const hue = st.logo && "hue" in st.logo && st.logo.hue != null ? st.logo.hue : c.meta.hue;
   return { id: c.id, number: c.number, name: c.name, hue, kind: c.meta.kind, tagline: c.meta.tagline, ruleKey: c.meta.ruleKey,
-    favorite: !!st.favorite, logo: st.logo ?? null, kid: !!st.kid, ...lockView(st), art: channelArt(c) };
+    favorite: !!st.favorite, logo: st.logo ?? null, kid: !!st.kid, ...lockView(st), art: channelArt(c), season: seasonView(st.season) };
+}
+/** A seasonal channel's dates, whether it is on now, and when that changes (N-32). */
+function seasonView(season: { from: string; to: string } | undefined) {
+  return season ? { ...season, ...seasonState(season, Date.now(), stationTimeZone()) } : null;
 }
 
 // ---------------------------------------------------------------- parental lock (N-06b)
@@ -284,11 +301,13 @@ function refuseLocked(res: http.ServerResponse, id: string): boolean {
   return true;
 }
 
-/** URLs for a local file's own artwork (N-01c); paths stay on the server. */
+/** URLs for a local file's own artwork (N-01c), then TMDB's for what it lacks (N-01c online); paths stay on the server. */
 function artView(it: LibItem | undefined): Partial<Record<ArtKind, string>> | undefined {
-  if (!it?.art || it.provider !== "local") return undefined;
+  if (!it) return undefined;
+  const kinds = new Set<ArtKind>([...(it.provider === "local" && it.art ? (Object.keys(it.art) as ArtKind[]) : []), ...online.kinds(it)]);
+  if (!kinds.size) return undefined;
   const out: Partial<Record<ArtKind, string>> = {};
-  for (const k of Object.keys(it.art) as ArtKind[]) out[k] = `/api/art/${it.id}/${k}`;
+  for (const k of kinds) out[k] = `/api/art/${it.id}/${k}`;
   return out;
 }
 /** A show channel's clear logo, if its folder has one; the editor can offer it as the channel's logo. */
@@ -296,8 +315,8 @@ function channelArt(c: StationChannel) {
   if (c.meta.kind !== "show") return undefined;
   const ids = c.revisions[c.revisions.length - 1]!.itemIds;
   for (const id of ids.slice(0, 50)) {
-    const it = itemById(id);
-    if (it?.art?.logo || it?.art?.poster) return artView({ ...it, art: { ...(it.art.logo ? { logo: it.art.logo } : {}), ...(it.art.poster ? { poster: it.art.poster } : {}) } });
+    const a = artView(itemById(id));
+    if (a?.logo || a?.poster) return { ...(a.logo ? { logo: a.logo } : {}), ...(a.poster ? { poster: a.poster } : {}) };
   }
   return undefined;
 }
@@ -315,7 +334,12 @@ function lockedAiringView(a: Airing) {
 /** airingView, or the locked stand-in when this channel is locked and nobody has entered the PIN. */
 function airingViewFor(c: StationChannel): (a: Airing) => object {
   const v = lockView(lineup().settingsFor(c.meta.ruleKey));
-  return v.locked && !v.unlocked ? lockedAiringView : airingView;
+  if (v.locked && !v.unlocked) return lockedAiringView;
+  const group = groupForAiring(c);
+  return (a) => {
+    const g = group(a.itemId);
+    return g ? { ...airingView(a), group: g } : airingView(a);
+  };
 }
 
 function airingView(a: Airing) {
@@ -325,14 +349,16 @@ function airingView(a: Airing) {
     start: a.startMs,
     end: a.endMs,
     itemId: a.itemId,
-    title: p?.kind === "episode" ? p.show : p?.kind === "movie" ? p.title : (it?.name ?? "Unknown"),
+    title: p?.kind === "episode" ? p.show : p?.kind === "movie" ? p.title : it?.trailer ? it.trailer.title : it?.track?.title ?? (it?.name ?? "Unknown"),
     episode: p?.kind === "episode" ? (p.absolute ? `Ep. ${p.episode}` : `S${p.season} · E${p.episode}`) : undefined,
-    year: p?.kind === "movie" ? p.year : undefined,
-    subtitle: it?.subtitle ?? (p?.kind === "episode" ? it?.meta?.title : undefined),
-    genre: it?.genre ?? it?.meta?.genres?.[0],
+    year: p?.kind === "movie" ? p.year : it?.trailer?.year ?? it?.track?.year,
+    subtitle: it?.subtitle ?? (p?.kind === "episode" ? (it?.meta?.title ?? online.text(it)?.name) : undefined),
+    genre: it?.genre ?? it?.meta?.genres?.[0] ?? it?.track?.genre,
     rating: it ? (effectiveRating(it, library.manualRatings())?.rating ?? null) : null,
-    description: it?.meta?.plot,
-    kind: p?.kind,
+    description: it?.meta?.plot ?? online.text(it)?.overview,
+    kind: it?.trailer ? "trailer" : it?.track ? "track" : p?.kind,
+    ...(it?.trailer ? { trailerFor: trailerFor(it.trailer) } : {}),
+    ...(it?.track ? { artist: it.track.artist ?? null, album: it.track.album ?? null, trackNo: it.track.track ?? null } : {}),
     durationMs: it?.durationMs ?? null,
     ...availabilityView(it),
     provider: it?.provider,
@@ -341,6 +367,12 @@ function airingView(a: Airing) {
     art: artView(it),
     segments: a.segments.map((s) => (s.kind === "program" ? { kind: s.kind, start: s.startMs, end: s.endMs, fileFrom: s.fileFromMs } : { kind: s.kind, start: s.startMs, end: s.endMs, reason: s.reason })),
   };
+}
+
+/** The film a trailer advertises, and its library id when the film itself is here (N-23c). */
+function trailerFor(t: { title: string; titleKey: string; year?: number }) {
+  const film = allItems().find((i) => i.present && i.parsed.kind === "movie" && i.parsed.titleKey === t.titleKey && (!t.year || !i.parsed.year || i.parsed.year === t.year));
+  return { title: t.title, year: t.year ?? null, itemId: film?.id ?? null };
 }
 
 /**
@@ -367,7 +399,7 @@ function ratingCoverage(c: StationChannel) {
 
 /** The shows (and films) a channel draws from, for weight sliders and exclusions. */
 function channelGroups(c: StationChannel) {
-  const rule = autoRules(allItems(), lineup().custom()).find((r) => r.key === c.meta.ruleKey);
+  const rule = autoRules(allItems(), lineup().custom(), lineup().groups()).find((r) => r.key === c.meta.ruleKey);
   const out = new Map<string, { key: string; name: string; count: number; genres: string[] }>();
   for (const id of rule?.itemIds ?? []) {
     const it = itemById(id);
@@ -383,7 +415,7 @@ function channelGroups(c: StationChannel) {
 
 /** How many season-0 specials this channel's rule could air (shown or not). */
 function specialsOf(c: StationChannel): number {
-  const rule = autoRules(allItems(), lineup().custom()).find((r) => r.key === c.meta.ruleKey);
+  const rule = autoRules(allItems(), lineup().custom(), lineup().groups()).find((r) => r.key === c.meta.ruleKey);
   return rule?.specialIds?.length ?? 0;
 }
 
@@ -435,7 +467,8 @@ function sourcesView() {
 
 // ---------------------------------------------------------------- media
 
-const MIME: Record<string, string> = { ".mp4": "video/mp4", ".m4v": "video/mp4", ".mkv": "video/x-matroska", ".webm": "video/webm", ".mov": "video/quicktime", ".ts": "video/mp2t" };
+const MIME: Record<string, string> = { ".mp4": "video/mp4", ".m4v": "video/mp4", ".mkv": "video/x-matroska", ".webm": "video/webm", ".mov": "video/quicktime", ".ts": "video/mp2t",
+  ".mp3": "audio/mpeg", ".flac": "audio/flac", ".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg", ".wav": "audio/wav", ".m4a": "audio/mp4" };
 
 async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, id: string, internal: boolean) {
   const it = itemById(id);
@@ -589,6 +622,9 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
   const a = pick("a", "audio");
   const sub = pick("s", "subtitle");
   if (!a.ok || !sub.ok) return json(res, 400, { error: "No such audio or subtitle track." });
+  // Audio codec: AAC by default; ac=opus for browsers without an AAC decoder (some Chromium builds).
+  const ac = url.searchParams.get("ac") ?? "aac";
+  if (ac !== "aac" && ac !== "opus") return json(res, 400, { error: "Audio is ac=aac or ac=opus." });
   const subCodec = sub.index != null ? (sub as { track?: { codec: string } }).track?.codec : undefined;
   const textSub = sub.index != null && (!subCodec || TEXT_SUBS.has(subCodec));
   const burn = sub.index != null && !textSub && url.searchParams.get("burn") === "1" && IMAGE_SUBS.has(subCodec ?? "");
@@ -605,7 +641,7 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
       : ["-map", "0:v:0", ...(copyVideo ? ["-c:v", "copy"] : [...encode, "-vf", "scale='min(1920,iw)':-2"])]),
     // An index we couldn't check against the file's track list is optional, so a wrong guess plays without sound rather than failing.
     "-map", a.index == null ? "0:a:0?" : `0:a:${a.index}${it.tracks?.length ? "" : "?"}`, "-sn", "-dn", "-map_chapters", "-1",
-    "-c:a", "aac", "-ac", "2", "-b:a", "192k",
+    ...(ac === "opus" ? ["-c:a", "libopus", "-ac", "2", "-b:a", "160k"] : ["-c:a", "aac", "-ac", "2", "-b:a", "192k"]),
     "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "pipe:1",
     // Text subtitles ride along as a second output of the same process: no second read.
     // Shifted by the seek so cue times are file times; /api/livesubs makes them stream-relative.
@@ -699,13 +735,9 @@ const liveStarts = new Map<string, number>();
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://${HOST}`);
   const p = url.pathname;
-  // Same-origin only: refuse cross-site requests so a web page can't drive the TV.
-  // Host check blocks DNS-rebinding pages from reading this server as if it were theirs.
-  const host = req.headers.host ?? "";
-  if (host !== `${HOST}:${port}` && host !== `localhost:${port}`) return json(res, 403, { error: "unexpected host" });
-  const origin = req.headers.origin;
-  if (origin && origin !== `http://${HOST}:${port}` && origin !== `http://localhost:${port}`) return json(res, 403, { error: "cross-origin" });
   try {
+    // Host, Origin, home network address and pairing checks; also serves /pair and /api/lan/*.
+    if (await lan.intercept(req, res, url, port)) return;
     if (p.startsWith("/api/")) return await api(req, res, url);
     const live = /^\/media\/([\w-]+)\/live$/.exec(p);
     if (live) return serveLive(req, res, live[1]!, url);
@@ -786,7 +818,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   const art = /^\/api\/art\/([\w-]+)\/(poster|fanart|thumb|logo)$/.exec(p);
   if (art && m === "GET") {
     const it = itemById(art[1]!);
-    const file = it?.provider === "local" ? it.art?.[art[2] as ArtKind] : undefined;
+    const file = (it?.provider === "local" ? it.art?.[art[2] as ArtKind] : undefined) ?? online.imageFile(it, art[2] as ArtKind);
     if (!it || !file) return json(res, 404, { error: "no picture" });
     if (refuseLocked(res, it.id)) return;
     let size = 0;
@@ -819,7 +851,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       h.spans = ledger.export();
       const last = h.recent[0];
       if (!last || last.itemId !== itemId) h.recent.unshift({ at: Date.now(), itemId, channel });
-      else last.at = Date.now();
+      else (last.at = Date.now()), (last.channel = channel);
       h.recent = h.recent.slice(0, 200);
     });
     return json(res, 200, { ok: true });
@@ -887,6 +919,16 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return v == null ? json(res, 404, { pending: true }) : json(res, 200, { startMs: v });
   }
   if (p === "/api/meters") return json(res, 200, meters.snapshot());
+  if (p === "/api/metadata" && m === "GET") return json(res, 200, online.status());
+  if (p === "/api/metadata" && m === "POST") {
+    // { key } checks a TMDB key with TMDB (one request) and keeps it on this PC; { key: null } turns online metadata off.
+    if (!("key" in body)) return json(res, 400, { error: "key missing" });
+    const r = await online.setKey(typeof body.key === "string" ? body.key : null);
+    if (!r.ok) return json(res, 400, { error: r.error });
+    meters.log("api", online.enabled() ? "TMDB key saved; online posters and descriptions are on" : "Online posters and descriptions turned off");
+    if (online.enabled()) rebuild();
+    return json(res, 200, online.status());
+  }
   if (p === "/api/sources" && m === "GET") return json(res, 200, sourcesView());
   if (p === "/api/sources" && m === "POST") {
     const { provider, key, dirs } = body as { provider: string; key?: string; dirs?: string[] };
@@ -1101,11 +1143,24 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     liveLineup.reset();
     demoLineup.reset();
     rmSync(backupDir(), { recursive: true, force: true });
+    online.forget();
     edge.clear();
     pin.clear();
     meters.cache = { bytes: 0, files: 0 };
     rebuild();
     return json(res, 200, { ok: true });
+  }
+  if (p === "/api/ondemand" && m === "GET") {
+    const k = url.searchParams.get("kind");
+    return json(res, 200, onDemandBrowse(onDemandDeps(), url.searchParams.get("q") ?? "", k === "show" || k === "movie" ? k : "all"));
+  }
+  if (p === "/api/ondemand/show" && m === "GET") {
+    const v = onDemandShow(onDemandDeps(), url.searchParams.get("key") ?? "");
+    return v ? json(res, 200, v) : json(res, 404, { error: "no such show" });
+  }
+  if (p === "/api/continue" && m === "GET") {
+    const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") ?? 20) || 20));
+    return json(res, 200, continueWatching(onDemandDeps(), historyFile.get().recent, limit));
   }
   if (p === "/api/library") {
     const q = (url.searchParams.get("q") ?? "").toLowerCase();
@@ -1179,11 +1234,13 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       const restrictedHours = b.restrictedHours === undefined ? undefined : cleanRestricted(b.restrictedHours);
       if (restrictedHours === null) return json(res, 400, { error: "Restricted hours need from/to as HH:MM and a rating G, PG, PG-13, R or NC-17." });
       const slots = b.slots === undefined ? undefined : cleanSlots(b.slots);
-      if (slots === null) return json(res, 400, { error: "Each time slot needs days 1-7, from/to as HH:MM and a source." });
+      if (slots === null) return json(res, 400, { error: "Each time slot needs days 1-7, from/to as HH:MM and a source (dates, if any, as MM-DD)." });
       const weights = b.weights === undefined ? undefined : cleanWeights(b.weights);
       if (weights === null) return json(res, 400, { error: "Weights are 0 to 100 per show." });
       const exclude = b.exclude === undefined ? undefined : cleanExclusions(b.exclude);
       if (exclude === null) return json(res, 400, { error: "Exclusions are lists of show keys and genre names." });
+      const season = b.season === undefined || b.season === null ? b.season : cleanDates(b.season);
+      if (season === null && b.season !== null) return json(res, 400, { error: "A season is {from, to} as MM-DD, like 10-01 to 10-31." });
       const r = l.updateSettings(ch.meta.ruleKey, {
         name: typeof b.name === "string" || b.name === null ? (b.name as string | null) : undefined,
         number: typeof b.number === "number" ? b.number : undefined,
@@ -1200,6 +1257,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
         watched: b.watched === "all" || b.watched === "unwatched" || b.watched === "resume" ? b.watched : undefined,
         exclude: exclude ?? undefined,
         locked: typeof b.locked === "boolean" ? b.locked : undefined,
+        season: season as { from: string; to: string } | null | undefined,
       });
       lockGen++;
       if (!r.ok) return json(res, 409, { error: r.error });
@@ -1212,7 +1270,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       kid: !!st.kid, restrictedHours: st.restrictedHours ?? [], slots: st.slots ?? [],
       specials: !!st.specials, specialsAvailable: specialsOf(c),
       weights: st.weights ?? {}, balance: st.balance ?? "episodes", marathons: !!st.marathons, premieres: !!st.premieres,
-      watched: st.watched ?? "all", exclude: st.exclude ?? {}, groups: channelGroups(c),
+      watched: st.watched ?? "all", exclude: st.exclude ?? {}, groups: channelGroups(c), season: seasonView(st.season),
       // The clock enforces all three; changes start once the program on now ends (C7).
       enforced: true, timeZone: stationTimeZone(), ratings: ratingCoverage(c), ...lockView(st), pinSet: pin.pinSet(), alsoOn: alsoOn(c),
       ...(settingsNote ? { note: settingsNote } : {}) });
@@ -1257,6 +1315,23 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       shows: [...shows.values()].sort((a, b) => a.name.localeCompare(b.name)),
       genres: [...genres.values()].sort((a, b) => a.name.localeCompare(b.name)) } });
   }
+  if (p === "/api/groups" && m === "GET") return json(res, 200, groupsView());
+  if (p === "/api/groups" && m === "POST") {
+    // N-07: create or change a content group. Changing one changes what airs, so the PIN guard applies.
+    if (guarded()) return json(res, 403, PIN_NEEDED);
+    const id = typeof body.id === "string" && body.id ? body.id : undefined;
+    const g = cleanGroup(body, id);
+    if (!g) return json(res, 400, { error: "A group needs a name (up to 40 letters) and a list of shows ({kind:'show', key}) and films ({kind:'movie', id})." });
+    lineup().saveGroup(g);
+    rebuild();
+    return json(res, 200, { ok: true, group: groupsView().groups.find((x) => x.id === g.id) });
+  }
+  if (p === "/api/groups/delete" && m === "POST") {
+    if (guarded()) return json(res, 403, PIN_NEEDED);
+    if (!lineup().deleteGroup(String(body.id ?? ""))) return json(res, 404, { error: "No such group." });
+    rebuild();
+    return json(res, 200, { ok: true });
+  }
   if (p === "/api/channels/hide" && m === "POST") {
     lineup().setHidden(String(body.ruleKey), !!body.hidden);
     lockGen++;
@@ -1265,9 +1340,14 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   if (p === "/api/channels/custom" && m === "POST") {
     if (guarded()) return json(res, 403, PIN_NEEDED);
     const c = body as unknown as CustomChannel;
-    if (!c.name || !Array.isArray(c.showKeys) || !Array.isArray(c.movieIds)) return json(res, 400, { error: "bad channel" });
-    lineup().saveCustom({ id: c.id || Math.random().toString(36).slice(2, 9), name: String(c.name).slice(0, 40), showKeys: c.showKeys.map(String), movieIds: c.movieIds.map(String),
-      ordering: ORDERINGS.includes(c.ordering) ? c.ordering : "block-shuffle", slotMinutes: typeof c.slotMinutes === "number" ? c.slotMinutes : 30 });
+    const list = (v: unknown) => (v === undefined ? [] : Array.isArray(v) ? v.map(String) : null);
+    const showKeys = list(c.showKeys), movieIds = list(c.movieIds), groupIds = list(c.groupIds);
+    if (!c.name || !showKeys || !movieIds || !groupIds || !(showKeys.length + movieIds.length + groupIds.length)) return json(res, 400, { error: "bad channel" });
+    const known = new Set(lineup().groups().map((g) => g.id));
+    if (groupIds.some((g) => !known.has(g))) return json(res, 400, { error: "No such content group." });
+    lineup().saveCustom({ id: c.id || Math.random().toString(36).slice(2, 9), name: String(c.name).slice(0, 40), showKeys, movieIds,
+      ordering: ORDERINGS.includes(c.ordering) ? c.ordering : "block-shuffle", slotMinutes: typeof c.slotMinutes === "number" ? c.slotMinutes : 30,
+      ...(groupIds.length ? { groupIds: groupIds.slice(0, 50) } : {}) });
     rebuild();
     return json(res, 200, { ok: true });
   }
@@ -1287,6 +1367,91 @@ function serveStatic(res: http.ServerResponse, p: string) {
   const types: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2", ".json": "application/json" };
   res.writeHead(200, { "content-type": types[extname(file)] ?? "application/octet-stream", "cache-control": "no-cache" });
   res.end(readFileSync(file));
+}
+
+// ---------------------------------------------------------------- content groups (N-07)
+
+/** Each group's programs as the channels see them (usable, deduplicated library); recomputed per rebuild. */
+let groupSets: { gen: number; l: Lineup; sets: Map<string, string[]> } | null = null;
+function groupPrograms(): Map<string, string[]> {
+  const l = lineup();
+  if (!groupSets || groupSets.gen !== lockGen || groupSets.l !== l) {
+    const rules = autoRules(allItems(), l.custom(), l.groups());
+    const sets = new Map<string, string[]>();
+    for (const g of l.groups()) sets.set(g.id, rules.find((r) => r.key === `group:${g.id}`)?.itemIds ?? []);
+    groupSets = { gen: lockGen, l, sets };
+  }
+  return groupSets.sets;
+}
+/** Groups a channel draws on: its own, those a custom channel includes, and those its slots air. */
+function groupsOf(c: StationChannel): string[] {
+  const l = lineup();
+  const out = new Set<string>();
+  if (c.meta.ruleKey.startsWith("group:")) out.add(c.meta.ruleKey.slice(6));
+  if (c.meta.ruleKey.startsWith("custom:")) for (const g of l.custom().find((x) => `custom:${x.id}` === c.meta.ruleKey)?.groupIds ?? []) out.add(g);
+  for (const sl of l.settingsFor(c.meta.ruleKey).slots ?? []) if (sl.source.startsWith("group:")) out.add(sl.source.slice(6));
+  return [...out];
+}
+/** The group an airing comes from, for the guide's description: the first of the channel's groups that holds it. */
+function groupForAiring(c: StationChannel): (itemId: string) => { id: string; name: string; description?: string } | undefined {
+  const ids = groupsOf(c);
+  if (!ids.length) return () => undefined;
+  const progs = groupPrograms();
+  const groups = lineup().groups().filter((g) => ids.includes(g.id));
+  return (itemId) => {
+    const g = groups.find((x) => progs.get(x.id)?.includes(itemId));
+    return g ? { id: g.id, name: g.name, ...(g.description ? { description: g.description } : {}) } : undefined;
+  };
+}
+function groupsView() {
+  const l = lineup();
+  const progs = groupPrograms();
+  // One row per way a channel uses the group: its own channel, inside a custom channel, or in a time slot.
+  const usedBy = (id: string) => l.allChannels().flatMap((c) => {
+    const hows = [
+      c.meta.ruleKey === `group:${id}` && "own",
+      c.meta.ruleKey.startsWith("custom:") && l.custom().find((x) => `custom:${x.id}` === c.meta.ruleKey)?.groupIds?.includes(id) && "custom",
+      l.settingsFor(c.meta.ruleKey).slots?.some((sl) => sl.source === `group:${id}`) && "slot",
+    ].filter((h): h is string => !!h);
+    return hows.map((how) => ({ id: c.id, number: c.number, name: c.name, how }));
+  });
+  const items = allItems().filter((i) => i.present && i.parsed.kind !== "other");
+  const shows = new Map<string, { key: string; name: string; episodes: number }>();
+  const movies: Array<{ id: string; title: string; year?: number }> = [];
+  for (const i of items) {
+    if (i.parsed.kind === "episode") {
+      const sh = shows.get(i.parsed.showKey) ?? { key: i.parsed.showKey, name: i.parsed.show, episodes: 0 };
+      sh.episodes++;
+      shows.set(i.parsed.showKey, sh);
+    } else if (i.parsed.kind === "movie") movies.push({ id: i.id, title: i.parsed.title, ...(i.parsed.year ? { year: i.parsed.year } : {}) });
+  }
+  return {
+    groups: l.groups().map((g) => {
+      const ids = progs.get(g.id) ?? [];
+      const ms = ids.reduce((n, id) => n + (itemById(id)?.durationMs ?? 0), 0);
+      return { ...g, description: g.description ?? "", channel: !!g.channel, ruleKey: `group:${g.id}`, programs: ids.length, hours: Math.round(ms / 360_000) / 10, usedBy: usedBy(g.id) };
+    }),
+    options: { shows: [...shows.values()].sort((a, b) => a.name.localeCompare(b.name)), movies: movies.sort((a, b) => a.title.localeCompare(b.title)) },
+  };
+}
+
+/** On Demand reads the library and history only: 0 provider calls, 0 bytes (N-30). */
+function onDemandDeps(): OnDemandDeps {
+  const manual = library.manualRatings();
+  return {
+    items: allItems().filter((i) => i.present),
+    seenMs: (id) => ledger.seenMs(id),
+    furthestMs: (id) => ledger.furthestMs(id),
+    watched: (id, d) => isWatched(id, d),
+    locked: (id) => lockedItem(id),
+    extra: (it) => ({
+      rating: effectiveRating(it, manual)?.rating ?? null,
+      description: it.meta?.plot ?? online.text(it)?.overview,
+      ...availabilityView(it),
+      art: artView(it),
+      codecs: { container: it.container, video: it.video, audio: it.audio, ...mediaBadges(it) },
+    }),
+  };
 }
 
 function historyRow(r: HistoryState["recent"][number], h: HistoryState) {
@@ -1312,7 +1477,7 @@ return {
       server.once("error", reject);
       server.listen(port, HOST, () => {
         port = (server.address() as AddressInfo).port;
-        resolveListen(port);
+        lan.start(server, port).then(() => resolveListen(port), reject);
       });
     });
   },
@@ -1320,12 +1485,14 @@ return {
     if (tick) clearInterval(tick);
     if (rebuildTimer) clearTimeout(rebuildTimer);
     library.stopScan("Shutting down");
-    return new Promise((r) => {
+    online.stop();
+    return lan.stop().then(() => new Promise((r) => {
       server.closeAllConnections();
       server.close(() => r());
-    });
+    }));
   },
   isDemo,
+  lan,
   ffmpeg: !!ffmpeg,
 };
 }
@@ -1384,5 +1551,6 @@ if (isMain) {
   console.log(`\n  📺  DebridTV is on the air:  http://${HOST}:${port}\n`);
   console.log(`  Mode: ${app.isDemo() ? "demo (connect a source in Settings)" : "your library"}`);
   console.log(`  Compatibility mode (ffmpeg): ${app.ffmpeg ? "available" : "not found — some files may not play in the browser"}`);
+  console.log(`  Home network: ${app.lan.enabled ? "on (paired TVs and phones can open it)" : "off (turn on at http://" + HOST + ":" + port + "/lan)"}`);
   console.log(`  Data folder: ${dataDir()}\n`);
 }

@@ -108,11 +108,14 @@ const MKV_CODECS: [RegExp, string][] = [
   [/^S_TEXT\/UTF8/, "srt"],
   [/^S_TEXT\/(ASS|SSA)/, "ass"],
   [/^S_TEXT\/WEBVTT/, "webvtt"],
+  [/^D_WEBVTT/, "webvtt"], // WebM's text tracks: D_WEBVTT/SUBTITLES, /CAPTIONS, /DESCRIPTIONS
+  [/^S_TEXT\/ASCII/, "srt"],
+  [/^A_VORBIS/, "vorbis"],
   [/^S_HDMV\/PGS/, "pgs"],
   [/^S_VOBSUB/, "vobsub"],
 ];
 
-function mkvCodecName(id: string): string {
+export function mkvCodecName(id: string): string {
   for (const [re, name] of MKV_CODECS) if (re.test(id)) return name;
   return id;
 }

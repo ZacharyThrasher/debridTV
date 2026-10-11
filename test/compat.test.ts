@@ -85,3 +85,15 @@ test("N-18a: the compatibility stream plays the chosen audio track and sends tex
   assert.equal((await fetch(`${base}/media/${id}/live?a=7`)).status, 400, "an audio track the file doesn't have");
   assert.equal((await fetch(`${base}/api/livesubs?tok=nope`)).status, 404);
 });
+
+test("N-18a: ac=opus gives Opus audio for browsers without AAC; other codecs are refused", { skip: !hasFfmpeg }, async () => {
+  assert.ok(id, "file scanned");
+  const res = await fetch(`${base}/media/${id}/live?start=0&ac=opus`);
+  assert.equal(res.status, 200);
+  const out = join(home, "opus.mp4");
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(out, new Uint8Array(await res.arrayBuffer()));
+  const { stdout } = await run("ffprobe", ["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_name", "-of", "csv=p=0", out]);
+  assert.equal(stdout.trim(), "opus");
+  assert.equal((await fetch(`${base}/media/${id}/live?ac=mp3`)).status, 400);
+});

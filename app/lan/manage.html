@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Home network · DebridTV</title>
+  <meta name="color-scheme" content="dark" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/fonts/fonts.css" />
+  <style>
+    :root {
+      --bg: #060816; --ink: #eef0ff; --dim: #98a1d4; --panel: #0e1230; --panel-2: #161c48;
+      --line: rgba(140, 160, 255, 0.16); --amber: #ffb547; --magenta: #ff5fa2; --cyan: #4fe3ff; --ok: #6ff2a8; --bad: #ff6b6b;
+      --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+      --body: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+      --mono: VT323, ui-monospace, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--body); }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+    a.back { color: var(--dim); text-decoration: none; font-size: 14px; }
+    a.back:hover, a.back:focus { color: var(--amber); }
+    h1 { font-family: var(--display); font-weight: 700; font-size: 44px; margin: 8px 0 4px; letter-spacing: .01em; }
+    .sub { color: var(--dim); margin: 0 0 24px; }
+    section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+    h2 { font-family: var(--display); font-weight: 600; font-size: 24px; margin: 0 0 8px; }
+    .row { display: flex; align-items: center; gap: 16px; justify-content: space-between; flex-wrap: wrap; }
+    .muted { color: var(--dim); }
+    .switch { position: relative; width: 64px; height: 34px; flex: none; }
+    .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+    .switch span { position: absolute; inset: 0; background: var(--panel-2); border: 1px solid var(--line); border-radius: 99px; transition: background .2s; pointer-events: none; }
+    .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%; background: var(--dim); transition: transform .2s var(--ease, ease), background .2s; }
+    .switch input:checked + span { background: linear-gradient(135deg, var(--amber), var(--magenta)); }
+    .switch input:checked + span::after { transform: translateX(30px); background: #fff; }
+    .switch input:focus-visible + span { outline: 3px solid var(--amber); outline-offset: 2px; }
+    .url { font-family: var(--mono); font-size: 34px; color: var(--cyan); letter-spacing: .02em; word-break: break-all; user-select: all; }
+    button {
+      font: 600 15px var(--body); color: var(--ink); background: var(--panel-2); border: 1px solid var(--line);
+      border-radius: 10px; padding: 9px 16px; cursor: pointer;
+    }
+    button:hover, button:focus-visible { border-color: var(--amber); outline: none; }
+    button.primary { background: linear-gradient(135deg, var(--amber), var(--magenta)); color: #1a0d1e; border: 0; }
+    button.danger:hover, button.danger:focus-visible { border-color: var(--bad); color: var(--bad); }
+    .code { font-family: var(--mono); font-size: 96px; line-height: 1; letter-spacing: .14em; color: var(--amber); text-shadow: 0 0 24px rgba(255, 181, 71, .35); margin: 8px 0; }
+    .bar { height: 4px; background: var(--panel-2); border-radius: 4px; overflow: hidden; margin: 10px 0 14px; }
+    .bar i { display: block; height: 100%; background: var(--amber); transition: width 1s linear; }
+    #devices { list-style: none; padding: 0; margin: 8px 0 0; }
+    #devices li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+    #devices li:first-child { border-top: 0; }
+    #devices .who { flex: 1; min-width: 200px; }
+    #devices .name { font-weight: 600; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); flex: none; }
+    .dot.on { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
+    .note { font-size: 13px; color: var(--dim); }
+    .err { color: var(--bad); }
+    ol { margin: 6px 0 0; padding-left: 20px; color: var(--dim); }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="back" href="/">← Back to TV</a>
+    <h1>Home network</h1>
+    <p class="sub">Watch on your TV, phone or tablet over your home Wi-Fi. Video still comes through this PC, your provider keys stay here, and parental locks apply everywhere.</p>
+
+    <section>
+      <div class="row">
+        <div>
+          <h2>Let devices on my Wi-Fi watch</h2>
+          <div class="muted" id="stateLine">Off. Only this PC can open DebridTV.</div>
+        </div>
+        <label class="switch" aria-label="Home network access"><input type="checkbox" id="toggle" /><span></span></label>
+      </div>
+      <div id="errors" class="err note" hidden></div>
+    </section>
+
+    <section id="openSec" hidden>
+      <h2>On your TV or phone, open</h2>
+      <div id="urls"></div>
+      <ol>
+        <li>Use the web browser on the TV or phone, connected to the same Wi-Fi as this PC.</li>
+        <li>Type the address above. You'll see a pairing screen the first time.</li>
+        <li>Choose <b>Pair a device</b> below and type the code on the TV or phone.</li>
+      </ol>
+      <p class="note" id="noAddr" hidden>This PC doesn't seem to be on a home network right now (no private address found).</p>
+    </section>
+
+    <section id="pairSec" hidden>
+      <div class="row">
+        <h2>Pair a device</h2>
+        <button class="primary" id="pairBtn">Pair a device</button>
+      </div>
+      <div id="codeBox" hidden>
+        <div class="code" id="code" aria-live="polite"></div>
+        <div class="bar"><i id="bar"></i></div>
+        <div class="row">
+          <span class="muted" id="codeLine"></span>
+          <button id="cancelBtn">Cancel</button>
+        </div>
+      </div>
+      <p class="note" id="pairedMsg" hidden></p>
+    </section>
+
+    <section id="devSec">
+      <h2>Paired devices</h2>
+      <p class="muted" id="noDevices">None yet.</p>
+      <ul id="devices"></ul>
+      <p class="note">Removing a device stops anything it's playing right away. It would need a new code to come back.</p>
+    </section>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let st = null;
+    let knownIds = new Set();
+    let timer = null;
+
+    async function call(path, body) {
+      const res = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(out.error || res.statusText);
+      return out;
+    }
+    const ago = (ms) => {
+      const s = Math.max(0, (Date.now() - ms) / 1000);
+      if (s < 90) return "just now";
+      if (s < 3600) return `${Math.round(s / 60)} min ago`;
+      if (s < 86400 * 2) return `${Math.round(s / 3600)} h ago`;
+      return new Date(ms).toLocaleDateString();
+    };
+
+    function render(next) {
+      const fresh = next.devices.filter((d) => !knownIds.has(d.id));
+      if (st && fresh.length) {
+        $("pairedMsg").hidden = false;
+        $("pairedMsg").textContent = `Paired “${fresh[0].name}”.`;
+      }
+      knownIds = new Set(next.devices.map((d) => d.id));
+      st = next;
+      $("toggle").checked = st.enabled;
+      $("stateLine").textContent = st.enabled
+        ? `On. ${st.devices.length} paired device${st.devices.length === 1 ? "" : "s"}. Not reachable from the internet.`
+        : "Off. Only this PC can open DebridTV.";
+      $("errors").hidden = !st.errors.length;
+      $("errors").textContent = st.errors.length ? `Couldn't listen on: ${st.errors.join("; ")}` : "";
+      $("openSec").hidden = !st.enabled;
+      $("pairSec").hidden = !st.enabled;
+      $("urls").innerHTML = "";
+      for (const a of st.addresses) $("urls").appendChild(Object.assign(document.createElement("div"), { className: "url", textContent: a.url.replace(/^http:\/\//, "") }));
+      $("noAddr").hidden = st.addresses.length > 0;
+
+      const p = st.pairing;
+      $("codeBox").hidden = !p;
+      $("pairBtn").hidden = !!p;
+      if (p) {
+        $("code").textContent = `${p.code.slice(0, 3)} ${p.code.slice(3)}`;
+        tickCode();
+      }
+
+      const ul = $("devices");
+      ul.innerHTML = "";
+      $("noDevices").hidden = st.devices.length > 0;
+      for (const d of st.devices) {
+        const li = document.createElement("li");
+        li.innerHTML = `<span class="dot"></span><div class="who"><div class="name"></div><div class="note"></div></div><button data-act="rename">Rename</button><button class="danger" data-act="revoke">Remove</button>`;
+        li.querySelector(".dot").classList.toggle("on", d.connected);
+        li.querySelector(".name").textContent = d.name;
+        li.querySelector(".note").textContent = `${d.connected ? "Connected now" : `Last seen ${ago(d.lastSeenAt)}`} · paired ${new Date(d.pairedAt).toLocaleDateString()}${d.lastAddress ? ` · ${d.lastAddress}` : ""}`;
+        li.querySelector('[data-act="rename"]').onclick = async () => {
+          const name = prompt("Name this device", d.name);
+          if (name) render(await call("/api/lan/rename", { id: d.id, name }));
+        };
+        li.querySelector('[data-act="revoke"]').onclick = async () => {
+          if (confirm(`Remove “${d.name}”? It stops playing now and needs a new code to come back.`)) render(await call("/api/lan/revoke", { id: d.id }));
+        };
+        ul.appendChild(li);
+      }
+      clearTimeout(timer);
+      timer = setTimeout(refresh, st.pairing ? 1500 : 5000);
+    }
+
+    function tickCode() {
+      const p = st && st.pairing;
+      if (!p) return;
+      const left = Math.max(0, p.expiresAt - Date.now());
+      $("bar").style.width = `${(left / 300000) * 100}%`;
+      const m = Math.floor(left / 60000), s = Math.floor((left % 60000) / 1000);
+      $("codeLine").textContent = `Type this on the TV or phone. Expires in ${m}:${String(s).padStart(2, "0")}.`;
+    }
+    setInterval(tickCode, 1000);
+
+    async function refresh() {
+      try { render(await call("/api/lan")); } catch (e) { $("stateLine").textContent = e.message; }
+    }
+    $("toggle").onchange = async (e) => {
+      try { render(await call("/api/lan", { enabled: e.target.checked })); } catch (err) { alert(err.message); refresh(); }
+    };
+    $("pairBtn").onclick = async () => { $("pairedMsg").hidden = true; render(await call("/api/lan/pairing", {})); };
+    $("cancelBtn").onclick = async () => render(await call("/api/lan/pairing/cancel", {}));
+    refresh();
+  </script>
+</body>
+</html>

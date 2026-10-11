@@ -25,6 +25,12 @@ export interface DaypartProgram {
   slotMs?: number;
 }
 
+/** Yearly dates, "MM-DD", inclusive; `to` before `from` wraps the new year (12-15 to 01-05). */
+export interface DateRange {
+  from: string;
+  to: string;
+}
+
 export interface DaypartRule {
   /** ISO weekdays, Mon=1 … Sun=7. Missing = every day. Days count from the start time. */
   days?: number[];
@@ -36,6 +42,12 @@ export interface DaypartRule {
   maxRating?: Rating;
   /** While the window is open, this replaces the channel's usual lineup. */
   program?: DaypartProgram;
+  /** Only on these dates each year (seasonal slots, N-32); the date the window starts counts. */
+  dates?: DateRange;
+  /** Turns `dates` around: the rule applies on every date outside the range. */
+  outside?: boolean;
+  /** Nothing airs while this rule's window is open (a seasonal channel out of season). */
+  offAir?: boolean;
 }
 
 export interface Dayparts {
@@ -52,6 +64,8 @@ export interface Window {
   maxRating?: Rating;
   /** Same key = same source of programs; windows with one key share a running order. */
   key: string;
+  /** Off the air: nothing is scheduled. */
+  off?: boolean;
 }
 
 interface LocalDate {
@@ -130,6 +144,36 @@ function weekday(d: LocalDate): number {
   return ((new Date(Date.UTC(d.y, d.m - 1, d.d)).getUTCDay() + 6) % 7) + 1;
 }
 
+const MMDD = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+/** True for a well-formed "MM-DD". */
+export function validMonthDay(s: unknown): s is string {
+  return typeof s === "string" && MMDD.test(s);
+}
+
+/** Whether a local date falls in a yearly range (inclusive; wraps the new year when to < from). */
+export function inDates(d: { m: number; d: number }, r: DateRange): boolean {
+  const md = d.m * 100 + d.d;
+  const a = Number(r.from.replace("-", ""));
+  const b = Number(r.to.replace("-", ""));
+  return a <= b ? md >= a && md <= b : md >= a || md <= b;
+}
+
+/**
+ * A yearly season as of `nowMs` in a zone: in or out, and the local midnight
+ * when that next changes (null if it never does, e.g. 01-01 to 12-31).
+ */
+export function seasonState(r: DateRange, nowMs: number, tz: string): { inSeason: boolean; nextChangeMs: number | null } {
+  const f = localFields(nowMs, tz);
+  let date: LocalDate = { y: f.y, m: f.m, d: f.d };
+  const inSeason = inDates(date, r);
+  for (let i = 0; i < 367; i++) {
+    date = addDays(date, 1);
+    if (inDates(date, r) !== inSeason) return { inSeason, nextChangeMs: zonedMs(date, 0, tz) };
+  }
+  return { inSeason, nextChangeMs: null };
+}
+
 function minutesOf(hhmm: string): number {
   const [h, m] = hhmm.split(":").map(Number);
   return h! * 60 + m!;
@@ -141,6 +185,7 @@ function intervalsStarting(rules: DaypartRule[], date: LocalDate, tz: string): A
   const wd = weekday(date);
   rules.forEach((r, i) => {
     if (r.days && r.days.length && !r.days.includes(wd)) return;
+    if (r.dates && inDates(date, r.dates) === !!r.outside) return;
     const a = minutesOf(r.from);
     const b = minutesOf(r.to);
     const startMs = zonedMs(date, a, tz);
@@ -150,8 +195,8 @@ function intervalsStarting(rules: DaypartRule[], date: LocalDate, tz: string): A
   return out;
 }
 
-function windowKey(program: number, maxRating: Rating | undefined): string {
-  return `${program < 0 ? "base" : `slot${program}`}|${maxRating ?? "any"}`;
+function windowKey(program: number, maxRating: Rating | undefined, off = false): string {
+  return off ? "off" : `${program < 0 ? "base" : `slot${program}`}|${maxRating ?? "any"}`;
 }
 
 /**
@@ -184,13 +229,14 @@ export function* windows(dp: Dayparts, fromMs: number, baseMax?: Rating): Genera
       const program = active.find((r) => dp.rules[r]!.program) ?? -1;
       let maxRating = baseMax;
       for (const r of active) maxRating = stricter(maxRating, dp.rules[r]!.maxRating);
-      const key = windowKey(program, maxRating);
+      const off = active.some((r) => dp.rules[r]!.offAir);
+      const key = windowKey(program, maxRating, off);
       // Same contents carry on; a very long run is still handed out a week at a
       // time (the consumer joins touching windows with the same key).
       if (pending && pending.key === key && pending.endMs === a && b - pending.startMs <= 7 * 86_400_000) pending.endMs = b;
       else {
         if (pending) yield pending;
-        pending = { startMs: a, endMs: b, program, maxRating, key };
+        pending = { startMs: a, endMs: b, program, maxRating, key, ...(off ? { off } : {}) };
       }
     }
     date = next;
