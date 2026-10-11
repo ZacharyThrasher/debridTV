@@ -136,20 +136,23 @@ const ROUTE_LABEL = { direct: "Direct play", live: "Compatibility mode", demo: "
 
 // Watching from On Demand (N-30): the player says when a pick starts and ends. The
 // banner then shows the file's own position instead of the station's, and no LIVE.
-let od = null; // { itemId, fromMs, durationMs, at }
+let od = null; // the player's tv.onDemand: { itemId, fromMs, durationMs, title, positionMs (a getter) }
+let odAt = 0;
 addEventListener("debridtv:ondemand", (e) => {
-  od = e.detail ? { ...e.detail, at: Date.now() } : null;
+  od = e.detail ?? null;
+  odAt = Date.now();
   ratingEl.hidden = true;
   if (bannerState || od) showBanner();
 });
 /** Where in the file we are: the player's own answer when it has one, else time since the start. */
 function odPosition() {
-  const p = typeof od.positionMs === "function" ? od.positionMs() : null;
-  return Number.isFinite(p) ? p : od.fromMs + (Date.now() - od.at);
+  const p = typeof od.positionMs === "function" ? od.positionMs() : od.positionMs;
+  return Number.isFinite(p) ? p : od.fromMs + (Date.now() - odAt);
 }
 
 function renderOnDemand() {
-  const it = onDemandItem() ?? {};
+  const picked = onDemandItem();
+  const it = picked?.id === od.itemId ? picked : {};
   const dur = od.durationMs ?? it.durationMs ?? 0;
   const pos = clamp(odPosition(), 0, dur || Infinity);
   const bits = [it.label && html`<span class="ep">${it.label}</span>`, it.kind === "episode" && it.subtitle && html`<span>“${it.subtitle}”</span>`,
@@ -163,7 +166,7 @@ function renderOnDemand() {
     <div class="b-main ${art ? "has-art" : ""}" data-art-box>
       ${raw(artImg(art, `b-art ${wide ? "wide" : "tall"}`))}
       <div class="b-text">
-      <div class="title">${it.title ?? "On Demand"}</div>
+      <div class="title">${it.title ?? od.title ?? "On Demand"}</div>
       <div class="meta">${bits}</div>
       ${dur ? raw(`<div class="progress od"><i style="width:${((pos / dur) * 100).toFixed(2)}%"></i></div>`) : ""}
       </div>

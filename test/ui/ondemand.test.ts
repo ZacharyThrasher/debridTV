@@ -197,7 +197,7 @@ describe("On Demand (N-30)", { skip }, () => {
 
   it("the banner shows file time and ON DEMAND while a pick plays", async () => {
     const { page, ctx } = await open();
-    await js(page, `dispatchEvent(new CustomEvent("debridtv:ondemand", { detail: { itemId: "x", fromMs: 65000, durationMs: 1320000, positionMs: () => 125000 } }))`);
+    await js(page, `dispatchEvent(new CustomEvent("debridtv:ondemand", { detail: { itemId: "x", fromMs: 65000, durationMs: 1320000, get positionMs() { return 125000; } } }))`);
     await page.waitForSelector("#banner:not([hidden]) .badge.od");
     assert.match(await js(page, "document.querySelector('#banner .times').textContent"), /^2:05 \/ 22:00$/);
     assert.equal(await js(page, "!!document.querySelector('#banner .badge.live')"), false);
