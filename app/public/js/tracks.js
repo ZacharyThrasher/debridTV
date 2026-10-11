@@ -163,7 +163,7 @@ function styleCues() {
   const s = document.createElement("style");
   // Line-21 closed captions: white mono text on solid black boxes.
   s.textContent = `#video::cue { background: rgba(0,0,0,.9); color: #fff; font-family: VT323, ui-monospace, Consolas, monospace;
-    font-size: clamp(18px, 3.2vh, 42px); line-height: 1.15; text-shadow: none; }
+    font-size: clamp(20px, 4.4vh, 56px); line-height: 1.15; text-shadow: none; }
   #video::-webkit-media-text-track-display { padding: 0 .3em; }`;
   document.head.append(s);
 }
