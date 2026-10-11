@@ -7,6 +7,7 @@
 import { api } from "./api.js";
 import { html, raw, esc, fmtBytes, fmtDur, ago, pref, setPref, toast, fmtTime } from "./util.js";
 import { tv, applyVolume } from "./player.js";
+import { keepFocus } from "./spatial.js";
 
 const panel = document.getElementById("panel");
 const body = document.getElementById("panel-body");
@@ -27,8 +28,16 @@ export function initPanel(changed) {
     b.textContent = "Library";
     panel.querySelector('[data-tab="sources"]')?.after(b);
   }
-  panel.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  panel.querySelectorAll("[data-tab]").forEach((b) => {
+    b.addEventListener("click", () => showTab(b.dataset.tab));
+    // A remote moving along the tabs shows each one, like a TV settings menu.
+    b.addEventListener("focus", () => {
+      clearTimeout(tabTimer);
+      if (document.documentElement.classList.contains("remote") && b.dataset.tab !== tab) tabTimer = setTimeout(() => showTab(b.dataset.tab), 180);
+    });
+  });
 }
+let tabTimer = 0;
 
 /** `section` picks a part of a tab: openPanel("library", "ratings") opens the age ratings and focuses its search. */
 export function openPanel(which = tab, section) {
@@ -36,6 +45,8 @@ export function openPanel(which = tab, section) {
   panel.hidden = false;
   document.body.classList.add("panel-open");
   showTab(which);
+  // Put the remote on the open tab so the arrows work straight away.
+  if (!panel.contains(document.activeElement)) panel.querySelector(`[data-tab="${which}"]`)?.focus({ focusVisible: document.documentElement.classList.contains("remote") });
   if (which === "library" && section === "ratings")
     setTimeout(() => {
       const q = document.getElementById("lib-q");
@@ -45,6 +56,7 @@ export function openPanel(which = tab, section) {
 }
 
 export function closePanel() {
+  if (panel.contains(document.activeElement)) document.activeElement.blur(); // so OK doesn't press a hidden button
   panel.hidden = true;
   document.body.classList.remove("panel-open");
   clearInterval(poll);
@@ -67,7 +79,8 @@ async function render() {
     const out = await fn();
     if (out != null) {
       const y = body.scrollTop;
-      body.innerHTML = String(out);
+      // Keep the remote's place across the 2 s refresh (spatial.js).
+      keepFocus(body, () => (body.innerHTML = String(out)));
       body.scrollTop = y;
     }
   } catch (e) {
@@ -491,6 +504,8 @@ async function look() {
       <span style="display:flex;gap:.4em;flex-wrap:wrap">
       <select class="input" style="width:auto" data-pref-select="theme" aria-label="Theme">${raw(themes.map(([k, v]) => `<option value="${esc(k)}" ${pref("theme") === k ? "selected" : ""}>${esc(v)}</option>`).join(""))}</select>
       ${themeMod?.openThemeEditor ? html`<button class="btn" data-theme-edit>Customize…</button>` : ""}</span></div>
+    <div class="opt"><div><div class="ol">TV mode</div><div class="od">Bigger text and buttons for a TV across the room, kept clear of the edges a TV can crop. Auto turns it on for TV browsers.</div></div>
+      <select class="input" style="width:auto" data-pref-select="tv" aria-label="TV mode">${raw([["auto", "Auto"], ["on", "On"], ["off", "Off"]].map(([v, l]) => `<option value="${v}" ${v === (pref("tv") ?? "auto") ? "selected" : ""}>${l}</option>`).join(""))}</select></div>
     ${raw(sw("crt", "CRT screen", "Scanlines and a soft vignette, like an old set."))}
     ${raw(sw("static", "Static between channels", "Snow while the next channel tunes in."))}
     ${raw(sw("sound", "Tuner sounds", "A click and a hiss when you change channel."))}

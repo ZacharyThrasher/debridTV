@@ -401,7 +401,7 @@ body.guide-open { background: var(--bg); }
 .guide-details .desc { margin-top: calc(var(--u)*.6); color: var(--dim); font-size: calc(var(--u)*.95); line-height: 1.45; max-width: 44em; }
 
 .guide-bar {
-  display: grid; grid-template-columns: auto auto 1fr auto; gap: calc(var(--u)*1.6); align-items: center;
+  display: grid; grid-template-columns: auto auto 1fr auto auto auto; gap: calc(var(--u)*1.6); align-items: center;
   padding: calc(var(--u)*.7) calc(var(--u)*1.6); border-top: 1px solid var(--line-strong); border-bottom: 1px solid var(--line);
   background: var(--panel-2);
 }
@@ -833,7 +833,10 @@ body:not(.pointer) { cursor: none; }
   .guide-top { grid-template-columns: 1fr; }
   .guide-preview { display: none; }
   .guide-hints { display: none; }
-  .guide-bar { grid-template-columns: auto 1fr auto; padding: .6em 1em; }
+  .guide-bar { grid-template-columns: auto 1fr auto auto auto; padding: .6em 1em; }
+  .guide-tools b { display: none; }
+  .guide-date { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .guide-details .act { display: none; }
   .grid { --row: 3.6em; }
   .banner { grid-template-columns: auto 1fr; }
   .banner .next { display: none; }
@@ -1048,3 +1051,72 @@ body.calm .card .brk-fan img { animation: artfade 1.2s var(--ease) both; }
 .ced-art-pick img { height: calc(var(--u)*4.4); max-width: calc(var(--u)*10); object-fit: contain; }
 .ced-art-pick.poster img { aspect-ratio: 2/3; object-fit: cover; border-radius: .3em; }
 .ced-art .ced-hint { flex-basis: 100%; margin: 0; color: var(--dim); font-size: .85em; }
+
+/* ------------------------------------------------------------------ remote and TV (10-foot) */
+/* html.remote: the last input was a key, so focus shows strongly enough to follow from a
+   couch. html.tv (spatial.js): a TV across the room. Units grow about a quarter, and
+   everything that sits on the picture stays inside the overscan safe area, so a set that
+   crops its edges never cuts off the banner, the bug or the guide. */
+:root { --safe-x: 0px; --safe-y: 0px; --ring: 3px; }
+html.tv { --u: clamp(14px, 1.32vw, 34px); --safe-x: 3.5vw; --safe-y: 4vh; --ring: 4px; }
+html:not(.tv) .tv-only { display: none !important; }
+html.tv .kb-only { display: none !important; }
+
+html.remote :focus-visible {
+  outline: var(--ring) solid var(--focus); outline-offset: 3px;
+  box-shadow: 0 0 0 calc(var(--ring) + 7px) color-mix(in srgb, var(--focus) 22%, transparent);
+}
+html.remote .btn:focus-visible, html.remote .chip:focus-visible, html.remote .x-chip:focus-visible, html.remote .guide-tools button:focus-visible {
+  transform: scale(1.05); transition: transform .12s var(--ease);
+}
+html.remote .tabs button:focus-visible { outline-offset: -3px; border-radius: .5em; color: var(--ink); background: color-mix(in srgb, var(--focus) 14%, transparent); }
+html.remote .switch input:focus-visible { outline: none; box-shadow: none; }
+html.remote .switch input:focus-visible + i { outline: var(--ring) solid var(--focus); outline-offset: 3px; box-shadow: 0 0 0 calc(var(--ring) + 7px) color-mix(in srgb, var(--focus) 22%, transparent); }
+/* Inputs reached by the remote: say that Left/Right steps a choice. */
+html.remote :is(.panel, .ced) select:focus-visible {
+  appearance: none; padding-right: 2.8em;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 12'%3E%3Cpath d='M6 1 1 6l5 5zM22 1l5 5-5 5z' fill='%23ffb547'/%3E%3C/svg%3E") right .7em center / 1.6em auto no-repeat, color-mix(in srgb, var(--focus) 12%, var(--panel-solid));
+}
+:is(.panel, .ced, .welcome) :is(button, input, select, textarea, summary, a) { scroll-margin: calc(var(--u)*3); }
+
+/* Guide toolbar: Now and Settings, reached with Up from the top row. */
+.guide-tools { display: flex; gap: calc(var(--u)*.4); }
+.guide-tools button {
+  display: inline-flex; align-items: center; gap: .4em; padding: .38em .9em; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--line-strong); background: color-mix(in srgb, var(--ink) 5%, transparent); color: var(--dim);
+  font-weight: 600; font-size: calc(var(--u)*.85);
+}
+.guide-tools button:hover, .guide-tools button:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--focus) 16%, transparent); border-color: var(--focus); }
+.guide-tools button span { font-size: 1.15em; line-height: 1; }
+.guide-tools b { font-weight: inherit; }
+.guide.in-tools .cell.focus { outline-color: var(--line-strong); box-shadow: none; --fill: var(--cell-now); }
+.guide-jump {
+  font-family: var(--mono); font-size: calc(var(--u)*2); line-height: 1; color: var(--osd); min-width: 0;
+  text-shadow: 0 0 calc(var(--u)*.5) color-mix(in srgb, var(--osd) 55%, transparent); visibility: hidden;
+}
+.guide-jump.on { visibility: visible; }
+.elsewhere .label .hint { margin-left: .8em; letter-spacing: .06em; text-transform: none; font-family: var(--body); font-weight: 500; opacity: .8; }
+html:not(.remote):not(.tv) .elsewhere .label .hint { display: none; }
+
+/* Safe area: overlays on the picture, the guide and the settings sheet. */
+html.tv .banner { padding-left: calc(var(--u)*3 + var(--safe-x)); padding-right: calc(var(--u)*3 + var(--safe-x)); padding-bottom: calc(var(--u)*2.4 + var(--safe-y)); }
+html.tv .bug { right: calc(var(--u)*2 + var(--safe-x)); bottom: calc(var(--u)*2 + var(--safe-y)); }
+html.tv .bug[data-pos="bl"] { right: auto; left: calc(var(--u)*2 + var(--safe-x)); }
+html.tv .bug[data-pos="tr"] { bottom: auto; top: calc(var(--u)*2 + var(--safe-y)); }
+html.tv .bug[data-pos="tl"] { bottom: auto; top: calc(var(--u)*2 + var(--safe-y)); right: auto; left: calc(var(--u)*2 + var(--safe-x)); }
+html.tv .osd-num { top: calc(var(--u)*2.2 + var(--safe-y)); right: calc(var(--u)*3 + var(--safe-x)); }
+html.tv .rating-card { left: calc(var(--u)*2.4 + var(--safe-x)); top: calc(var(--u)*2.4 + var(--safe-y)); }
+html.tv .toast { top: calc(var(--u)*2 + var(--safe-y)); }
+html.tv .guide { padding: var(--safe-y) var(--safe-x); background: linear-gradient(180deg, rgba(4,6,18,0) 0%, rgba(4,6,18,0) 39.5%, var(--panel-solid) 40%); }
+html.tv .guide-bar { border-radius: calc(var(--u)*.6) calc(var(--u)*.6) 0 0; }
+@media (min-width: 761px) {
+  html.tv body.guide-open #stage { transform: translate(calc(var(--u)*1.2 + var(--safe-x)), calc(var(--safe-y) + 1.5vh)) scale(.31); }
+  html.tv .guide-preview .preview-label { left: calc(var(--u)*1.8); bottom: calc(var(--u)*.6); }
+}
+html.tv .panel { top: var(--safe-y); bottom: var(--safe-y); right: var(--safe-x); border: 1px solid var(--line-strong); border-radius: calc(var(--u)*1.2); overflow: hidden; }
+html.tv .ced-sheet { max-height: calc(100vh - 2 * var(--safe-y)); }
+html.tv .welcome-card { width: min(92vw, 46em); }
+html.tv .icon-btn { width: 2.4em; height: 2.4em; }
+html.tv .elsewhere .chips { font-size: 1.3em; }
+html.tv .card.brk .card-inner { padding: calc(var(--u)*2 + var(--safe-y)) calc(var(--u)*2.4 + var(--safe-x)) 0; }
+html.tv .brk-crawl { margin-left: calc(var(--u)*-2.4 - var(--safe-x)); margin-right: calc(var(--u)*-2.4 - var(--safe-x)); margin-bottom: var(--safe-y); }
