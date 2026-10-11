@@ -201,3 +201,76 @@ describe("channel editor", { skip }, () => {
     await ctx.close();
   });
 });
+
+describe("themes (N-11b)", { skip }, () => {
+  it("builds a custom theme, applies it live and saves it", async () => {
+    const { page, ctx, errors } = await open();
+    await js(page, `import("/js/theme.js").then((m) => m.openThemeEditor())`);
+    await page.waitForSelector(".thm-sheet");
+    await page.click('[data-start="s:prevue"]');
+    // The draft shows on the whole app while editing.
+    assert.equal(await js(page, `getComputedStyle(document.documentElement).getPropertyValue("--bg").trim()`), "#14052e");
+    await page.fill("#thm-name", "Late Show");
+    await page.fill('[data-hex="accent"]', "#ff0066");
+    await page.click("[data-save]");
+    const prefs = await js(page, `JSON.parse(localStorage.getItem("debridtv.prefs"))`);
+    assert.match(prefs.theme, /^custom:/);
+    assert.equal(prefs.customThemes[0].name, "Late Show");
+    assert.equal(prefs.customThemes[0].colors.accent, "#ff0066");
+    // Re-applying prefs (as on the next start) paints the saved theme, not the draft.
+    await js(page, `import("/js/util.js").then((m) => m.applyPrefs())`);
+    assert.equal(await js(page, `getComputedStyle(document.documentElement).getPropertyValue("--amber").trim()`), "#ff0066");
+    assert.equal(await js(page, `document.documentElement.dataset.theme`), "custom");
+    const opts = await js(page, `import("/js/theme.js").then((m) => m.themeOptions().map((o) => o.label))`);
+    assert.ok(opts.includes("Late Show") && opts.includes("Midnight"));
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  it("cancel restores the theme; Escape closes only the editor", async () => {
+    const { page, ctx } = await open({ prefs: { theme: "daylight" } });
+    await js(page, `import("/js/panel.js").then((m) => m.openPanel("look"))`);
+    await js(page, `import("/js/theme.js").then((m) => m.openThemeEditor())`);
+    await page.click('[data-start="s:teletext"]');
+    assert.equal(await js(page, `document.documentElement.dataset.tone`), "dark");
+    await page.keyboard.press("Escape");
+    assert.equal(await js(page, `document.documentElement.dataset.theme`), "daylight");
+    assert.equal(await js(page, `document.documentElement.dataset.tone`), "light");
+    assert.equal(await js(page, `document.documentElement.style.getPropertyValue("--bg")`), "");
+    assert.equal(await js(page, `document.getElementById("panel").hidden`), false);
+    await ctx.close();
+  });
+
+  it("imports only clean colours and rejects other files", async () => {
+    const { page, ctx } = await open();
+    const r = await js(page, `import("/js/theme.js").then((m) => {
+      const ok = m.cleanTheme({ format: "debridtv-theme", name: "<b>X</b>", colors: { bg: "#000", panel: "112233", ink: "#FFFFFF", accent: "red;}body{x:1" }, cellStrength: 500 });
+      let bad = "";
+      try { m.cleanTheme({ format: "something-else", colors: {} }); } catch (e) { bad = e.message; }
+      return { ok, bad };
+    })`);
+    assert.equal(r.ok.colors.bg, "#000000");
+    assert.equal(r.ok.colors.panel, "#112233");
+    assert.equal(r.ok.colors.ink, "#ffffff");
+    assert.equal(r.ok.colors.accent, "#ffb547", "an invalid colour falls back, never reaches CSS");
+    assert.equal(r.ok.name, "bX/b");
+    assert.equal(r.ok.cellStrength, 100);
+    assert.match(r.bad, /something else/);
+    await ctx.close();
+  });
+});
+
+describe("format chips (N-37)", { skip }, () => {
+  it("names resolution, HDR and sound from airing.codecs", async () => {
+    const { page, ctx } = await open();
+    const out = await js(page, `import("/js/ui.js").then((m) => [
+      m.formatChips({ codecs: { video: "hevc", audio: ["truehd"], hdr: "dv", height: 2160, audioChannels: 8, atmos: true } }),
+      m.formatChips({ codecs: { video: "h264", audio: ["aac"], height: 720, audioChannels: 2 } }),
+      m.formatChips({ codecs: { video: "h264" } }),
+    ])`);
+    assert.match(out[0], /4K.*Dolby Vision.*Atmos.*TrueHD 7\.1/);
+    assert.match(out[1], /720p.*Stereo/);
+    assert.equal(out[2], "");
+    await ctx.close();
+  });
+});

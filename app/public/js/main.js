@@ -11,6 +11,7 @@ import { toggleBanner, tickBanner, osd } from "./ui.js";
 import { tickCard } from "./cards.js";
 import { unlockAudio } from "./static.js";
 import { editorOpen } from "./channel-editor.js";
+import { themeEditorOpen } from "./theme.js";
 
 applyPrefs();
 applyVolume();
@@ -82,7 +83,7 @@ addEventListener("keydown", (e) => {
     if (e.key === "Escape") e.target.blur();
     return;
   }
-  if (e.ctrlKey || e.metaKey || e.altKey || editorOpen()) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || editorOpen() || themeEditorOpen()) return;
   const k = e.key;
   if (!document.getElementById("welcome").hidden) {
     if (k === "Enter" || k === "Escape" || k === " ") closeWelcome();

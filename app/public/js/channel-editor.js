@@ -297,6 +297,7 @@ function refreshPreview() {
 addEventListener("keydown", (e) => {
   if (!editorOpen() || e.key !== "Escape") return;
   e.preventDefault();
+  e.stopImmediatePropagation(); // don't also close the settings panel behind
   closeChannelEditor();
 }, true);
 

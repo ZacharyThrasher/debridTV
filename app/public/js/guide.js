@@ -6,6 +6,7 @@ import { api } from "./api.js";
 import { html, raw, fmtTime, fmtDur, now, clamp, toast, pref } from "./util.js";
 import { tv, tune } from "./player.js";
 import { logoHtml } from "./channel-editor.js";
+import { formatChips } from "./ui.js";
 
 const wordmark = (c) => (c.logo?.kind === "text" && c.logo.text ? raw(logoHtml(c, "sm")) : null);
 
@@ -175,7 +176,7 @@ function renderDetails(ch, a) {
   const state = a.end <= t ? "Ended" : a.start <= t ? `On now · ${Math.round((a.end - t) / MIN)} min left` : `Starts in ${fmtDur(a.start - t)}`;
   const bits = [a.episode && html`<span>${a.episode}</span>`, a.year && html`<span>${a.year}</span>`, a.genre && html`<span>${a.genre}</span>`,
     a.rating && html`<span class="rating">${a.rating}</span>`,
-    a.durationMs && html`<span>${fmtDur(a.durationMs)}</span>`, a.watched && raw('<span class="badge ok">✓ Watched</span>'),
+    a.durationMs && html`<span>${fmtDur(a.durationMs)}</span>`, formatChips(a), a.watched && raw('<span class="badge ok">✓ Watched</span>'),
     a.availability === "policy-blocked" && raw('<span class="badge bad">Refused by provider</span>'),
     a.availability === "unavailable" && raw('<span class="badge warn">Unavailable</span>'),
     a.availability === "playable" && a.provider !== "demo" && raw('<span class="badge ok">Plays</span>')].filter(Boolean);

@@ -1,6 +1,6 @@
 // On-screen display: the green channel number, the info banner, and the channel bug.
 
-import { html, raw, fmtTime, fmtDur, now, clamp, pref } from "./util.js";
+import { html, raw, fmtTime, fmtDur, now, clamp, pref, onPrefsApplied } from "./util.js";
 import { logoHtml } from "./channel-editor.js";
 
 const hasMark = (c) => c?.logo?.kind === "text" && c.logo.text;
@@ -21,13 +21,40 @@ export function osdHide() {
   osdEl.classList.remove("on");
 }
 
+let bugCh = null;
 export function bug(ch) {
+  bugCh = ch;
   if (!ch) return void (bugEl.hidden = true);
   // Position and opacity are viewer prefs (N-16): bugPos "br" | "bl" | "tr" | "tl", bugOpacity 0.1–1.
   bugEl.dataset.pos = pref("bugPos") ?? "br";
   bugEl.style.setProperty("--bug-o", String(pref("bugOpacity") ?? 1));
   bugEl.innerHTML = hasMark(ch) ? logoHtml(ch) : html`<b>${ch.number}</b>${ch.name}`.html;
   bugEl.hidden = false;
+}
+
+// Moving the bug or changing its opacity in settings shows at once.
+onPrefsApplied(() => bugCh && bug(bugCh));
+
+// Picture and sound format chips (N-37). From airing.codecs (workstream C): video/audio
+// codec names from the file header, plus optional hdr, height, audioChannels and atmos.
+const HDR = { dv: ["Dolby Vision", "dv"], "hdr10+": ["HDR10+", "hdr"], hdr10: ["HDR10", "hdr"], hlg: ["HLG", "hdr"] };
+const AUDIO = { eac3: "DD+", ac3: "Dolby Digital", dts: "DTS", truehd: "TrueHD", flac: "FLAC" };
+const CHANNELS = { 1: "Mono", 2: "Stereo", 6: "5.1", 7: "6.1", 8: "7.1" };
+export function formatChips(a) {
+  const c = a?.codecs;
+  if (!c) return "";
+  const out = [];
+  const h = Number(c.height) || 0;
+  if (h) out.push(h >= 1600 ? ["4K", "res"] : h >= 1000 ? ["1080p", "res"] : h >= 700 ? ["720p", "res"] : ["SD", "res"]);
+  if (HDR[c.hdr]) out.push(HDR[c.hdr]);
+  const codec = AUDIO[String(c.audio?.[0] ?? "").toLowerCase()];
+  const chans = CHANNELS[Number(c.audioChannels)] ?? (c.audioChannels > 2 ? `${c.audioChannels} ch` : "");
+  if (c.atmos) out.push(["Atmos", "atmos"]);
+  const sound = [codec, chans === "Stereo" && codec ? "2.0" : chans].filter(Boolean).join(" ");
+  if (sound) out.push([sound, "snd"]);
+  if (!out.length) return "";
+  const label = out.map(([t]) => t).join(", ");
+  return html`<span class="fmt" role="img" aria-label="${label}" title="${label}">${out.map(([t, k]) => html`<i class="${k}">${t}</i>`)}</span>`.html;
 }
 
 export function setBanner(ch, info, route) {
@@ -102,6 +129,8 @@ function renderBanner() {
     if (a.genre) bits.push(html`<span>${a.genre}</span>`);
     if (a.rating) bits.push(html`<span class="rating">${a.rating}</span>`);
     if (a.durationMs) bits.push(html`<span>${fmtDur(a.durationMs)}</span>`);
+    const fmt = formatChips(a);
+    if (fmt) bits.push(fmt);
     if (seg?.kind === "break") bits.push(html`<span class="badge warn">Station break</span>`);
     else bits.push(html`<span class="badge live">LIVE</span>`);
     if (a.watched) bits.push(html`<span class="badge ok">✓ Watched</span>`);
