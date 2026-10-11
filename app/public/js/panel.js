@@ -271,6 +271,10 @@ body.addEventListener("click", async (e) => {
     } else if ("gotoLibrary" in b.dataset) {
       lib = { ...lib, status: b.dataset.gotoLibrary, provider: b.dataset.provider === "local" ? "local" : b.dataset.provider ?? "", q: "", limit: 50 };
       return showTab("library");
+    } else if ("contentGroups" in b.dataset) {
+      // N-07: groups.js (B) owns the dialog; a change can add or drop a group channel.
+      const { openGroups } = await import("./groups.js");
+      return void openGroups({ onChanged: () => (onChange(), render()) });
     } else if ("exclusions" in b.dataset) {
       const mod = await import("./channel-editor.js").catch(() => null);
       if (mod?.openExclusions) return void mod.openExclusions({ onSaved: () => (onChange(), render()) });
@@ -337,9 +341,10 @@ body.addEventListener("click", async (e) => {
       const name = document.getElementById("cname").value.trim();
       const showKeys = [...body.querySelectorAll("[data-show]:checked")].map((i) => i.dataset.show);
       const movieIds = [...body.querySelectorAll("[data-movie]:checked")].map((i) => i.dataset.movie);
+      const groupIds = [...body.querySelectorAll("[data-group]:checked")].map((i) => i.dataset.group);
       if (!name) return toast("Give the channel a name.");
-      if (!showKeys.length && !movieIds.length) return toast("Pick at least one show or movie.");
-      await api.post("/api/channels/custom", { name, showKeys, movieIds, ordering: document.getElementById("cord").value, slotMinutes: Number(document.getElementById("cslot").value) });
+      if (!showKeys.length && !movieIds.length && !groupIds.length) return toast("Pick at least one group, show or movie.");
+      await api.post("/api/channels/custom", { name, showKeys, movieIds, groupIds, ordering: document.getElementById("cord").value, slotMinutes: Number(document.getElementById("cslot").value) });
       toast(`${name} is on the air.`);
       onChange();
     } else if ("pinSet" in b.dataset) {
@@ -448,17 +453,19 @@ async function channels() {
     <p class="lead">Channels build themselves from your library and keep their numbers when it changes. Hide the ones you don't want, or make your own.</p>
     ${lk?.pinSet && !lk.unlocked && lk.lockedChannels ? raw(pinRow("Some channels are locked, so changing channels needs the parental PIN.")) : ""}
     <div class="row-actions" style="margin-bottom:1em"><button class="btn primary" data-new-channel>+ New channel</button>
+      <button class="btn" data-content-groups>Content groups…</button>
       <button class="btn" data-exclusions>Keep shows or genres off every channel…</button></div>
     <div class="list">${raw(items.join(""))}</div>`;
 }
 
 async function builder() {
-  const lib = await api.get("/api/library");
+  const [lib, grp] = await Promise.all([api.get("/api/library"), api.get("/api/groups").catch(() => ({ groups: [] }))]);
   return html`<h3>New channel</h3>
     <div class="field"><label for="cname">Name</label><input class="input" id="cname" maxlength="40" placeholder="Saturday Morning"></div>
     <div class="field"><label for="cord">Order</label><select class="input" id="cord">${raw(Object.entries(ORDERINGS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join(""))}</select></div>
     <div class="field"><label for="cslot">Start programs on the</label><select class="input" id="cslot">
       <option value="0">Next minute (no gaps)</option><option value="15">Quarter hour</option><option value="30" selected>Half hour</option><option value="60">Hour</option></select></div>
+    ${grp.groups.length ? html`<div class="field"><label>Content groups</label><div class="pickgrid">${raw(grp.groups.map((g) => html`<label class="pick"><input type="checkbox" data-group="${g.id}">${g.name}<small>${g.entries.length} pick${g.entries.length === 1 ? "" : "s"}, aired in its own order</small></label>`).join(""))}</div></div>` : ""}
     <div class="field"><label>Shows</label><div class="pickgrid">${raw(lib.shows.map((s) => html`<label class="pick"><input type="checkbox" data-show="${s.key}">${s.name}<small>${s.timed}/${s.episodes} ready</small></label>`).join("") || '<span class="muted">No shows yet.</span>')}</div></div>
     <div class="field"><label>Movies</label><div class="pickgrid">${raw(lib.movies.map((m) => html`<label class="pick"><input type="checkbox" data-movie="${m.id}">${m.title}${m.year ? ` (${m.year})` : ""}<small>${m.timed ? "ready" : "needs scan"}</small></label>`).join("") || '<span class="muted">No movies yet.</span>')}</div></div>
     <div class="row-actions"><button class="btn primary" data-save-channel>Put it on the air</button><button class="btn" data-cancel>Cancel</button></div>`;
@@ -571,6 +578,8 @@ function bugOpts() {
       <select class="input" style="width:auto" data-pref-select="bugOpacity" data-num="1" aria-label="Bug opacity">${raw(levels.map(([v, l]) => `<option value="${v}" ${Math.abs(v - op) < 0.01 ? "selected" : ""}>${l}</option>`).join(""))}</select></span></div>
     <div class="opt"><div><div class="ol">TV set</div><div class="od">Frame the picture in an old set. The wood console's dial turns to the channel. Not on phones.</div></div>
       <select class="input" style="width:auto" data-pref-select="bezel" aria-label="TV set">${raw([["off", "None"], ["classic", "Classic"], ["wood", "Wood console"]].map(([v, l]) => `<option value="${v}" ${v === (pref("bezel") ?? "off") ? "selected" : ""}>${l}</option>`).join(""))}</select></div>
+    <div class="opt"><div><div class="ol">Guide preview</div><div class="od">The guide's corner shows what's on the highlighted channel, from the schedule. It never tunes or loads video while you browse.</div></div>
+      <label class="switch"><input type="checkbox" data-pref="guidePreview" aria-label="Guide preview" ${pref("guidePreview") !== false ? "checked" : ""}><i></i></label></div>
     <div class="opt"><div><div class="ol">Rating card</div><div class="od">Show "Rated PG-13" and the like for a few seconds when a program starts.</div></div>
       <label class="switch"><input type="checkbox" data-pref="ratingCard" aria-label="Rating card" ${pref("ratingCard") !== false ? "checked" : ""}><i></i></label></div>`;
 }

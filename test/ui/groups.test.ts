@@ -125,6 +125,35 @@ describe("content groups (N-07)", { skip }, () => {
     assert.match(await js(page, "document.querySelector('.guide-details .gd-group').textContent"), /Saturday Morning · Cartoons until noon\./);
     await ctx.close();
   });
+
+  it("Settings → Channels opens the groups, and a new channel can be built from a group", async () => {
+    const { page, ctx, errors } = await open();
+    await js(page, `import("/js/panel.js").then((m) => m.openPanel("channels"))`);
+    await page.click("[data-content-groups]");
+    await page.waitForSelector('[aria-label="Content groups"]:not([hidden]) .grp-row');
+    await page.keyboard.press("Escape");
+    await page.waitForFunction("document.querySelector('[aria-label=\"Content groups\"]').hidden");
+    await page.click("[data-new-channel]");
+    await page.waitForSelector("[data-group]");
+    await page.fill("#cname", "Cartoon Block");
+    await page.check("[data-group]");
+    await page.click("[data-save-channel]");
+    await page.waitForFunction("![...document.querySelectorAll('#panel [data-group]')].length");
+    const g = await (await fetch(`${BASE}/api/groups`)).json();
+    assert.ok(g.groups[0].usedBy.some((u: any) => u.how === "custom" && u.name === "Cartoon Block"));
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
+  it("Look & feel turns the guide preview off", async () => {
+    const { page, ctx } = await open();
+    await js(page, `import("/js/panel.js").then((m) => m.openPanel("look"))`);
+    await page.waitForSelector('[data-pref="guidePreview"]');
+    assert.equal(await js(page, "document.querySelector('[data-pref=\"guidePreview\"]').checked"), true);
+    await page.locator('[data-pref="guidePreview"]').setChecked(false, { force: true });
+    assert.equal(await js(page, `import("/js/util.js").then((m) => m.pref("guidePreview"))`), false);
+    await ctx.close();
+  });
 });
 
 describe("seasonal lineups (N-32)", { skip }, () => {
