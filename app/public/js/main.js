@@ -4,6 +4,7 @@
 import { api } from "./api.js";
 import { html, pref, setPref, applyPrefs, syncClock, toast } from "./util.js";
 import { tv, tune, channelStep, lastChannel, byNumber, togglePause, applyVolume } from "./player.js";
+import * as player from "./player.js"; // applyAspect comes from workstream A
 import { openGuide, closeGuide, guideOpen, guideKey } from "./guide.js";
 import { initPanel, openPanel, closePanel, panelOpen } from "./panel.js";
 import { toggleBanner, tickBanner, osd } from "./ui.js";
@@ -111,6 +112,7 @@ addEventListener("keydown", (e) => {
     case " ": case "k": case "K": togglePause(); break;
     case "m": case "M": toggleMute(); break;
     case "f": case "F": toggleFull(); break;
+    case "z": case "Z": cycleAspect(); break;
     case "?": showWelcome(); break;
     default:
       if (/^[0-9]$/.test(k)) enterDigit(k);
@@ -124,6 +126,16 @@ function toggleMute() {
   applyVolume();
   osd(pref("muted") ? "MUTE" : `VOL ${Math.round(pref("volume") * 100)}`, "", 1500);
   document.querySelector('[data-act="mute"]').textContent = pref("muted") ? "🔇" : "🔊";
+}
+
+// Picture shape (parity N-12): Z cycles; player.js applies it to the video.
+const ASPECTS = { auto: "Normal", fill: "Stretch", "4:3": "4:3", zoom: "Zoom" };
+function cycleAspect() {
+  const keys = Object.keys(ASPECTS);
+  const next = keys[(keys.indexOf(pref("aspect") ?? "auto") + 1) % keys.length];
+  setPref("aspect", next);
+  player.applyAspect?.();
+  osd(ASPECTS[next].toUpperCase(), "Picture", 1500);
 }
 
 function toggleFull() {
@@ -177,6 +189,7 @@ function showWelcome() {
       <div><span class="kk"><kbd>Space</kbd></span><span>pause</span></div>
       <div><span class="kk"><kbd>M</kbd></span><span>mute</span></div>
       <div><span class="kk"><kbd>F</kbd></span><span>full screen</span></div>
+      <div><span class="kk"><kbd>Z</kbd></span><span>picture shape</span></div>
       <div><span class="kk"><kbd>S</kbd></span><span>settings</span></div>
     </div>
     <button class="btn primary" data-start>Start watching</button>
