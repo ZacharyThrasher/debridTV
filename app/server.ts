@@ -131,16 +131,19 @@ function idsOf(i: LibItem): ExternalIds | undefined {
   const tmdb = own?.tmdb ? undefined : online.tmdbId(i);
   return tmdb ? { ...own, tmdb } : own;
 }
-/** Each file's copies of the same title, for files that have more than one (N-01d): where it lives and which copy airs. */
-function copiesById(items: LibItem[]): Map<string, Array<{ id: string; provider: string; airs: boolean }>> {
-  const out = new Map<string, Array<{ id: string; provider: string; airs: boolean }>>();
+type CopyView = { id: string; provider: string; airs: boolean; refused: boolean };
+/** Each file's copies of the same title, for files that have more than one (N-01d): where it lives, which copy airs, which a provider refused. */
+function copiesById(items: LibItem[]): Map<string, CopyView[]> {
+  const out = new Map<string, CopyView[]>();
   for (const g of dedupeGroups(items.filter((i) => i.present && !i.excluded && i.parsed.kind !== "other"), idsOf, airable)) {
     if (g.copies.length < 2) continue;
-    const view = g.copies.map((c) => ({ id: c.id, provider: c.provider, airs: !g.refused && g.keep?.id === c.id }));
+    const view = g.copies.map((c) => ({ id: c.id, provider: c.provider, airs: g.keep?.id === c.id, refused: c.availability === "policy-blocked" }));
     for (const c of g.copies) out.set(c.id, view);
   }
   return out;
 }
+/** Providers that refused another copy of an airing title, by the id of the copy that airs (the banner's small note). */
+let refusedElsewhere = new Map<string, string[]>();
 function allItems(): LibItem[] {
   return isDemo() ? demo : liveLibrary();
 }
@@ -180,6 +183,13 @@ function rebuild() {
   const demoClock = new StationClock(demoMedia());
   demoLineup.sync(demoClock, autoRules(demo, demoLineup.custom(), demoLineup.groups(), idsOf), now, { timeZone, info: itemInfo(demo, now) });
   clock = isDemo() ? demoClock : liveClock;
+  refusedElsewhere = new Map(
+    [...copiesById(liveItems).values()].flatMap((v) => {
+      const kept = v.find((c) => c.airs);
+      const refused = [...new Set(v.filter((c) => c.refused).map((c) => c.provider))];
+      return kept && refused.length ? [[kept.id, refused] as const] : [];
+    }),
+  );
   // Fill in posters and descriptions the files lack; skips PIN-locked items. No-op without a TMDB key.
   if (!isDemo()) void online.sync(liveItems, lockedItem);
 }
@@ -387,6 +397,7 @@ function airingView(a: Airing) {
     durationMs: it?.durationMs ?? null,
     ...availabilityView(it),
     provider: it?.provider,
+    ...(refusedElsewhere.has(a.itemId) ? { refusedElsewhere: refusedElsewhere.get(a.itemId)!.map((p) => PROVIDER_NAMES[p as keyof typeof PROVIDER_NAMES] ?? p) } : {}),
     codecs: it ? { container: it.container, video: it.video, audio: it.audio, ...mediaBadges(it) } : undefined,
     watched: isWatched(a.itemId, it?.durationMs),
     art: artView(it),

@@ -29,7 +29,7 @@ export interface Recent {
   channel: string;
 }
 
-/** Files On Demand offers: present, video, not hidden by a lock; one copy per episode or film, none of a refused title. */
+/** Files On Demand offers: present, video, not hidden by a lock; one copy per episode or film, never a refused copy (another source's copy may stand in). */
 export function offered(d: OnDemandDeps): LibItem[] {
   return dedupe(d.items.filter((i) => i.present && (i.parsed.kind === "episode" || i.parsed.kind === "movie") && !d.locked(i.id)), d.ids);
 }

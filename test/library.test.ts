@@ -12,7 +12,7 @@ process.on("exit", () => rmSync(home, { recursive: true, force: true }));
 
 const { Library, fileStatus } = await import("../app/library.ts");
 const lineupMod = await import("../app/lineup.ts");
-const { Lineup, autoRules } = lineupMod;
+const { Lineup, autoRules, usableLibrary, dedupe } = lineupMod;
 const { Meters } = await import("../app/meters.ts");
 const { StationClock } = await import("../src/clock/schedule.ts");
 const { parseName } = await import("../src/library/parse.ts");
@@ -264,13 +264,18 @@ test("N-01d: TMDB-cache ids join copies; one show under two names gets one chann
   assert.equal(rules.find((r) => r.key === "custom:c")!.itemIds.length, 6, "a pick of either name means the show");
 });
 
-test("N-01d/E6: a refused copy keeps its title off the air; picks of another copy follow the kept one", () => {
+test("N-01d/E6: a refused copy never airs, another source's copy airs instead; picks of another copy follow the kept one", () => {
   const refused = item("Some.Film.2001.mkv", { provider: "realdebrid", durationMs: 100 * MIN, availability: "policy-blocked" });
   const twin = item("Some.Film.2001.mkv", { durationMs: 100 * MIN });
   const others = ["Alpha", "Bravo", "Charlie", "Delta"].map((t, k) => item(`${t}.${2001 + k}.mkv`, { durationMs: 95 * MIN }));
   const rdOther = item("Alpha.2001.mkv", { provider: "realdebrid", durationMs: 95 * MIN });
-  const rules = autoRules([refused, twin, ...others, rdOther], [{ id: "c", name: "Mine", showKeys: [], movieIds: [rdOther.id], ordering: "cyclic", slotMinutes: null }]);
+  const rules = autoRules([refused, twin, ...others, rdOther], [{ id: "c", name: "Mine", showKeys: [], movieIds: [rdOther.id, refused.id], ordering: "cyclic", slotMinutes: null }]);
   const ids = new Set(rules.flatMap((r) => r.itemIds));
-  assert.ok(!ids.has(twin.id) && !ids.has(refused.id), "never fetched elsewhere");
-  assert.deepEqual(rules.find((r) => r.key === "custom:c")!.itemIds, [others[0]!.id], "the Real-Debrid pick airs as the TorBox copy");
+  assert.ok(!ids.has(refused.id), "the refused copy itself never airs");
+  assert.ok(ids.has(twin.id), "the TorBox copy of the refused title airs (Zachary's call, 2026-10-11)");
+  assert.deepEqual(rules.find((r) => r.key === "custom:c")!.itemIds.slice().sort(), [others[0]!.id, twin.id].sort(), "picks of Real-Debrid copies air as the TorBox copies");
+  const { usable } = usableLibrary([refused, twin]);
+  assert.deepEqual(usable.map((i) => i.id), [twin.id], "one copy of the title, never the refused one");
+  assert.deepEqual(dedupe([refused, twin]).map((i) => i.id), [twin.id], "On Demand offers the other copy too");
+  assert.deepEqual(dedupe([refused]), [], "a title only the refusing provider has stays off");
 });

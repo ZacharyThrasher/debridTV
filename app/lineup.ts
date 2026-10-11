@@ -631,16 +631,18 @@ function nextNumber(numbers: Record<string, number>, preferred?: number): number
 
 /** Automatic rules. Without genre metadata, channels are built from what is known for sure. */
 /**
- * What channels may air: one copy per episode or film (N-01d), none of a refused
- * title, one show key per show. `keptOf` maps every copy's id to the copy that airs.
+ * What channels may air: one copy per episode or film (N-01d), one show key per
+ * show. When a provider refused one copy, another source's copy of the title may
+ * air instead (Zachary's call, 2026-10-11); the refused copy itself never does and
+ * is never retried. `keptOf` maps every copy's id to the copy that airs.
  */
 export function usableLibrary(items: LibItem[], idsOf: IdsOf = nfoIds): { usable: LibItem[]; keptOf: Map<string, string>; showOf: (k: string) => string } {
-  // Every present copy takes part in matching, so a copy a provider refused keeps its title off the air (E6).
+  // Every present copy takes part in matching; `airable` never keeps a refused copy, so another source's copy airs (E6).
   const copyGroups = dedupeGroups(
     items.filter((i) => i.present && !i.excluded && i.parsed.kind !== "other"),
     idsOf,
     airable,
-  ).filter((g) => g.keep && !g.refused);
+  ).filter((g) => g.keep);
   // A pick made on any copy (custom channels, groups) means the copy that airs.
   const keptOf = new Map(copyGroups.flatMap((g) => g.copies.map((c) => [c.id, g.keep!.id] as const)));
   // Counted over every copy, so the channel keeps its name whichever copy airs.
@@ -1010,9 +1012,9 @@ export function dedupeGroups(items: LibItem[], idsOf: IdsOf = nfoIds, usable: (i
   });
 }
 
-/** One copy per episode or film (see dedupeGroups); titles a provider refused are left out entirely. */
+/** One copy per episode or film (see dedupeGroups). A refused copy is never kept; another source's copy may be. */
 export function dedupe(items: LibItem[], idsOf: IdsOf = nfoIds): LibItem[] {
-  return dedupeGroups(items, idsOf).flatMap((g) => (g.keep && !g.refused ? [g.keep] : []));
+  return dedupeGroups(items, idsOf, (i) => i.availability !== "policy-blocked").flatMap((g) => (g.keep ? [g.keep] : []));
 }
 
 /**

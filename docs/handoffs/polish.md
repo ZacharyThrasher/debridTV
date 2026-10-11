@@ -13,8 +13,8 @@ Screens: `/mnt/project-files/debridTV/screens/polish/` (32 seasonal presets, 33 
   - Every copy is kept: `/api/library/files` rows carry `copies [{id, provider, airs}]` (Library tab: "Also in TorBox. This copy airs.");
     On Demand items carry `sources`. A custom channel or group that picked any copy gets the one that airs.
   - One show under two names whose ids agree ("The Office" / "The Office (US)") becomes one channel, named after the name with more episodes.
-  - **Behaviour change:** a copy a provider refused now keeps the whole title off the air and out of On Demand (E6, never fetched
-    elsewhere). Before, the other provider's copy quietly aired.
+  - ~~A copy a provider refused keeps the whole title off the air.~~ Reversed by Zachary (ADR-0005): another source's copy
+    airs, with a banner note; the refused copy itself never airs and is never retried.
   - Caveat: a TMDB-cache id comes from a name search, so two different shows with the same name could share one; runtime and ids from
     `.nfo` still keep most apart. `.nfo` ids always win.
 - **N-02a, seasonal presets** (`SEASONAL_PRESETS`, `presetMatches`): October Horror (10-01..10-31), Holiday Classics (12-01..12-31),

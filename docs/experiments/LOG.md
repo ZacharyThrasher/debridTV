@@ -458,3 +458,12 @@ and TMDB ids), N-02a (seasonal presets such as October Horror and Holidays, offe
 library has enough) and N-15 (guide page size and scroll speed) move to V. Register v0.6: V 43,
 P/V 3, P 1, G 1, not started 10, N/A 3. `npm test` 290/291: the one failure is a teardown race
 in `test/ui/guide.test.ts` (a routed fetch outliving its context); the file passes 3/3 alone.
+
+### DECISION-001 — A refused copy no longer keeps its title off the air (2026-10-11)
+
+Zachary chose "Play other copy" on the decision card. When one provider refuses
+a title (for example Real-Debrid `infringing_file`), another source's copy that
+is already in the library airs instead, with a small banner note ("Real-Debrid
+refused its copy"). The refused copy itself is never retried, and 409/451/403 stay
+final for it. This reverses the round-5 behaviour (PARITY-005). See ADR-0005.
+Test: `library.test` N-01d/E6.

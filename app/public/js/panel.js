@@ -866,7 +866,9 @@ async function libList() {
   const copiesLine = (f) => {
     const others = [...new Set(f.copies.filter((c) => c.id !== f.id).map((c) => where(c.provider)))].join(", ");
     const airing = f.copies.find((c) => c.airs);
-    return airing?.id === f.id ? `Also in ${others}. This copy airs.` : airing ? `Also in ${others}. The ${where(airing.provider)} copy airs instead.` : `Also in ${others}.`;
+    const refused = [...new Set(f.copies.filter((c) => c.refused && c.id !== f.id).map((c) => where(c.provider)))];
+    const note = refused.length ? ` ${refused.join(", ")} refused its copy.` : "";
+    return (airing?.id === f.id ? `Also in ${others}. This copy airs.` : airing ? `Also in ${others}. The ${where(airing.provider)} copy airs instead.` : `Also in ${others}.`) + note;
   };
   const rows = r.files.map((f) => {
     const [label, cls] = STATUS[f.status] ?? [f.status, ""];

@@ -220,6 +220,8 @@ function renderBanner() {
     else bits.push(html`<span class="badge live">LIVE</span>`);
     if (a.watched) bits.push(html`<span class="badge ok">✓ Watched</span>`);
     if (a.availability === "policy-blocked") bits.push(html`<span class="badge bad">Refused by provider</span>`);
+    // Another source refused its copy of this title; this copy airs instead (N-01d).
+    if (a.refusedElsewhere?.length) bits.push(html`<span class="badge" title="${a.refusedElsewhere.join(", ")} refused its copy, so this one plays">${a.refusedElsewhere.join(", ")} refused its copy</span>`);
     if (ROUTE_LABEL[route]) bits.push(html`<span class="badge">${ROUTE_LABEL[route]}</span>`);
     if (a.provider && a.provider !== "demo") bits.push(html`<span class="badge">${a.provider === "realdebrid" ? "Real-Debrid" : a.provider === "torbox" ? "TorBox" : "This PC"}</span>`);
     meta = bits.join("");
