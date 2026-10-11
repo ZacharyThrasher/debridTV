@@ -277,3 +277,75 @@ SDK's "1 hour" wording; the 3 h claim is still unconfirmed past 120 min.
 was observed). Expiry is still handled by invalidate-and-re-resolve-once, so a wrong
 guess costs one API call, not a failure. For a 1-hour program that's 1 link request
 instead of 6.
+
+### EXP-008 — The slow-surfer gap, measured in a real browser (2026-10-11)
+
+**Question.** EXP-007 left slow surfers (≈1 press/s) waiting ~0.8 s longer than
+cancel-only tuning. Where does a tune's time actually go in a browser, and can a
+"peek" (open paused, show the live frame, start motion after the dwell) close it?
+
+**Setup.** `experiments/exp008-browser-peek.ts`: Chromium (Playwright) plays VP9/Opus
+WebM (8 Mb/s, 2 s GOP) from a local server shaped like LIVE-001's TorBox: link
+request 370 ms (once per file), media TTFB 200 ms on every range request, 100 Mb/s
+shared link, every byte counted. 6 bursts of 6 presses, ±25 % press jitter
+(seeded), each burst ends on a never-visited channel (cold link). Median / p90 time
+to a picture of the live point on the final channel. Single runs; ±150 ms noise.
+Results: `results/exp008-press*-jitter25*.json`.
+
+**Finding 1 — three round trips per tune.** Chrome opens a Matroska file mid-program
+with three *sequential* range requests: the head (reads 0.7–1.2 MB before hanging
+up), the Cues at the end, then the seek point. Each pays the provider's TTFB, so
+~450 ms of every tune is round trips, whatever the tuning strategy.
+
+**Finding 2 — a head+tail cache removes two of them.** Serving the first 1 MB and
+last 256 KB of each file from memory (`INDEX_CACHE=1`) starts the seek request
+~40 ms after the first instead of ~460 ms:
+
+| Press interval | strategy | MB per surfed press | picture median / p90 (no cache) | with head+tail cache |
+|---|---|---|---|---|
+| 300 ms | adaptive (current) | 0 | 1,463 / 1,527 | **995** / 1,305 |
+| 300 ms | open at once | 0 | 1,333 / 1,680 | 947 / 1,234 |
+| 1000 ms | adaptive (current) | 0.27 (0.74 cached) | 2,058 / 2,261 | 1,571 / 1,795 |
+| 1000 ms | adaptive ×1.0 | 0.42 (1.11) | 1,872 / 2,372 | 1,445 / 1,916 |
+| 1000 ms | **peek at 400 ms** | 1.18 (3.52) | **1,472** / 1,940 | **1,028** / 1,519 |
+| 1000 ms | open at once | 2.26 (4.34) | 1,603 / 1,772 | 1,205 / 1,223 |
+
+(At 300 ms nobody stops long enough to open anything, so every strategy costs ~0 MB
+while surfing. "Open at once" motion timing was unreliable in this harness, so the
+table uses time to picture for all rows.)
+
+**Verdict.** The slow-surfer wait is structural: an adaptive dwell can't know the
+viewer stopped until a press interval has passed. Peeking hides it: at 1 press/s
+the picture arrives **~0.55–0.6 s sooner**, at about the speed of opening at once,
+for ~1 MB per surfed channel (≈1 s of video), half of what opening at once costs.
+Fast surfers are unaffected (their wait is under 700 ms, so no peek happens). The
+head+tail cache is a ~0.45 s win on **every** tune, and saves the repeated head
+reads on revisits.
+
+**Changes.** Player: peek 400 ms after a press when the adaptive wait is ≥ 700 ms
+(`PEEK_AT`, `PEEK_MIN_WAIT` in `player.js`); compat mode still waits the full dwell
+(it starts ffmpeg). Head+tail cache handed to workstream C as a proposal (server).
+ADR-0003 records the decision.
+
+### EXP-009 — The edge cache in the real app (2026-10-11)
+
+**Question.** Does workstream C's head+tail edge cache (ADR-0003, `app/edgecache.ts`)
+give the ~0.45 s per tune that EXP-008 predicted, in the real app rather than a bench?
+
+**Setup.** `experiments/exp009-app-surf.ts` runs the app server (C's branch merged with
+the player) against the mock TorBox shaped like LIVE-001 (link 370 ms, media TTFB
+200 ms, 100 Mb/s) serving real 8 Mb/s VP9/Opus WebM. Eight one-movie channels. Links
+are fetched first, so every tune pays the same for the link. Chromium tunes to each
+channel by number, rests 3.5 s, and does three passes: pass 1 meets a cold cache,
+passes 2–3 a warm one. Time = key press to a decoded frame of the live point.
+Result: `results/exp009.json`.
+
+| | median | range |
+|---|---|---|
+| Cold cache (first visit to a file) | **1,069 ms** | 951–1,142 |
+| Warm cache (revisit) | **556 ms** | 474–917 |
+
+**Verdict.** The cache cuts a revisit's tune time by **~0.5 s (−48 %)**, slightly more
+than EXP-008's estimate. 15 MB of the run came from the cache instead of the provider;
+no extra API calls. First visits still pay three round trips; filling the head at
+library-probe time would extend the win to them (the probe already reads the head).

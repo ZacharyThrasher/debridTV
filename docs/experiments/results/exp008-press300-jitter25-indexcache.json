@@ -1,0 +1,74 @@
+{
+  "experiment": "EXP-008",
+  "ranAt": "2026-10-11T08:16:55.239Z",
+  "pressMs": 300,
+  "apiLatencyMs": 370,
+  "mediaTtfbMs": 200,
+  "linkMbps": 100,
+  "fileMbps": 8,
+  "jitter": 0.25,
+  "indexCache": {
+    "headBytes": 1048576,
+    "tailBytes": 262144
+  },
+  "bursts": 6,
+  "burst": 6,
+  "rows": [
+    {
+      "variant": "adaptive@1.3",
+      "pressMs": 300,
+      "apiCalls": 36,
+      "mediaRequests": 18,
+      "surfedMBPerPress": 0,
+      "cachedMB": 6.4,
+      "peakStreams": 2,
+      "pictureMedianMs": 995,
+      "pictureP90Ms": 1305,
+      "motionMedianMs": 1188,
+      "finalsWithMotion": "6/6",
+      "surfedPictures": 0
+    },
+    {
+      "variant": "adaptive@1.0",
+      "pressMs": 300,
+      "apiCalls": 36,
+      "mediaRequests": 18,
+      "surfedMBPerPress": 0,
+      "cachedMB": 6.4,
+      "peakStreams": 1,
+      "pictureMedianMs": 1013,
+      "pictureP90Ms": 1169,
+      "motionMedianMs": 1206,
+      "finalsWithMotion": "6/6",
+      "surfedPictures": 0
+    },
+    {
+      "variant": "peek:400",
+      "pressMs": 300,
+      "apiCalls": 36,
+      "mediaRequests": 18,
+      "surfedMBPerPress": 0,
+      "cachedMB": 6.4,
+      "peakStreams": 1,
+      "pictureMedianMs": 1035,
+      "pictureP90Ms": 1269,
+      "motionMedianMs": 1228,
+      "finalsWithMotion": "6/6",
+      "surfedPictures": 0
+    },
+    {
+      "variant": "now",
+      "pressMs": 300,
+      "apiCalls": 36,
+      "mediaRequests": 20,
+      "surfedMBPerPress": 0,
+      "cachedMB": 7.5,
+      "peakStreams": 1,
+      "pictureMedianMs": 947,
+      "pictureP90Ms": 1234,
+      "motionMedianMs": 1028,
+      "finalsWithMotion": "4/6",
+      "surfedPictures": 0
+    }
+  ]
+}
