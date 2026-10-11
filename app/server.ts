@@ -35,6 +35,7 @@ import { EdgeCache } from "./edgecache.ts";
 import { PinLock } from "./pinlock.ts";
 import { OnlineMetadata } from "./metadata/tmdb.ts";
 import { allowedUnder } from "../src/clock/ratings.ts";
+import { SilenceJob, type SilenceTarget } from "./silence.ts";
 import { browse as onDemandBrowse, continueWatching, show as onDemandShow, type OnDemandDeps } from "./ondemand.ts";
 import { LanAccess, type LanOptions } from "./lan/access.ts";
 
@@ -89,6 +90,13 @@ let lockGen = 0;
 let ledger = WatchLedger.import(historyFile.get().spans);
 const ffmpeg = opts.ffmpeg === false ? null : detectFfmpeg();
 const ffprobe = ffmpeg ? detectFfprobe(ffmpeg) : null;
+const silenceJob = new SilenceJob(ffmpeg);
+/** Episodes on this PC with no chapters and no silence check yet (N-22c). Never debrid files. */
+function silenceTargets(all = false): SilenceTarget[] {
+  return library.items().filter((i) => i.provider === "local" && isConnected("local") && i.present && !i.excluded && i.parsed.kind === "episode"
+    && i.durationMs && !i.chaptersMs?.length && (all || !i.silence))
+    .map((i) => ({ id: i.id, path: i.ref, durationMs: i.durationMs!, label: displayTitle(i) }));
+}
 
 function connected() {
   const c = config.get();
@@ -625,10 +633,17 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
   // Audio codec: AAC by default; ac=opus for browsers without an AAC decoder (some Chromium builds).
   const ac = url.searchParams.get("ac") ?? "aac";
   if (ac !== "aac" && ac !== "opus") return json(res, 400, { error: "Audio is ac=aac or ac=opus." });
+  // N-19: a ceiling on the converted picture's height (only when video is re-encoded; copied video is untouched).
+  const maxhRaw = url.searchParams.get("maxh");
+  const maxh = maxhRaw == null || maxhRaw === "" || maxhRaw === "0" ? null : Number(maxhRaw);
+  if (maxh !== null && maxh !== 720 && maxh !== 1080) return json(res, 400, { error: "maxh is 720 or 1080." });
+  const scale = maxh ? `scale=-2:'min(ih,${maxh})'` : "scale='min(1920,iw)':-2";
   const subCodec = sub.index != null ? (sub as { track?: { codec: string } }).track?.codec : undefined;
   const textSub = sub.index != null && (!subCodec || TEXT_SUBS.has(subCodec));
   const burn = sub.index != null && !textSub && url.searchParams.get("burn") === "1" && IMAGE_SUBS.has(subCodec ?? "");
   const copyVideo = !burn && (it.video ? canDecode.includes(it.video) : false);
+  // Songs (and any file with no picture) get a sound-only stream.
+  const audioOnly = !!it.track || (!!it.tracks?.length && !it.tracks.some((t) => t.kind === "video"));
   const tok = url.searchParams.get("tok");
   const subsOut = textSub && tok ? 3 : null;
   const input = it.provider === "local" ? it.ref : `http://${HOST}:${port}/media/${id}?internal=1`;
@@ -636,9 +651,11 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
   const args = [
     "-hide_banner", "-loglevel", "error", "-nostdin",
     "-ss", start.toFixed(2), "-i", input,
-    ...(burn
-      ? ["-filter_complex", `[0:v:0][0:s:${sub.index}]overlay=eof_action=pass,scale='min(1920,iw)':-2[v]`, "-map", "[v]", ...encode]
-      : ["-map", "0:v:0", ...(copyVideo ? ["-c:v", "copy"] : [...encode, "-vf", "scale='min(1920,iw)':-2"])]),
+    ...(audioOnly
+      ? []
+      : burn
+      ? ["-filter_complex", `[0:v:0][0:s:${sub.index}]overlay=eof_action=pass,${scale}[v]`, "-map", "[v]", ...encode]
+      : ["-map", "0:v:0", ...(copyVideo ? ["-c:v", "copy"] : [...encode, "-vf", scale])]),
     // An index we couldn't check against the file's track list is optional, so a wrong guess plays without sound rather than failing.
     "-map", a.index == null ? "0:a:0?" : `0:a:${a.index}${it.tracks?.length ? "" : "?"}`, "-sn", "-dn", "-map_chapters", "-1",
     ...(ac === "opus" ? ["-c:a", "libopus", "-ac", "2", "-b:a", "160k"] : ["-c:a", "aac", "-ac", "2", "-b:a", "192k"]),
@@ -1162,6 +1179,26 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") ?? 20) || 20));
     return json(res, 200, continueWatching(onDemandDeps(), historyFile.get().recent, limit));
   }
+  if (p === "/api/silence" && m === "GET") {
+    const local = silenceTargets(true);
+    return json(res, 200, { ...silenceJob.state, ffmpeg: !!ffmpeg, eligible: local.length, pending: silenceTargets().length,
+      withBreaks: local.filter((t) => itemById(t.id)?.silence?.breaksMs.length).length });
+  }
+  if (p === "/api/silence/start" && m === "POST") {
+    // N-22c: viewer-started, local files only. Decodes the soundtrack on this PC; no provider is involved.
+    if (!ffmpeg) return json(res, 409, { error: "Finding silences needs ffmpeg on this PC." });
+    if (body.again === true) for (const t of silenceTargets(true)) library.clearSilence(t.id);
+    const targets = silenceTargets();
+    void silenceJob.run(targets, (id, r, ms) => {
+      library.setSilence(id, r);
+      meters.log("silence", "error" in r ? `${itemById(id)?.name.slice(0, 40)}: ${r.error}` : `${r.breaksMs.length} break${r.breaksMs.length === 1 ? "" : "s"} from ${r.silences} silences in ${(ms / 1000).toFixed(1)} s`);
+    }).then(() => scheduleRebuild());
+    return json(res, 200, { ok: true, total: targets.length });
+  }
+  if (p === "/api/silence/stop" && m === "POST") {
+    silenceJob.halt();
+    return json(res, 200, { ok: true });
+  }
   if (p === "/api/library") {
     const q = (url.searchParams.get("q") ?? "").toLowerCase();
     const items = allItems().filter((i) => i.parsed.kind !== "other" && i.present);
@@ -1485,6 +1522,7 @@ return {
     if (tick) clearInterval(tick);
     if (rebuildTimer) clearTimeout(rebuildTimer);
     library.stopScan("Shutting down");
+    silenceJob.halt();
     online.stop();
     return lan.stop().then(() => new Promise((r) => {
       server.closeAllConnections();

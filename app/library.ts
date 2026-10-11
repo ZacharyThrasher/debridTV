@@ -82,6 +82,8 @@ export interface LibItem {
   track?: AudioTags;
   /** Tags read from the file itself at scan time (they win over names). */
   trackTags?: AudioTags;
+  /** Break points from silences in the soundtrack (N-22c). Local files only; set by the viewer-started job. */
+  silence?: { at: number; breaksMs: number[]; error?: string };
 }
 
 /** The film a trailer is for, as its name says. */
@@ -699,6 +701,21 @@ export class Library {
     return n;
   }
 
+  /** Record what the silence job found for one file (N-22c). */
+  setSilence(id: string, r: { breaksMs: number[] } | { error: string }): void {
+    this.file.update((s) => {
+      const it = s.items[id];
+      if (it) it.silence = "error" in r ? { at: Date.now(), breaksMs: [], error: r.error } : { at: Date.now(), breaksMs: r.breaksMs };
+    });
+    this.changed();
+  }
+
+  clearSilence(id: string): void {
+    this.file.update((s) => {
+      if (s.items[id]) delete s.items[id]!.silence;
+    });
+  }
+
   /** Clock-facing view: identity, timing and age rating. Availability is not included on purpose. */
   mediaItems(): MediaItem[] {
     const manual = this.manualRatings();
@@ -872,8 +889,10 @@ export function localArt(path: string, root: string, kind: Parsed["kind"], cache
  * itself, never guessed (handoff §6.1). Not in the first or last 3 minutes, at
  * least 5 minutes apart, at most 3 per program.
  */
-export function breakpoints(i: { durationMs: number | null; chaptersMs?: number[] }): number[] {
+export function breakpoints(i: { durationMs: number | null; chaptersMs?: number[]; provider?: ProviderId; silence?: LibItem["silence"] }): number[] {
   const d = i.durationMs;
+  // Chapters first; silences only for files on this PC (N-22c), already spaced by the job.
+  if (d && !i.chaptersMs?.length && i.provider === "local" && i.silence?.breaksMs.length) return i.silence.breaksMs.slice(0, 3);
   if (!d || !i.chaptersMs?.length) return [];
   const MIN3 = 3 * 60_000;
   const out: number[] = [];
