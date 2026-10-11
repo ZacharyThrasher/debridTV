@@ -185,6 +185,18 @@ body.guide-open .banner, body.guide-open .osd-num, body.panel-open .osd-num { di
 .card.warn .card-kicker { color: var(--warn); }
 .card .why { margin-top: calc(var(--u)*1); font-size: calc(var(--u)*1); color: rgba(255,255,255,.7); max-width: 46em; margin-inline: auto; line-height: 1.45; }
 
+.elsewhere { margin-top: calc(var(--u)*2.4); }
+.elsewhere .label { font-family: var(--display); font-weight: 700; letter-spacing: .24em; text-transform: uppercase; font-size: calc(var(--u)*.85); color: rgba(255,255,255,.55); }
+.elsewhere .chips { display: flex; flex-wrap: wrap; justify-content: center; gap: calc(var(--u)*.6); margin-top: calc(var(--u)*.7); }
+.chip {
+  display: inline-flex; align-items: center; gap: .6em; padding: .45em .9em .45em .45em; border-radius: 99px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: #fff; font-size: calc(var(--u)*1);
+}
+.chip:hover { background: hsla(var(--h), 80%, 55%, .2); }
+.chip b { font-family: var(--mono); font-weight: 400; font-size: 1.4em; line-height: 1; min-width: 1.6em; padding: .05em .25em 0; border-radius: .25em; color: #000;
+  background: linear-gradient(180deg, hsl(var(--h) 95% 72%), hsl(var(--h) 85% 55%)); }
+.chip span { font-family: var(--display); font-weight: 700; font-size: 1.15em; }
+
 /* Station break channel (Prevue-style). Full-screen grid: top strip, a big
    rotating slide, pips + break meter, and a guide crawl along the bottom. */
 .card.brk { place-items: stretch; }

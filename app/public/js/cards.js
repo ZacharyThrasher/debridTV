@@ -195,9 +195,11 @@ export function offAirCard(ch) {
     html`<div class="card-kicker">Off the air</div>
       <div class="card-title">${ch.name}</div>
       <div><span class="card-num">${ch.number}</span></div>
-      <div class="why">This channel has nothing it can schedule yet. Programs join a channel once their running time is known: open Settings → Sources and run a library scan.</div>`,
+      <div class="why">This channel has nothing it can schedule yet. Programs join a channel once their running time is known: open Settings → Sources and run a library scan.</div>
+      <div class="elsewhere" data-elsewhere></div>`,
     "warn",
   );
+  elsewhere(ch.id);
 }
 
 export function unavailableCard(ch, airing, { policy = false, reason = "" } = {}) {
@@ -211,9 +213,31 @@ export function unavailableCard(ch, airing, { policy = false, reason = "" } = {}
       <div class="card-title" style="font-size:calc(var(--u)*4.4)">${airing.title}</div>
       <div class="card-sub">${[airing.episode, airing.subtitle].filter(Boolean).join(" · ")}</div>
       <div class="why">${why}</div>
-      <div class="card-countdown" aria-live="off">Next program in <span data-countdown>${fmtClock(airing.end - now())}</span></div>`,
+      <div class="card-countdown" aria-live="off">Next program in <span data-countdown>${fmtClock(airing.end - now())}</span></div>
+      <div class="elsewhere" data-elsewhere></div>`,
     "warn",
   );
+  elsewhere(ch.id);
+}
+
+/** A row of other channels' current programs, so a dead end always offers a way out. */
+async function elsewhere(skipId) {
+  const t = now();
+  let g;
+  try {
+    g = await api.get(`/api/guide?from=${t - 60_000}&to=${t + 60_000}`);
+  } catch {
+    return;
+  }
+  const box = el.querySelector("[data-elsewhere]");
+  if (!box) return;
+  const picks = g.rows.filter((r) => r.channel.id !== skipId)
+    .map((r) => ({ ch: r.channel, a: r.airings.find((a) => a.start <= t && t < a.end && a.availability !== "policy-blocked") }))
+    .filter((x) => x.a)
+    .slice(0, 4);
+  if (!picks.length) return;
+  box.innerHTML = html`<div class="label">Meanwhile, on now</div><div class="chips">${picks.map(({ ch, a }) =>
+    html`<button class="chip" style="--h:${ch.hue}" data-ch="${ch.id}"><b>${ch.number}</b><span>${a.title}</span></button>`)}</div>`.html;
 }
 
 export function messageCard(ch, kicker, title, why) {

@@ -78,7 +78,7 @@ function render() {
     const ch = r.channel;
     const cells = r.airings
       .filter((a) => a.end > viewFrom && a.start < viewTo)
-      .map((a) => {
+      .map((a, i, shown) => {
         const left = Math.max(0, pct(a.start));
         const right = Math.min(100, pct(a.end));
         const cls = ["cell"];
@@ -87,12 +87,18 @@ function render() {
         if (a.availability === "policy-blocked" || a.availability === "unavailable") cls.push("unavail");
         if (a.start < viewFrom) cls.push("cut-left");
         if (ri === row && focus && a.start === focus.start) cls.push("focus");
-        const sub = [a.episode, a.subtitle, a.year].filter(Boolean).join(" · ");
+        let head = a.title;
+        let sub = [a.episode, a.subtitle, a.year].filter(Boolean).join(" · ");
+        // A run of short episodes of one show: lead with the episode, not the same title again.
+        if (i > 0 && shown[i - 1].title === a.title && a.episode && right - left < 14) {
+          head = a.subtitle || a.episode;
+          sub = a.subtitle ? a.episode : a.title;
+        }
         return html`<div class="${cls.join(" ")}" style="left:calc(${left}% + 2px);width:calc(${right - left}% - 4px)${a.start <= t && t < a.end ? `;--p:${(((t - Math.max(a.start, viewFrom)) / (Math.min(a.end, viewTo) - Math.max(a.start, viewFrom))) * 100).toFixed(1)}%` : ""}" data-row="${ri}" data-start="${a.start}" role="gridcell"
           aria-label="${a.title}, ${fmtTime(a.start)}">
           ${a.start < viewFrom ? raw('<span class="cont">◂</span>') : ""}
           ${a.watched ? raw('<span class="watched" title="Watched">✓</span>') : ""}
-          ${raw(breakTail(a))}<div class="ct">${a.title}</div>${sub ? html`<div class="cs">${sub}</div>` : ""}</div>`;
+          ${raw(breakTail(a))}<div class="ct">${head}</div>${sub ? html`<div class="cs">${sub}</div>` : ""}</div>`;
       });
     const nowLine = t >= viewFrom && t < viewTo ? raw(`<div class="now-line" style="left:${pct(t)}%"></div>`) : "";
     return html`<div class="row ${tv.current?.id === ch.id ? "current" : ""}" style="--h:${ch.hue}" role="row">
