@@ -138,7 +138,7 @@ export class Captions {
         for (const c of cues) {
           // Times share the stream's zero; lines from before the keyframe it started on are negative.
           if (c.endMs > 0) this.track.addCue(new VTTCue(Math.max(0, c.startMs) / 1000, c.endMs / 1000, c.text));
-          this.since = Math.max(this.since, c.n + 1);
+          this.since = Math.max(this.since, c.n); // the server sends cues with n > since
         }
         if (done) return;
       } catch {}
