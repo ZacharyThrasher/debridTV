@@ -19,7 +19,8 @@ const video = document.getElementById("video");
 const synthEl = document.getElementById("synth");
 const pausedEl = document.getElementById("paused");
 
-export const tv = { channels: [], current: null, last: null, info: null, route: "card", ffmpeg: false, paused: false };
+// onDemand is { itemId, fromMs, durationMs, title, positionMs } while On Demand plays (parity N-30), else null.
+export const tv = { channels: [], current: null, last: null, info: null, route: "card", ffmpeg: false, paused: false, onDemand: null };
 
 const MIN_WAIT = 150, MAX_WAIT = 1200; // EXP-006 adaptive bounds
 // EXP-008: a slow surfer (about one press a second) gets a paused "peek" of the
@@ -53,6 +54,7 @@ export function byNumber(n) {
 export async function tune(ch, { silent = false } = {}) {
   if (!ch || signedOff()) return;
   const my = ++token;
+  endOnDemand();
   clearTimeout(boundary);
   clearTimeout(stallTimer);
   flushWatch(true);
@@ -120,6 +122,7 @@ export async function tune(ch, { silent = false } = {}) {
 }
 
 export function togglePause() {
+  if (tv.onDemand) return toggleOnDemandPause();
   if (!tv.current) return;
   if (tv.paused) {
     // Like real TV, resuming returns to live (parity C4): the station never waited.
@@ -232,8 +235,10 @@ async function playMedia(ch, info, my, forced = null, hold = 0) {
     if (my !== token) return;
     clearTimeout(stallTimer);
     staticOff();
-    startWatch(a.itemId, ch.id);
+    startWatch(a.itemId, info.onDemand ? "ondemand" : ch.id);
   };
+  // At the end of an On Demand file, the station is still on the air: go back to it.
+  video.onended = info.onDemand ? () => my === token && media?.itemId === a.itemId && backToLive() : null;
   // A stall mid-program (Wi-Fi hiccup, slow provider). The browser re-requests on
   // its own, and reopening ourselves made a hung provider worse in testing, so we
   // only say what's happening after 7 s.
@@ -251,7 +256,7 @@ async function playMedia(ch, info, my, forced = null, hold = 0) {
     clearTimeout(stallTimer);
     const route = media?.route;
     stopMedia();
-    if (isLocked(ch, info)) return staticOff(), showLocked(ch, info);
+    if (!info.onDemand && isLocked(ch, info)) return staticOff(), showLocked(ch, info);
     // Ask the server what happened before doing anything else. A refusal (451) or a
     // file the account can't serve (409) is final: no retry, no compatibility-mode
     // second attempt, no other provider (ADR-0002).
@@ -263,6 +268,12 @@ async function playMedia(ch, info, my, forced = null, hold = 0) {
       status = e.status ?? 0;
     }
     if (my !== token) return;
+    if (info.onDemand) {
+      // Same answers as live, all final; On Demand just says so and returns to the station.
+      if (status === 403) return onDemandFailed(LOCKED_OD);
+      if (item?.availability === "policy-blocked") return onDemandFailed(POLICY_OD);
+      if (item?.availability === "unavailable") return onDemandFailed(`${item.availabilityReason ?? "The provider couldn't serve this file"}.`);
+    }
     // The server refuses media on a locked channel with 403: final, show the lock.
     if (status === 403) return staticOff(), showLocked(ch, info);
     if (item?.availability === "policy-blocked") return staticOff(), unavailableCard(ch, a, { policy: true });
@@ -275,10 +286,11 @@ async function playMedia(ch, info, my, forced = null, hold = 0) {
       // compatibility mode, never a loop.
       media = { itemId: a.itemId, route: "live", liveStart: 0, ch, info, sel, my };
       tv.route = "live";
-      setBanner(ch, info, tv.route);
+      if (!info.onDemand) setBanner(ch, info, tv.route);
       return startLive(offsetAt(), a, onPlaying, onError);
     }
     staticOff();
+    if (info.onDemand) return onDemandFailed(tv.ffmpeg ? "The browser couldn't play this file, even in compatibility mode." : "Your browser can't play this file's format. Installing ffmpeg turns on compatibility mode.");
     const why = tv.ffmpeg
       ? "The browser couldn't play this file, even in compatibility mode."
       : "Your browser can't play this file's format. Installing ffmpeg turns on compatibility mode (see the README).";
@@ -290,6 +302,7 @@ async function playMedia(ch, info, my, forced = null, hold = 0) {
   if (route === "none") {
     clearTimeout(stallTimer);
     staticOff();
+    if (info.onDemand) return onDemandFailed(`This browser can't decode ${String(a.codecs?.video ?? "this").toUpperCase()} or H.264 video. Chrome or Edge can.`);
     return unavailableCard(ch, a, { reason: `This browser can't decode ${String(a.codecs?.video ?? "this").toUpperCase()} or H.264 video. Chrome or Edge can. The channel moves on at the next program.` });
   }
   if (route === "direct") {
@@ -362,6 +375,8 @@ async function alignLive(m, tok, requestedMs) {
     }
     if (media !== m) return;
   }
+  // On Demand has no station to catch up with: it just starts on that keyframe.
+  if (startMs != null && m.info.onDemand) return void (m.liveStart = startMs);
   if (startMs == null || requestedMs - startMs < 250) return;
   m.liveStart = startMs;
   const behind = () => m.info.fileOffsetMs + (now() - m.info.now) - (startMs + video.currentTime * 1000);
@@ -393,7 +408,8 @@ function stopMedia() {
   captions.stop();
   video.playbackRate = 1;
   media = null;
-  video.onplaying = video.onerror = video.onloadedmetadata = video.onseeked = video.onwaiting = null;
+  clearTimeout(seekTimer);
+  video.onplaying = video.onerror = video.onloadedmetadata = video.onseeked = video.onwaiting = video.onended = null;
   if (video.getAttribute("src")) {
     video.pause();
     // Dropping the source closes the connection, which the server turns into an
@@ -444,6 +460,141 @@ function flushWatch(end = false) {
 setInterval(() => flushWatch(false), 15_000);
 addEventListener("pagehide", () => flushWatch(true));
 
+// ------------------------------------------------------------------ On Demand
+
+// On Demand (parity N-30) plays one file from any point, off the station clock.
+// It uses the same route choice and the same final answers (403, 409, 451) as
+// live. The station keeps running underneath: any tune, backToLive() or the end
+// of the file returns to whatever is on the air now. B draws the browser, banner
+// and OSD; this is only the playback side.
+
+const LOCKED_OD = "That program is locked. Enter the PIN on its channel to watch it.";
+const POLICY_OD = "Your provider refused this file. DebridTV won't retry it or fetch it from anywhere else.";
+const OD_CH = { id: "ondemand", name: "On Demand", number: 0, hue: 220 };
+let odItem = null; // the /api/item answer for the file On Demand is playing
+let seekTimer = 0;
+let pausedAt = 0;
+
+/** A /api/now-shaped answer for one file at one position, so playMedia can play it. */
+function odInfo(item, fromMs) {
+  return {
+    onDemand: true,
+    now: now(),
+    fileOffsetMs: fromMs,
+    segment: { kind: "program" },
+    airing: { itemId: item.id, title: item.title, provider: item.provider, availability: item.availability, end: 0,
+      codecs: { container: item.container, video: item.video, audio: item.audio } },
+  };
+}
+
+export async function playOnDemand(itemId, { fromMs = 0 } = {}) {
+  if (!itemId || signedOff()) return;
+  const my = ++token;
+  clearTimeout(boundary);
+  clearTimeout(stallTimer);
+  flushWatch(true);
+  setPaused(false, { quiet: true });
+  click();
+  staticOn();
+  stopMedia();
+  synthStop();
+  hideCard();
+  osdHide();
+  let item;
+  try {
+    item = await api.get(`/api/item?id=${encodeURIComponent(itemId)}`);
+  } catch (e) {
+    if (my !== token) return;
+    return onDemandFailed(e.status === 403 ? LOCKED_OD : e.status === 404 ? "That file isn't in the library any more." : `Can't reach the DebridTV server (${e.message}).`);
+  }
+  if (my !== token) return;
+  if (item.availability === "policy-blocked") return onDemandFailed(POLICY_OD);
+  if (item.availability === "unavailable") return onDemandFailed(`${item.availabilityReason ?? "The provider couldn't serve this file"}.`);
+  const durationMs = item.durationMs ?? 0;
+  // Starting in the last few seconds would end at once; start a little earlier.
+  const from = Math.round(clamp(Number(fromMs) || 0, 0, durationMs > 10_000 ? durationMs - 5000 : 0));
+  odItem = item;
+  tv.onDemand = {
+    itemId: item.id, fromMs: from, durationMs, title: item.title,
+    /** Where the picture is now, in file ms (or where a pending seek is heading). */
+    get positionMs() {
+      return media?.seekTarget ?? filePos() ?? media?.info?.fileOffsetMs ?? from;
+    },
+  };
+  dispatchEvent(new CustomEvent("debridtv:ondemand", { detail: tv.onDemand }));
+  playMedia(OD_CH, odInfo(item, from), my);
+}
+
+/** Back to the live airing on the channel we came from. */
+export function backToLive() {
+  if (tv.current) return tune(tv.current);
+  token++;
+  endOnDemand();
+  stopMedia();
+  staticOff();
+}
+
+/**
+ * Left/Right in On Demand. A direct file seeks in place. A compatibility stream
+ * can't seek, so it restarts at the new point once the presses settle (400 ms),
+ * which keeps a run of presses to one ffmpeg start.
+ */
+export function seekBy(deltaMs) {
+  const m = media;
+  if (!tv.onDemand || !m || m.my !== token) return;
+  const end = tv.onDemand.durationMs ? tv.onDemand.durationMs - 1000 : Infinity;
+  const target = Math.round(clamp(tv.onDemand.positionMs + deltaMs, 0, Math.max(0, end)));
+  m.seekTarget = target;
+  if (m.route === "direct") {
+    flushWatch(true);
+    video.onseeked = () => {
+      if (media !== m) return;
+      m.seekTarget = null;
+      if (!tv.paused) startWatch(m.itemId, "ondemand");
+    };
+    video.currentTime = target / 1000;
+    return;
+  }
+  clearTimeout(seekTimer);
+  seekTimer = setTimeout(() => {
+    if (media !== m || m.my !== token) return;
+    setPaused(false, { quiet: true });
+    staticOn();
+    playMedia(OD_CH, odInfo(odItem, target), m.my, m.sel);
+  }, 400);
+}
+
+function toggleOnDemandPause() {
+  const m = media;
+  if (!tv.paused) {
+    pausedAt = performance.now();
+    return setPaused(true);
+  }
+  setPaused(false);
+  if (!m) return;
+  // A compatibility stream left paused for long may have been dropped along the
+  // way; restart it where the viewer paused rather than risk a dead stream.
+  if (m.route === "live" && performance.now() - pausedAt > 30_000) {
+    staticOn();
+    return playMedia(OD_CH, odInfo(odItem, filePos() ?? m.info.fileOffsetMs), m.my, m.sel);
+  }
+  video.play().catch(() => autoplayHint());
+}
+
+function endOnDemand() {
+  if (!tv.onDemand) return;
+  tv.onDemand = null;
+  odItem = null;
+  clearTimeout(seekTimer);
+  dispatchEvent(new CustomEvent("debridtv:ondemand", { detail: null }));
+}
+
+/** A final answer for an On Demand file: say why, then go back to the station. */
+function onDemandFailed(why) {
+  toast(why);
+  backToLive();
+}
+
 // ------------------------------------------------------------------ locked channels
 
 const unlockedHere = new Set();
@@ -475,7 +626,7 @@ addEventListener("debridtv:unlocked", (e) => {
   const id = e.detail?.channelId ?? null;
   if (id) unlockedHere.add(id);
   for (const c of tv.channels) if (!id || c.id === id) c.unlocked = true;
-  if (tv.current && (!id || tv.current.id === id)) tune(tv.current, { silent: true });
+  if (tv.current && !tv.onDemand && (!id || tv.current.id === id)) tune(tv.current, { silent: true });
 });
 
 // ------------------------------------------------------------------ audio and captions
@@ -487,7 +638,8 @@ captions.onUnsupported = () => toast("Captions need a newer DebridTV server.");
 function replay(m, sel) {
   if (media !== m || m.my !== token) return;
   staticOn();
-  playMedia(m.ch, m.info, m.my, sel);
+  // On Demand picks up where the viewer is, not where it started.
+  playMedia(m.ch, m.info.onDemand ? odInfo(odItem, filePos() ?? m.info.fileOffsetMs) : m.info, m.my, sel);
 }
 
 /** A key: next audio track. Remembers the language for the next programs too. */
@@ -559,6 +711,7 @@ initSignOff({
   // Drop every stream and timer: nothing is fetched until the viewer is back.
   stop() {
     token++;
+    endOnDemand();
     clearTimeout(boundary);
     clearTimeout(stallTimer);
     stopMedia();
