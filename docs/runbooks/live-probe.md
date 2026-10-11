@@ -89,7 +89,7 @@ This checks the one compatibility path the cloud can't: Blu-ray (PGS) or DVD
    ```
 3. Settings, Sources, This PC: add `C:\Sandbox\pgs-test`, then Scan now.
 4. Tune to the channel it lands on (the guide shows it), press **C** until the picture
-   subtitle track is chosen. The banner says it is drawn into the picture.
+   subtitle track is chosen.
 5. Note: do the subtitles appear, are they in step with the speech (within about half
    a second), and does changing channel and coming back keep them? A phone photo of
    the screen is plenty.
