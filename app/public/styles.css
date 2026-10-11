@@ -842,3 +842,77 @@ body.calm *, body.calm *::before { animation: none !important; } /* motion off (
 .ex-row.on .ex-box { background: var(--bad); border-color: var(--bad); }
 .ex-row.on .ex-box::after { content: "✕"; color: #fff; font-size: .7em; font-weight: 800; }
 .ex-row:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+/* ------------------------------------------------------------------ the TV set (N-12, pref "bezel") */
+
+#tvset { position: fixed; inset: 0; pointer-events: none; --dial: 0deg; --vol: 90deg; }
+#tvset > * { position: absolute; }
+#tvset .tv-side, #tvset .tv-glass { display: none; }
+body[data-bezel="classic"], body[data-bezel="wood"] { background: radial-gradient(ellipse at 50% 120%, #2a2230, #0b0a10 70%); }
+@media (min-width: 761px) {
+  body[data-bezel="classic"] { --bz: 3.4vmin 3.4vmin 9vmin 3.4vmin; }
+  body[data-bezel="wood"] { --bz: 5vmin 30vmin 5vmin 5vmin; }
+  body:is([data-bezel="classic"], [data-bezel="wood"]):not(.guide-open) #stage {
+    inset: var(--bz); border-radius: 2.4vmin / 3.2vmin; overflow: hidden;
+    box-shadow: inset 0 0 4vmin rgba(0,0,0,.8);
+    transition: inset .35s var(--ease), border-radius .35s var(--ease);
+  }
+  body[data-bezel]:not(.guide-open) #tvset .tv-glass {
+    display: block; inset: var(--bz); border-radius: 2.4vmin / 3.2vmin; z-index: 3;
+    background: linear-gradient(125deg, rgba(255,255,255,.07) 0%, rgba(255,255,255,.02) 28%, transparent 42%),
+      radial-gradient(ellipse at 50% 50%, transparent 62%, rgba(0,0,0,.35) 100%);
+    box-shadow: inset 0 0 0 .35vmin rgba(0,0,0,.9), inset 0 0 1.4vmin rgba(0,0,0,.7), 0 0 0 .5vmin #050507;
+  }
+  body.guide-open #tvset { opacity: 0; }
+}
+@media (max-width: 760px) { #tvset { display: none; } }
+#tvset { transition: opacity .3s ease; }
+
+/* Classic: charcoal plastic, a brand plate and a power light under the screen. */
+#tvset .tv-body { inset: 0; }
+body[data-bezel="classic"] #tvset .tv-body {
+  inset: .8vmin; border-radius: 3vmin;
+  background: linear-gradient(180deg, #2b2b31, #1a1a1f 60%, #141418);
+  box-shadow: inset 0 .25vmin 0 rgba(255,255,255,.09), inset 0 -.6vmin 1.2vmin rgba(0,0,0,.6), 0 2vmin 6vmin rgba(0,0,0,.7);
+}
+#tvset .tv-plate { display: none; }
+body[data-bezel="classic"] #tvset .tv-plate {
+  display: flex; align-items: center; gap: 2vmin; left: 3.4vmin; right: 3.4vmin; bottom: 2.6vmin; height: 4vmin; padding: 0 1.6vmin;
+}
+#tvset .tv-brand { font-family: var(--display); font-weight: 800; font-size: 2.3vmin; letter-spacing: .35em; text-transform: uppercase;
+  color: #8d8d96; text-shadow: 0 -1px 0 rgba(0,0,0,.8), 0 1px 0 rgba(255,255,255,.08); }
+#tvset .tv-model { font-size: 1.15vmin; letter-spacing: .2em; text-transform: uppercase; color: #5f5f68; }
+#tvset .tv-led { margin-left: auto; width: 1vmin; height: 1vmin; border-radius: 50%; background: #3dff7a;
+  box-shadow: 0 0 .8vmin #3dff7a, 0 0 2.2vmin rgba(61,255,122,.5); }
+
+/* Wood: a console set, walnut cabinet, side panel with the dial, volume and a speaker grille. */
+body[data-bezel="wood"] #tvset .tv-body {
+  inset: 0; border-radius: 2vmin;
+  background:
+    repeating-linear-gradient(92deg, rgba(0,0,0,.0) 0 .9vmin, rgba(0,0,0,.08) .9vmin 1.1vmin, rgba(255,220,170,.03) 1.1vmin 2.4vmin),
+    repeating-radial-gradient(ellipse at 30% -40%, rgba(0,0,0,.0) 0 3vmin, rgba(0,0,0,.07) 3vmin 3.6vmin),
+    linear-gradient(180deg, #6b3f22, #4a2914 55%, #3a1f0e);
+  box-shadow: inset 0 0 0 .4vmin rgba(0,0,0,.35), inset 0 .3vmin 0 rgba(255,210,160,.15);
+}
+body[data-bezel="wood"] #tvset .tv-side {
+  display: flex; flex-direction: column; align-items: center; gap: 3.2vmin; top: 5vmin; bottom: 5vmin; right: 4vmin; width: 22vmin; padding: 3vmin 0;
+  border-radius: 1.6vmin; background: linear-gradient(180deg, #232026, #17151a); box-shadow: inset 0 0 0 .3vmin #0c0b0e, inset 0 .3vmin 0 rgba(255,255,255,.07), 0 .4vmin 1.2vmin rgba(0,0,0,.5);
+  pointer-events: auto;
+}
+#tvset .tv-dial { position: relative; width: 15vmin; height: 15vmin; border-radius: 50%; cursor: pointer;
+  background: radial-gradient(circle, #2a272d 55%, #1a181c 56% 100%); box-shadow: inset 0 0 0 .25vmin #0a090b, 0 .2vmin 0 rgba(255,255,255,.06); }
+#tvset .tv-dial b { position: absolute; left: 50%; top: 50%; width: 2.4vmin; margin: -1vmin 0 0 -1.2vmin; text-align: center; font-family: var(--display); font-weight: 700;
+  font-size: 1.5vmin; color: #c9c2b3; transform: rotate(var(--a)) translateY(-6vmin) rotate(calc(-1 * var(--a))); }
+#tvset .tv-knob { position: absolute; inset: 3.4vmin; border-radius: 50%; transform: rotate(var(--dial)); transition: transform .25s cubic-bezier(.3, 1.6, .5, 1);
+  background: conic-gradient(from 0deg, #4a4650, #2c2930, #4a4650, #2c2930, #4a4650, #2c2930, #4a4650, #2c2930, #4a4650);
+  box-shadow: 0 .5vmin 1vmin rgba(0,0,0,.6), inset 0 .2vmin 0 rgba(255,255,255,.18); }
+#tvset .tv-knob i { position: absolute; left: 50%; top: .5vmin; width: .55vmin; height: 2.6vmin; margin-left: -.275vmin; border-radius: 1vmin; background: #ffb547;
+  box-shadow: 0 0 .6vmin rgba(255,181,71,.6); }
+#tvset .tv-dial:hover .tv-knob { filter: brightness(1.15); }
+#tvset .tv-dial.small { width: 9vmin; height: 9vmin; cursor: default; background: none; box-shadow: none; }
+#tvset .tv-dial.small .tv-knob { inset: 0; transform: rotate(var(--vol)); transition: transform .4s var(--ease); }
+#tvset .tv-dial.small .tv-knob i { background: #d8d2c4; box-shadow: none; height: 1.8vmin; }
+#tvset .tv-dial.small span { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: .8vmin; font-size: 1.1vmin; letter-spacing: .25em; text-transform: uppercase; color: #8b8590; }
+#tvset .tv-grille { flex: 1; width: 15vmin; margin-top: 2vmin; border-radius: 1vmin;
+  background: radial-gradient(circle, #050406 32%, transparent 36%) 0 0 / 1.4vmin 1.4vmin, linear-gradient(180deg, #2a272d, #1d1b20);
+  box-shadow: inset 0 0 0 .25vmin #0a090b; }

@@ -318,3 +318,22 @@ describe("channel mix and exclusions (N-09, N-10)", { skip }, () => {
     await ctx.close();
   });
 });
+
+describe("TV set (N-12)", { skip }, () => {
+  it("frames the picture, turns the dial to the channel, and the dial tunes up", async () => {
+    const { page, ctx, errors } = await open({ prefs: { bezel: "wood" } });
+    // The stage eases into the screen opening; wait for it to settle.
+    await page.waitForFunction(`(() => { const r = document.getElementById("stage").getBoundingClientRect(); return r.left > 10 && r.right < 1500; })()`);
+    await page.keyboard.press("3");
+    await page.waitForFunction(`document.getElementById("bug").textContent.startsWith("3")`);
+    assert.match(await js(page, `document.getElementById("tvset").style.getPropertyValue("--dial")`), /^55\.38/);
+    await page.click(".tv-dial[data-dial]");
+    await page.waitForFunction(`!document.getElementById("bug").textContent.startsWith("3")`);
+    await page.keyboard.press("g");
+    await page.waitForSelector(".cell.focus");
+    await page.waitForTimeout(450);
+    assert.equal(await js(page, `getComputedStyle(document.getElementById("stage")).left`), "0px", "the set steps aside for the guide");
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+});

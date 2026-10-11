@@ -25,6 +25,7 @@ let bugCh = null;
 export function bug(ch) {
   bugCh = ch;
   if (!ch) return void (bugEl.hidden = true);
+  dispatchEvent(new CustomEvent("debridtv:channel", { detail: ch }));
   // Position and opacity are viewer prefs (N-16): bugPos "br" | "bl" | "tr" | "tl", bugOpacity 0.1–1.
   bugEl.dataset.pos = pref("bugPos") ?? "br";
   bugEl.style.setProperty("--bug-o", String(pref("bugOpacity") ?? 1));

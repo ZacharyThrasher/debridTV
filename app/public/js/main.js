@@ -12,6 +12,7 @@ import { tickCard } from "./cards.js";
 import { unlockAudio } from "./static.js";
 import { editorOpen, exclusionsOpen } from "./channel-editor.js";
 import { themeEditorOpen } from "./theme.js";
+import "./bezel.js";
 
 applyPrefs();
 applyVolume();

@@ -475,6 +475,8 @@ function bugOpts() {
       <span style="display:flex;gap:.4em;flex-wrap:wrap">
       <select class="input" style="width:auto" data-pref-select="bugPos" aria-label="Bug corner">${raw(corners.map(([v, l]) => `<option value="${v}" ${v === pos ? "selected" : ""}>${l}</option>`).join(""))}</select>
       <select class="input" style="width:auto" data-pref-select="bugOpacity" data-num="1" aria-label="Bug opacity">${raw(levels.map(([v, l]) => `<option value="${v}" ${Math.abs(v - op) < 0.01 ? "selected" : ""}>${l}</option>`).join(""))}</select></span></div>
+    <div class="opt"><div><div class="ol">TV set</div><div class="od">Frame the picture in an old set. The wood console's dial turns to the channel. Not on phones.</div></div>
+      <select class="input" style="width:auto" data-pref-select="bezel" aria-label="TV set">${raw([["off", "None"], ["classic", "Classic"], ["wood", "Wood console"]].map(([v, l]) => `<option value="${v}" ${v === (pref("bezel") ?? "off") ? "selected" : ""}>${l}</option>`).join(""))}</select></div>
     <div class="opt"><div><div class="ol">Rating card</div><div class="od">Show "Rated PG-13" and the like for a few seconds when a program starts.</div></div>
       <label class="switch"><input type="checkbox" data-pref="ratingCard" aria-label="Rating card" ${pref("ratingCard") !== false ? "checked" : ""}><i></i></label></div>`;
 }
