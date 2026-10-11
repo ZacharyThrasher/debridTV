@@ -1310,3 +1310,56 @@ html.remote .od-ep:focus-visible { outline-offset: 2px; transform: scale(1.015);
   .od-card { width: 15em; }
   .od-backdrop { inset: 0; height: 40vh; }
 }
+
+/* ------------------------------------------------------------------ seasons (N-32) and content groups (N-07) */
+.dates { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .4em; }
+.dates > select.input { min-width: 13em; }
+.dates-pick { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .35em; }
+.dates-pick .input { width: auto; padding: .45em .5em; }
+.dates-pick .dd { min-width: 3.6em; }
+.season-opt { align-items: flex-start; flex-wrap: wrap; }
+.season-opt > div:first-child { flex: 1 1 18em; }
+.season-now { margin-top: .45em; font-size: .82em; font-weight: 600; }
+.season-now.on { color: var(--ok); }
+.season-now.off { color: var(--warn); }
+.slot-dates { flex-basis: 100%; display: flex; align-items: center; gap: .6em; padding-top: .45em; border-top: 1px dashed var(--line); margin-top: .1em; font-size: .92em; }
+
+.grp-sheet { width: min(94vw, 52em); }
+.grp-mark { display: inline-grid; grid-template-columns: repeat(3, .55em); gap: .18em; align-items: end; height: 2.6em; padding: 0 .3em; }
+.grp-mark i { display: block; border-radius: .15em; background: linear-gradient(180deg, var(--amber), var(--magenta)); }
+.grp-mark i:nth-child(1) { height: 70%; } .grp-mark i:nth-child(2) { height: 100%; opacity: .85; } .grp-mark i:nth-child(3) { height: 55%; opacity: .7; }
+.grp-list { display: grid; gap: .6em; margin: .4em 0 1em; }
+.grp-row { border: 1px solid var(--line); border-radius: .9em; background: color-mix(in srgb, var(--ink) 3%, transparent); overflow: hidden; }
+.grp-open { display: grid; gap: .2em; width: 100%; text-align: left; padding: .8em 1em .6em; border: 0; background: none; color: inherit; cursor: pointer; }
+.grp-open:hover { background: color-mix(in srgb, var(--focus) 8%, transparent); }
+.grp-open b { font-family: var(--display); font-size: 1.35em; font-weight: 800; line-height: 1.05; }
+.grp-open span { color: var(--dim); font-size: .9em; }
+.grp-open small { color: var(--faint); font-size: .78em; }
+.grp-used { display: flex; flex-wrap: wrap; gap: .4em; padding: 0 1em .8em; font-size: .82em; }
+.grp-chip { display: inline-flex; align-items: center; gap: .45em; padding: .2em .65em .2em .25em; border-radius: 99px; border: 1px solid var(--line-strong); }
+.grp-chip b { font-family: var(--mono); font-weight: 400; font-size: 1.3em; line-height: 1; padding: .05em .3em 0; border-radius: .25em; color: #000; background: var(--amber); }
+.grp-chip em { font-style: normal; color: var(--faint); }
+.grp-empty { padding: 1.4em; text-align: center; color: var(--dim); border: 1px dashed var(--line-strong); border-radius: .9em; }
+.grp-entries { list-style: none; margin: .3em 0 .8em; padding: 0; display: grid; gap: .35em; }
+.grp-entry { display: grid; grid-template-columns: 2em 1fr auto auto auto; align-items: center; gap: .4em; padding: .35em .5em; border: 1px solid var(--line); border-radius: .7em; }
+.grp-n { font-family: var(--mono); font-size: 1.4em; text-align: center; color: var(--amber); line-height: 1; }
+.grp-what { display: grid; min-width: 0; }
+.grp-what b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grp-what small { color: var(--faint); font-size: .78em; }
+.grp-add { display: flex; flex-wrap: wrap; gap: .4em; margin-top: .6em; max-height: 14em; overflow-y: auto; padding: .2em; }
+.grp-add small { color: var(--faint); margin-left: .2em; }
+.grp .x-chip { border: 1px solid var(--line-strong); background: transparent; color: var(--ink); border-radius: 99px; padding: .35em .8em; cursor: pointer; font: inherit; font-size: .85em; }
+.grp .x-chip:hover, .grp .x-chip:focus-visible { border-color: var(--focus); background: color-mix(in srgb, var(--focus) 12%, transparent); }
+.grp textarea.input { resize: vertical; min-height: 3.4em; font: inherit; }
+.ced.grp { z-index: 26; } /* opens over the channel editor */
+/* Guide: content group line (N-07) and seasonal channels (N-32). */
+.guide-details .gd-group { margin-top: calc(var(--u)*.45); font-size: calc(var(--u)*.88); color: var(--dim); max-width: 44em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.guide-details .gd-group b { display: inline-flex; align-items: center; gap: .35em; color: var(--ink); font-weight: 600; }
+.guide-details .gd-group b::before { content: ""; width: .5em; height: .9em; border-radius: .12em; background: linear-gradient(180deg, var(--amber), var(--magenta)); box-shadow: .62em 0 0 -.05em color-mix(in srgb, var(--magenta) 70%, transparent); margin-right: .45em; }
+.row-label .season-tag { font-weight: 600; color: var(--amber); }
+.cell.offseason {
+  background: repeating-linear-gradient(135deg, transparent 0 10px, color-mix(in srgb, var(--ink) 5%, transparent) 10px 12px), var(--panel-solid);
+  border-style: dashed; color: var(--dim);
+}
+.cell.offseason .ct { color: var(--dim); }
+.card .season-why b { color: var(--ink); }

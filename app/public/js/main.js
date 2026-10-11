@@ -14,6 +14,7 @@ import { unlockAudio } from "./static.js";
 import { editorOpen, exclusionsOpen } from "./channel-editor.js";
 import { themeEditorOpen } from "./theme.js";
 import { openOnDemand, onDemandOpen } from "./ondemand.js";
+import { groupsOpen } from "./groups.js";
 import "./bezel.js";
 
 applyPrefs();
@@ -86,7 +87,7 @@ addEventListener("keydown", (e) => {
     if (e.key === "Escape") e.target.blur();
     return;
   }
-  if (e.ctrlKey || e.metaKey || e.altKey || editorOpen() || exclusionsOpen() || themeEditorOpen() || onDemandOpen()) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || editorOpen() || exclusionsOpen() || themeEditorOpen() || onDemandOpen() || groupsOpen()) return;
   const k = e.key;
   if (!document.getElementById("welcome").hidden) {
     if (k === "Enter" || k === "Escape" || k === " ") closeWelcome();

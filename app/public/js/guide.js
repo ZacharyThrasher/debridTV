@@ -5,7 +5,7 @@
 import { api } from "./api.js";
 import { html, raw, fmtTime, fmtDur, now, clamp, toast, pref } from "./util.js";
 import { tv, tune } from "./player.js";
-import { logoHtml, hasLogo } from "./channel-editor.js";
+import { logoHtml, hasLogo, datesLabel } from "./channel-editor.js";
 import { formatChips, artOf, artImg } from "./ui.js";
 import { isLocked, isRedacted } from "./lock.js";
 import { openPanel } from "./panel.js";
@@ -140,9 +140,14 @@ function render() {
           ${raw(breakTail(a))}<div class="ct">${head}</div>${sub ? html`<div class="cs">${sub}</div>` : ""}</div>`;
       });
     const nowLine = t >= viewFrom && t < viewTo ? raw(`<div class="now-line" style="left:${pct(t)}%"></div>`) : "";
+    // A seasonal channel out of season (N-32) has no listings: say when it's back.
+    // The program on now finishes first, so the gap starts where the last listing ends.
+    const lastEnd = Math.max(viewFrom, ...r.airings.map((a) => a.end));
+    const off = offSeason(ch) && lastEnd < viewTo ? html`<div class="cell offseason ${ri === row && !focus ? "focus" : ""}" style="left:calc(${Math.max(0, pct(lastEnd))}% + 2px);right:2px" data-row="${ri}" data-start="0" role="gridcell" aria-label="${ch.name} is off season">
+      <div class="ct">Off season</div><div class="cs">${backOn(ch) ? `Back ${backOn(ch)}` : datesLabel(ch.season)}</div></div>` : "";
     return html`<div class="row ${tv.current?.id === ch.id ? "current" : ""}" style="--h:${ch.hue}" role="row">
-      <div class="row-label" data-tune="${ri}"><span class="n">${ch.number}</span><span class="nm">${ch.favorite ? raw('<b class="fav" title="Favorite">★</b>') : ""}${isLocked(ch) ? raw('<b class="lk" title="Locked">🔒</b>') : ""}${wordmark(ch) ?? ch.name}<span class="tg">${ch.tagline}</span></span></div>
-      <div class="row-track">${raw(cells.join(""))}${nowLine}</div></div>`;
+      <div class="row-label" data-tune="${ri}"><span class="n">${ch.number}</span><span class="nm">${ch.favorite ? raw('<b class="fav" title="Favorite">★</b>') : ""}${isLocked(ch) ? raw('<b class="lk" title="Locked">🔒</b>') : ""}${wordmark(ch) ?? ch.name}<span class="tg">${ch.season ? html`<b class="season-tag" title="On the air ${datesLabel(ch.season)}">◷ ${datesLabel(ch.season)}</b>` : ch.tagline}</span></span></div>
+      <div class="row-track">${raw(cells.join(""))}${off}${nowLine}</div></div>`;
   });
 
   grid.innerHTML = html`<div class="grid-times">${raw(times.join(""))}</div>
@@ -180,7 +185,17 @@ function rowPx() {
   return probe ? probe.getBoundingClientRect().height : 50;
 }
 
+const offSeason = (ch) => !!ch?.season && ch.season.inSeason === false;
+const backOn = (ch) => (ch.season?.nextChangeMs ? new Date(ch.season.nextChangeMs).toLocaleDateString(undefined, { month: "long", day: "numeric" }) : "");
+
 function renderDetails(ch, a) {
+  if (ch && !a && offSeason(ch)) {
+    details.style.setProperty("--h", ch.hue);
+    details.innerHTML = html`<div class="when">Off season<span class="on-ch"><b>${ch.number}</b>${ch.name}</span></div>
+      <div class="t">${ch.name}</div>
+      <div class="desc">A seasonal channel: on the air ${datesLabel(ch.season) === "All year" ? "all year" : `${datesLabel(ch.season)} each year`}.${backOn(ch) ? ` Back on ${backOn(ch)}.` : ""} Nothing airs until then, so there's nothing to fetch.</div>`.html;
+    return;
+  }
   if (!ch || !a) return void (details.innerHTML = "");
   if (isLocked(ch) || isRedacted(a)) {
     details.style.setProperty("--h", ch.hue);
@@ -209,6 +224,7 @@ function renderDetails(ch, a) {
     <div class="t">${a.title}</div>
     <div class="s">${raw(bits.join(""))}</div>
     ${a.description ? html`<div class="plot">${a.description}</div>` : ""}
+    ${a.group ? html`<div class="gd-group"><b>${a.group.name}</b>${a.group.description ? html` · ${a.group.description}` : ""}</div>` : ""}
     <div class="desc">${a.subtitle ? html`“${a.subtitle}”. ` : ""}${state}.${pad ? ` Ends at ${fmtTime(pad.start)}, then a station break until ${fmtTime(pad.end)}.` : ""}</div>
     ${onNow ? raw(`<div class="prog"><i style="width:${pct.toFixed(1)}%"></i></div>`) : ""}
     <div class="act"><kbd>OK</kbd> ${onNow ? "watch now" : "tune to this channel"}</div>`;
