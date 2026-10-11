@@ -9,6 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { closeQuietly } from "./close.ts";
 
 const require = createRequire(import.meta.url);
 let chromium: any = null;
@@ -60,10 +61,13 @@ async function open(route?: (u: URL, body: any) => any) {
   if (route)
     await ctx.route("**/api/**", async (r: any) => {
       const u = new URL(r.request().url());
-      const resp = await r.fetch();
-      let body = await resp.json().catch(() => null);
-      body = body && route(u, body);
-      await r.fulfill({ response: resp, body: JSON.stringify(body ?? (await resp.json())) });
+      // A request still in flight when the test closes its context rejects here; that's not a failure.
+      try {
+        const resp = await r.fetch();
+        let body = await resp.json().catch(() => null);
+        body = body && route(u, body);
+        await r.fulfill({ response: resp, body: JSON.stringify(body ?? (await resp.json())) });
+      } catch {}
     });
   const page = await ctx.newPage();
   const errors: string[] = [];
@@ -127,7 +131,7 @@ describe("music stations and Coming Attractions (N-23a, N-23c)", { skip }, () =>
     assert.notEqual(await js(page, "document.querySelector('.guide-details .t').textContent"), first, "Right steps to the next song");
     assert.equal(await js(page, "document.querySelectorAll('.row:nth-child(2) .cell.focus').length"), 1);
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("Coming Attractions reads as trailers back to back, and offers the film when it's in the library", async () => {
@@ -142,7 +146,7 @@ describe("music stations and Coming Attractions (N-23a, N-23c)", { skip }, () =>
     for (let i = 0; i < 9 && !(await js(page, "document.querySelector('.guide-details .act').textContent.includes('watch the film')")); i++) await page.keyboard.press("ArrowRight");
     assert.match(await js(page, "document.querySelector('.guide-details .t').textContent"), /^Film 1$/);
     assert.match(await js(page, "document.querySelector('.guide-details .s').textContent"), /Trailer/);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("the banner keeps one song at a time, with a square album cover slot", async () => {
@@ -151,7 +155,7 @@ describe("music stations and Coming Attractions (N-23a, N-23c)", { skip }, () =>
     await page.waitForFunction("document.querySelector('#banner:not([hidden]) .badge.kind')");
     assert.match(await js(page, "document.querySelector('#banner .title').textContent"), /^Song \d$/);
     assert.match(await js(page, "document.querySelector('#banner .meta').textContent"), /♪ Song.*Night Drive/);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });
 
@@ -162,7 +166,7 @@ describe("home network on a paired device", { skip }, () => {
     await ctx.route("**/pair", (r: any) => r.fulfill({ status: 200, contentType: "text/html", body: "<title>pair</title>paired?" }));
     await page.keyboard.press("g");
     await page.waitForURL(/\/pair$/);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("PC-only settings say so, and a device doesn't offer Sources or the PIN", async () => {
@@ -174,6 +178,6 @@ describe("home network on a paired device", { skip }, () => {
     await page.waitForSelector("#panel:not([hidden])");
     assert.equal(await js(page, "document.querySelector('#panel [aria-selected=\"true\"]').dataset.tab"), "look");
     assert.equal(await js(page, "getComputedStyle(document.querySelector('#panel [data-tab=\"sources\"]')).display"), "none");
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });

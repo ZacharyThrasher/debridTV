@@ -9,6 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { closeQuietly } from "./close.ts";
 
 const require = createRequire(import.meta.url);
 let chromium: any = null;
@@ -113,7 +114,7 @@ describe("content groups (N-07)", { skip }, () => {
     await page.click("[data-slot-add]");
     assert.ok(await js(page, `[...document.querySelector('[data-slot="0:source"]').options].some((o) => o.value === "group:${g.groups[0].id}")`));
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("the guide names the group a program comes from", async () => {
@@ -126,7 +127,7 @@ describe("content groups (N-07)", { skip }, () => {
     for (const d of String(ch.number)) await page.keyboard.press(d);
     await page.waitForFunction("document.querySelector('.guide-details .gd-group')");
     assert.match(await js(page, "document.querySelector('.guide-details .gd-group').textContent"), /Saturday Morning · Cartoons until noon\./);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("Settings → Channels opens the groups, and a new channel can be built from a group", async () => {
@@ -145,7 +146,7 @@ describe("content groups (N-07)", { skip }, () => {
     const g = await (await fetch(`${BASE}/api/groups`)).json();
     assert.ok(g.groups[0].usedBy.some((u: any) => u.how === "custom" && u.name === "Cartoon Block"));
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("Look & feel turns the guide preview off", async () => {
@@ -155,7 +156,7 @@ describe("content groups (N-07)", { skip }, () => {
     assert.equal(await js(page, "document.querySelector('[data-pref=\"guidePreview\"]').checked"), true);
     await page.locator('[data-pref="guidePreview"]').setChecked(false, { force: true });
     assert.equal(await js(page, `import("/js/util.js").then((m) => m.pref("guidePreview"))`), false);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });
 
@@ -183,7 +184,7 @@ describe("seasonal lineups (N-32)", { skip }, () => {
     assert.equal(st.season.from, "11-25");
     assert.equal(st.season.to, "01-07");
     assert.deepEqual(st.slots[0].dates, { from: "10-01", to: "10-31" });
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("an out-of-season channel says when it's back, in the guide and on the card", async () => {
@@ -210,6 +211,6 @@ describe("seasonal lineups (N-32)", { skip }, () => {
     await js(page, `import("/js/player.js").then((m) => m.tune(m.tv.channels.find((c) => c.id === ${JSON.stringify(target)})))`);
     await page.waitForFunction("document.querySelector('#card:not([hidden]) .card-kicker')?.textContent === 'Off season'");
     assert.match(await js(page, "document.querySelector('#card .why').textContent"), /Back on the air .*November 2[45].*from Nov 25 to Jan 7/);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });

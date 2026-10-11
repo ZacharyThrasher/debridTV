@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { closeQuietly } from "./close.ts";
 import { makeOnDemand, answerOnDemand } from "./ondemand-mock.ts";
 
 const require = createRequire(import.meta.url);
@@ -101,7 +102,7 @@ describe("On Demand (N-30)", { skip }, () => {
     for (const k of ["ArrowRight", "ArrowRight", "ArrowDown", "ArrowRight", "ArrowDown"]) await page.keyboard.press(k);
     assert.equal(requests.filter((p) => p.startsWith("/media") || p === "/api/prefetch" || p === "/api/watch").length, 0);
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("the remote opens a show, Back returns to its tile, and Back again closes", async () => {
@@ -129,7 +130,7 @@ describe("On Demand (N-30)", { skip }, () => {
     const before = await js(page, "document.getElementById('bug').textContent");
     await page.keyboard.press("ArrowUp");
     await page.waitForFunction(`document.getElementById("bug").textContent !== ${JSON.stringify(before)}`);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("season tabs switch the episode list", async () => {
@@ -141,7 +142,7 @@ describe("On Demand (N-30)", { skip }, () => {
     await page.click('[data-season="2"]');
     await page.waitForFunction(`document.querySelector('.od-ep').dataset.play !== ${JSON.stringify(first)}`);
     assert.match(await js(page, "document.querySelector('.od-ep .od-ep-t span').textContent"), /^S2 · E1/);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("search narrows shows, films and episodes, and Escape clears it", async () => {
@@ -163,7 +164,7 @@ describe("On Demand (N-30)", { skip }, () => {
     await page.keyboard.type("zzzz-nothing");
     await page.waitForSelector(".od-empty");
     assert.match(await js(page, "document.querySelector('.od-empty').textContent"), /Nothing matches/);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("a part-watched pick asks resume or start over", async () => {
@@ -179,7 +180,7 @@ describe("On Demand (N-30)", { skip }, () => {
     await page.waitForFunction("!document.querySelector('.od-sheet')");
     assert.equal(await js(page, "document.getElementById('ondemand').hidden"), false);
     assert.match(await focusK(page), /^c:/);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("explains itself when the server has no On Demand yet, or the library is empty", async () => {
@@ -187,12 +188,12 @@ describe("On Demand (N-30)", { skip }, () => {
     await a.page.keyboard.press("o");
     await a.page.waitForSelector(".od-empty");
     assert.match(await js(a.page, "document.querySelector('.od-empty').textContent"), /isn't on this server yet/);
-    await a.ctx.close();
+    await closeQuietly(a.ctx);
     const b = await open({ empty: true });
     await b.page.keyboard.press("o");
     await b.page.waitForSelector(".od-empty");
     assert.match(await js(b.page, "document.querySelector('.od-empty').textContent"), /library is empty/);
-    await b.ctx.close();
+    await closeQuietly(b.ctx);
   });
 
   it("the banner shows file time and ON DEMAND while a pick plays", async () => {
@@ -203,6 +204,6 @@ describe("On Demand (N-30)", { skip }, () => {
     assert.equal(await js(page, "!!document.querySelector('#banner .badge.live')"), false);
     await js(page, `dispatchEvent(new CustomEvent("debridtv:ondemand", { detail: null }))`);
     await page.waitForSelector("#banner:not([hidden]) .badge.live, #banner:not([hidden]) .badge.warn");
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });

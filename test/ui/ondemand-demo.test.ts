@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { closeQuietly } from "./close.ts";
 
 const require = createRequire(import.meta.url);
 let chromium: any = null;
@@ -110,6 +111,6 @@ describe("On Demand in demo mode", () => {
     const spans = watches.filter((w) => w.channel === "ondemand");
     assert.ok(spans.length >= 2 && spans.every((w) => w.itemId === item.id), `On Demand spans: ${JSON.stringify(watches)}`);
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });

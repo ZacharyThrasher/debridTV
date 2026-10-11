@@ -10,6 +10,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { closeQuietly } from "./close.ts";
 
 const require = createRequire(import.meta.url);
 let chromium: any = null;
@@ -158,7 +159,7 @@ describe("player", () => {
     const d = await drift(page);
     assert.ok(Math.abs(d.driftMs) < 1500, `drift ${d.driftMs} ms`);
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("resuming from pause returns to live, not where it paused (A21)", async (t) => {
@@ -182,7 +183,7 @@ describe("player", () => {
     await sleep(800);
     const after = await drift(page);
     assert.ok(Math.abs(after.driftMs) < 1500, `back on station time (drift ${after.driftMs} ms)`);
-    await ctx.close();
+    await closeQuietly(ctx);
     void before;
   });
 
@@ -198,7 +199,7 @@ describe("player", () => {
     await sleep(3000);
     const files = new Set(media.map((u) => u.replace(/\/live$/, "")));
     assert.ok(files.size <= 1, `media for ${files.size} files: ${[...files].join(", ")}`);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("slow surfing peeks at the picture before the wait ends, then plays on station time (EXP-008)", async (t) => {
@@ -228,7 +229,7 @@ describe("player", () => {
     await sleep(800);
     const d = await drift(page);
     assert.ok(Math.abs(d.driftMs) < 1500, `on station time (drift ${d.driftMs} ms)`);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("On Demand plays a file from any point, seeks, records its own history and returns to live at the end (N-30)", async (t) => {
@@ -284,7 +285,7 @@ describe("player", () => {
     assert.ok(od.length >= 2 && od.every((w) => w.itemId === itemId && w.toMs > w.fromMs), `watch spans: ${JSON.stringify(watches)}`);
     assert.ok(od.some((w) => w.fromMs >= 29_500 && w.fromMs < 31_000), "a span starts where On Demand started");
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("A picks another audio language and C turns captions on, in step with the picture, and both carry over (N-18a)", async (t) => {
@@ -307,7 +308,7 @@ describe("player", () => {
     // compatibility mode (&ac=opus) can't be checked end to end here.
     const itemId = (await get(`/api/now?channel=${langs!.id}`)).airing.itemId;
     const head = Buffer.from(await (await fetch(`${BASE}/media/${itemId}/live?start=1&v=vp9&ac=opus`)).arrayBuffer()).subarray(0, 4096);
-    if (!head.includes("Opus")) return void (await ctx.close(), t.skip("this server sends only AAC sound in compatibility mode"));
+    if (!head.includes("Opus")) return void (await closeQuietly(ctx), t.skip("this server sends only AAC sound in compatibility mode"));
 
     await page.keyboard.press("a");
     await page.waitForFunction(() => /\/live\?.*&a=1/.test(document.getElementById("video")!.getAttribute("src") ?? ""));
@@ -347,7 +348,7 @@ describe("player", () => {
     assert.ok(shown.length >= 2, `captions keep coming: ${JSON.stringify(shown)}`);
 
     // Another program (a fresh start here) uses the remembered choices straight away.
-    await ctx.close();
+    await closeQuietly(ctx);
     const next = await open({ audioLang: "spa", subLang: "eng" }, langs);
     await playing(next.page);
     assert.match(await next.page.evaluate(() => document.getElementById("video")!.getAttribute("src") ?? ""), /&a=1&s=0/);
@@ -357,7 +358,7 @@ describe("player", () => {
     assert.match(await next.page.evaluate(() => document.getElementById("video")!.getAttribute("src") ?? ""), /&a=1/);
     assert.equal(await next.page.evaluate(() => JSON.parse(localStorage.getItem("debridtv.prefs")!).subLang), "off");
     assert.deepEqual([...errors, ...next.errors], []);
-    await next.ctx.close();
+    await closeQuietly(next.ctx);
   });
 
   it("a music channel plays the song on station time with its sleeve, details and a live analyser (N-23a)", async (t) => {
@@ -393,7 +394,7 @@ describe("player", () => {
     await page.keyboard.press("ArrowUp");
     await page.waitForSelector("#music", { state: "hidden" });
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("a device whose pairing was revoked mid-program goes to pairing, not an error card (home network)", async (t) => {
@@ -414,7 +415,7 @@ describe("player", () => {
         await page.waitForSelector("#card:not([hidden])", { timeout: 15_000 });
         assert.ok(!page.url().endsWith("/pair"));
       }
-      await ctx.close();
+      await closeQuietly(ctx);
     }
   });
 
@@ -445,7 +446,7 @@ describe("player", () => {
       await page.evaluate(() => dispatchEvent(new CustomEvent("debridtv:unlocked", { detail: { channelId: null } })));
       await playing(page);
       assert.ok((costly as string[]).some((u) => u.startsWith("/media/")), "plays once unlocked");
-      await ctx.close();
+      await closeQuietly(ctx);
     } finally {
       await post("/api/lock/pin", { old: "2468", pin: null });
     }
@@ -473,7 +474,7 @@ describe("player", () => {
     assert.equal(await page.locator("#bug").innerText(), bug, "same channel after waking");
     const d = await drift(page);
     assert.ok(Math.abs(d.driftMs) < 1500, `back live (drift ${d.driftMs} ms)`);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("a key during the prompt keeps watching without changing channel", async (t) => {
@@ -487,6 +488,6 @@ describe("player", () => {
     assert.equal(await page.locator("#signoff").isVisible(), false);
     assert.equal(await page.locator("#bug").innerText(), bug);
     assert.equal(await page.evaluate(() => !(document.getElementById("video") as HTMLVideoElement).paused), true, "still playing");
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });
