@@ -608,6 +608,9 @@ export class Library {
 
 export type FileStatus = "ready" | "needs-scan" | "not-ready" | "refused" | "gone" | "account" | "problem" | "excluded" | "other";
 
+/** Real-Debrid torrent states that mean "this won't finish by itself". */
+const FAILED_STATES = new Set(["magnet_error", "error", "virus", "dead"]);
+
 export const STATUS_ORDER: FileStatus[] = ["ready", "needs-scan", "not-ready", "refused", "account", "problem", "gone", "excluded", "other"];
 
 /**
@@ -624,7 +627,12 @@ export function fileStatus(it: LibItem, account?: AccountState): { status: FileS
   if (it.excluded) return { status: "excluded", message: "You kept this off the air." };
   if (it.parsed.kind === "other") return { status: "other", message: "Not recognised as an episode or a movie, so no channel uses it." };
   if (it.ready === false)
-    return { status: "not-ready", message: `${who} hasn't finished storing this (it says "${it.providerState}"). DebridTV never asks a provider to download anything.` };
+    return {
+      status: "not-ready",
+      message: FAILED_STATES.has(it.providerState)
+        ? `${who} reports this one failed (it says "${it.providerState}"). DebridTV won't try to repair it.`
+        : `${who} hasn't finished storing this (it says "${it.providerState}"). DebridTV never asks a provider to download anything.`,
+    };
   if (account && (account.premium === false || account.errorKind === "auth"))
     return {
       status: "account",

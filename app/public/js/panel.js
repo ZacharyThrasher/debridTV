@@ -1,9 +1,11 @@
 // Settings. Every account action here is explicit and says what it will cost:
-// connecting reads your library list, scanning reads a few KB per file, and
-// nothing ever adds, removes or downloads anything in your accounts.
+// connecting reads your account status and library list, scanning reads a few KB
+// per file, and nothing ever adds, removes or downloads anything in your accounts.
+// The Library tab shows where each file stands (listed, finished at the provider,
+// timed, playable, refused) without making any provider request.
 
 import { api } from "./api.js";
-import { html, raw, esc, fmtBytes, ago, pref, setPref, toast, fmtTime } from "./util.js";
+import { html, raw, esc, fmtBytes, fmtDur, ago, pref, setPref, toast, fmtTime } from "./util.js";
 import { tv, applyVolume } from "./player.js";
 
 const panel = document.getElementById("panel");
@@ -17,7 +19,16 @@ export const panelOpen = () => !panel.hidden;
 export function initPanel(changed) {
   onChange = changed;
   panel.querySelector("[data-close]").addEventListener("click", closePanel);
+  // The Library tab arrived after the markup; add its button if the page doesn't have one yet.
+  if (!panel.querySelector('[data-tab="library"]')) {
+    const b = document.createElement("button");
+    b.setAttribute("role", "tab");
+    b.dataset.tab = "library";
+    b.textContent = "Library";
+    panel.querySelector('[data-tab="sources"]')?.after(b);
+  }
   panel.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  addStyles();
 }
 
 export function openPanel(which = tab) {
@@ -45,7 +56,7 @@ const editing = () => body.contains(document.activeElement) && document.activeEl
 
 async function render() {
   try {
-    const fn = { sources, channels, history, meters, look, privacy }[tab];
+    const fn = { sources, library, channels, history, meters, look, privacy }[tab];
     const out = await fn();
     if (out != null) {
       const y = body.scrollTop;
@@ -78,14 +89,24 @@ async function sources() {
         <div class="muted">Connecting reads your library list once (one request). The key is checked with ${p.name}, then kept only on this PC.</div>
       </div>`;
     return html`<div class="src">
-      <div class="src-head"><div class="src-name"><span class="src-dot on"></span>${p.name}</div><span class="badge ok">Connected · read-only</span></div>
-      ${stats(v)}
-      ${id === "realdebrid" && v.packsToExpand ? html`<div class="muted">${v.packsToExpand} multi-file torrents will be opened up during the scan.</div>` : ""}
+      <div class="src-head"><div class="src-name"><span class="src-dot ${v.account && v.account.premium === false ? "" : "on"}"></span>${p.name}</div><span class="badge ok">Connected · read-only</span></div>
+      ${accountLine(id, v.account)}
+      ${stats(v, id)}
+      ${id === "realdebrid" && v.packsToExpand ? html`<div class="muted">${v.packsToExpand} multi-file torrents will be opened up during the scan (one request each).</div>` : ""}
       <div class="row-actions">
-        <button class="btn" data-refresh="${id}">Refresh list</button>
+        <button class="btn" data-refresh="${id}" title="Two requests: your account status and your library list">Refresh list</button>
         <button class="btn danger" data-disconnect="${id}">Disconnect &amp; delete key</button>
-        <span class="muted">Updated ${v.refreshedAt ? ago(v.refreshedAt) : "never"}</span>
+        <span class="muted">List updated ${v.refreshedAt ? ago(v.refreshedAt) : "never"}</span>
       </div>
+      <details class="x-what"><summary>What DebridTV does with this account</summary>
+        <ul>
+          <li><b>Reads</b> your account status (plan and when premium ends) and your library list, when you connect or press Refresh.</li>
+          <li><b>Asks for one playback link</b> per program you watch or scan, and reuses it for up to an hour.</li>
+          <li><b>Reads a few KB</b> from the start of a file during a scan, to learn its running time.</li>
+          <li><b>Never</b> adds, selects, deletes or downloads anything in your account. Files ${p.name} hasn't finished stay off the air.</li>
+          <li><b>Never</b> retries a file ${p.name} refused, or fetches it from another provider.</li>
+        </ul>
+      </details>
     </div>`;
   };
   const sc = s.scan;
@@ -96,7 +117,7 @@ async function sources() {
     ${raw(card("torbox"))}${raw(card("realdebrid"))}
     <div class="src">
       <div class="src-head"><div class="src-name"><span class="src-dot ${s.local.connected ? "on" : ""}"></span>This PC</div>${s.local.connected ? raw('<span class="badge ok">Watching folders</span>') : raw('<span class="badge">Optional</span>')}</div>
-      ${s.local.connected ? raw(stats(s.local)) : ""}
+      ${s.local.connected ? raw(stats(s.local, "local")) : ""}
       <div class="field"><label for="dirs">Video folders, one per line</label>
         <textarea class="input" id="dirs" rows="3" spellcheck="false" placeholder="D:\\Videos\\TV">${s.local.dirs.join("\n")}</textarea></div>
       <div class="row-actions"><button class="btn" data-local>Save folders</button></div>
@@ -106,9 +127,9 @@ async function sources() {
     <p class="lead">A channel can only schedule a program once its exact running time is known. DebridTV learns it by reading a few kilobytes from the start of each file. It never downloads whole files, and it only runs when you start it.</p>
     <div class="src">
       ${sc.running
-        ? html`<div class="src-head"><b>Scanning${sc.current ? html`: ${sc.current}` : ""}</b><span class="muted">${sc.done} / ${sc.total}</span></div>
+        ? html`<div class="src-head"><b>${sc.pausedUntil ? "Paused: the provider asked DebridTV to slow down" : html`Scanning${sc.current ? html`: ${sc.current}` : ""}`}</b><span class="muted">${sc.done} / ${sc.total}</span></div>
             <div class="progressbar"><i style="width:${pct}%"></i></div>
-            <div class="row-actions"><button class="btn" data-scan-stop>Stop</button><span class="muted">Pace: ${sc.perMinute} files a minute</span></div>`
+            <div class="row-actions"><button class="btn" data-scan-stop>Stop</button><span class="muted">${sc.pausedUntil ? `Resuming in ${Math.max(0, Math.ceil((sc.pausedUntil - Date.now()) / 1000))} s` : `Pace: ${sc.perMinute} files a minute`}</span></div>`
         : html`<div class="src-head"><b>${sc.needed ? `${sc.needed} files still need a running time` : "Every file has a running time"}</b></div>
             ${sc.stoppedReason ? html`<div class="muted" style="color:var(--warn)">Stopped: ${sc.stoppedReason}</div>` : ""}
             ${sc.lastError ? html`<div class="muted" style="color:var(--bad)">Last error: ${sc.lastError}</div>` : ""}
@@ -117,17 +138,38 @@ async function sources() {
               <select class="input" style="width:auto" id="pace" aria-label="Pace">
                 ${raw([10, 30, 60, 120].map((n) => `<option value="${n}" ${n === sc.perMinute ? "selected" : ""}>${n} files / min${n === 30 ? " (gentle)" : ""}</option>`).join(""))}
               </select>
-            </div>`}
+              ${sc.failed ? html`<button class="btn" data-scan-retry title="Clears earlier read errors so the next scan tries those files again">Try ${sc.failed} failed file${sc.failed === 1 ? "" : "s"} again</button>` : ""}
+            </div>
+            <div class="muted">A scan asks for one playback link per file and reads its header. Files a provider refused or hasn't finished are skipped.</div>`}
     </div>
     <p class="muted">Your keys and library facts are stored in <code>${s.dataDir}</code>.</p>`;
 }
 
-function stats(v) {
+function accountLine(id, a) {
+  if (!a) return html`<div class="muted">Account status not checked yet.</div>`;
+  const checked = html`<span class="muted"> · checked ${ago(a.checkedAt)}</span> <button class="linkish" data-account="${id}">Check again</button>`;
+  if (a.error) return html`<div class="x-acct warn">⚠ ${a.error}.${checked}</div>`;
+  if (a.premium === false)
+    return html`<div class="x-acct bad">Premium ${a.premiumUntil ? html`ended ${fmtDate(a.premiumUntil)}` : "has ended"}. Programs from ${PROVIDERS[id].name} can't play until it's renewed; your channels keep their place.${checked}</div>`;
+  const days = a.premiumUntil ? Math.ceil((a.premiumUntil - Date.now()) / 86400000) : null;
+  const plan = a.plan ? a.plan[0].toUpperCase() + a.plan.slice(1) : null;
+  return html`<div class="x-acct ${days != null && days <= 7 ? "warn" : ""}">${plan ? html`<b>${plan}</b> plan` : "Premium"}${a.premiumUntil ? html` · premium until ${fmtDate(a.premiumUntil)} (${days} day${days === 1 ? "" : "s"})` : ""}${checked}</div>`;
+}
+
+const fmtDate = (ms) => new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+
+function stats(v, id) {
+  const c = v.counts ?? {};
+  const tile = (n, label, status, cls = "") =>
+    html`<button class="stat x-tile ${cls}" data-goto-library="${status}" data-provider="${id}" title="Show these in Library"><b>${n}</b><span>${label}</span></button>`;
   return html`<div class="stats">
-    <div class="stat"><b>${v.video}</b><span>videos</span></div>
-    <div class="stat"><b>${v.timed}</b><span>ready to air</span></div>
-    <div class="stat"><b>${v.policyBlocked}</b><span>refused</span></div>
-    <div class="stat"><b>${v.unavailable + v.probeErrors}</b><span>problems</span></div>
+    ${tile(v.video, "videos", "")}
+    ${tile(c.ready ?? v.timed, "ready to air", "ready")}
+    ${c["needs-scan"] ? tile(c["needs-scan"], "need a scan", "needs-scan") : ""}
+    ${c["not-ready"] ? tile(c["not-ready"], `not finished at ${id === "local" ? "source" : PROVIDERS[id]?.name ?? ""}`, "not-ready", "warn") : ""}
+    ${tile(c.refused ?? v.policyBlocked, "refused", "refused", (c.refused ?? v.policyBlocked) ? "bad" : "")}
+    ${tile((c.problem ?? 0) + (c.account ?? 0), "problems", (c.account ? "account" : "problem"), (c.problem || c.account) ? "warn" : "")}
+    ${c.gone ? tile(c.gone, "removed", "gone") : ""}
   </div>`;
 }
 
@@ -166,6 +208,51 @@ body.addEventListener("click", async (e) => {
       await api.post("/api/scan/start", { perMinute: Number(document.getElementById("pace")?.value ?? 30) });
     } else if ("scanStop" in b.dataset) {
       await api.post("/api/scan/stop");
+    } else if ("scanRetry" in b.dataset) {
+      const r = await api.post("/api/scan/retry-failed");
+      toast(`${r.cleared} file${r.cleared === 1 ? "" : "s"} will be tried again. Press Scan now.`);
+    } else if (b.dataset.account) {
+      busy("Checking…");
+      const r = await api.post("/api/sources/account", { provider: b.dataset.account });
+      toast(r.error ? r.error : r.premium === false ? "Premium has ended on this account." : "Account is in good standing.");
+    } else if ("gotoLibrary" in b.dataset) {
+      lib = { ...lib, status: b.dataset.gotoLibrary, provider: b.dataset.provider === "local" ? "local" : b.dataset.provider ?? "", q: "", limit: 50 };
+      return showTab("library");
+    } else if ("libFilter" in b.dataset) {
+      lib = { ...lib, status: b.dataset.libFilter, limit: 50 };
+      return void libList();
+    } else if ("libMore" in b.dataset) {
+      lib = { ...lib, limit: lib.limit + 100 };
+      return void libList();
+    } else if (b.dataset.check) {
+      busy("Checking…");
+      try {
+        const r = await api.post("/api/library/check", { id: b.dataset.check });
+        toast(r.message, 5000);
+      } catch (err) {
+        toast(err.data?.message ?? err.message, 6000);
+      }
+      onChange();
+      return void libList();
+    } else if (b.dataset.exclude) {
+      await api.post("/api/library/exclude", { id: b.dataset.exclude, excluded: b.dataset.excluded !== "1" });
+      toast(b.dataset.excluded !== "1" ? "Kept off the air. Channels change after what's airing now ends." : "Back on the air.");
+      onChange();
+      return void libList();
+    } else if (b.dataset.mark) {
+      await api.post("/api/history/mark", { itemId: b.dataset.item, mark: b.dataset.mark === "clear" ? null : b.dataset.mark });
+      if (tab === "library") return void libList();
+    } else if (b.dataset.forget) {
+      await api.post("/api/history/forget", { itemId: b.dataset.forget });
+      toast("Removed from your history.");
+    } else if ("importSettings" in b.dataset) {
+      return void document.getElementById("import-file")?.click();
+    } else if ("forgetAll" in b.dataset) {
+      const typed = prompt('This deletes your keys, library facts, viewing history and channels from this PC. Your provider accounts are not touched.\n\nType "forget everything" to continue.');
+      if (typed?.trim().toLowerCase() !== "forget everything") return toast("Nothing was deleted.");
+      await api.post("/api/forget", { confirm: "forget everything" });
+      toast("Everything DebridTV knew is gone from this PC.", 5000);
+      onChange();
     } else if (b.dataset.hide) {
       await api.post("/api/channels/hide", { ruleKey: b.dataset.hide, hidden: b.dataset.hidden !== "1" });
       onChange();
@@ -245,15 +332,28 @@ async function history() {
   const h = await api.get("/api/history");
   const rows = h.recent.map((r) => {
     const pct = r.durationMs ? Math.min(100, Math.round((r.seenMs / r.durationMs) * 100)) : 0;
+    const badge = r.manual === "watched" ? html`<span class="badge ok" title="You marked this">✓ Marked watched</span>`
+      : r.manual === "unwatched" ? html`<span class="badge" title="You marked this">Marked unwatched</span>`
+      : r.watched ? html`<span class="badge ok">✓ Watched</span>` : html`<span class="badge">Seen ${pct}%</span>`;
+    const markBtn = r.manual
+      ? html`<button class="linkish" data-mark="clear" data-item="${r.itemId}">Undo my mark</button>`
+      : r.watched
+        ? html`<button class="linkish" data-mark="unwatched" data-item="${r.itemId}">Mark unwatched</button>`
+        : html`<button class="linkish" data-mark="watched" data-item="${r.itemId}">Mark watched</button>`;
     return html`<div class="li" style="grid-template-columns:1fr auto">
-      <div><div class="t">${r.title}</div><div class="d">${ago(r.at)} · seen ${pct}%</div>
-        <div class="progressbar" style="max-width:16em"><i style="width:${pct}%"></i></div></div>
-      ${r.watched ? raw('<span class="badge ok">✓ Watched</span>') : raw('<span class="badge">In progress</span>')}</div>`;
+      <div><div class="t">${r.title}</div><div class="d">${ago(r.at)} · you saw ${pct}% of it</div>
+        <div class="progressbar" style="max-width:16em"><i style="width:${pct}%"></i></div>
+        <div class="x-acts">${markBtn}<button class="linkish" data-forget="${r.itemId}">Remove from history</button></div></div>
+      ${badge}</div>`;
   });
   return html`<h3>Viewing history</h3>
-    <p class="lead">A program counts as watched once you've actually seen ${Math.round(h.threshold * 100)}% of it. Catching the last few minutes doesn't count, and station breaks never do. History stays on this PC.</p>
+    <p class="lead">A program counts as watched once you've actually seen ${Math.round(h.threshold * 100)}% of it. Catching the last few minutes doesn't count, and station breaks never do. You can mark a program by hand; DebridTV shows that it was your mark. History stays on this PC.</p>
     <div class="list">${rows.length ? raw(rows.join("")) : raw('<p class="muted">Nothing yet. Start watching!</p>')}</div>
-    ${rows.length ? raw('<div class="row-actions" style="margin-top:1em"><button class="btn danger" data-clear-history>Clear history</button></div>') : ""}`;
+    ${h.total > rows.length ? html`<p class="muted">Showing the latest ${rows.length} of ${h.total}. Export to see everything.</p>` : ""}
+    <div class="row-actions" style="margin-top:1em">
+      <a class="btn" href="/api/history/export" download>Export history</a>
+      ${rows.length ? raw('<button class="btn danger" data-clear-history>Clear history</button>') : ""}
+    </div>`;
 }
 
 // ------------------------------------------------------------------ meters
@@ -318,5 +418,155 @@ async function privacy() {
     ${raw(gate(b.gates.cloudRelay, "Cloud relay", "Streaming through a server instead of your own PC. Off: Real-Debrid treats server traffic differently, so this needs your explicit choice."))}
     ${raw(gate(b.gates.tunerExport, "Tuner export", "Showing your channels to Plex, Jellyfin or other TV apps as a tuner. Off until you say so."))}
     <h3>What leaves this PC</h3>
-    <p class="lead">Only requests to the providers you connected: the library list when you connect or refresh, one link request per program you watch (reused for an hour), the few KB a scan reads, and the video you actually watch. The Meters tab counts all of it.</p>`;
+    <p class="lead">Only requests to the providers you connected: your account status and library list when you connect or refresh, one link request per program you watch (reused for an hour), the few KB a scan reads, and the video you actually watch. The Meters tab counts all of it.</p>
+    <h3>Your data</h3>
+    <p class="lead">Everything lives in one folder on this PC. Exports never include your API keys.</p>
+    <div class="row-actions">
+      <a class="btn" href="/api/export" download>Export settings</a>
+      <button class="btn" data-import-settings>Import settings…</button>
+      <input type="file" id="import-file" accept="application/json,.json" hidden>
+      <a class="btn" href="/api/history/export" download>Export history</a>
+    </div>
+    <div class="row-actions" style="margin-top:1.2em">
+      <button class="btn danger" data-forget-all>Forget everything…</button>
+      <span class="muted">Deletes keys, library facts, history and channels from this PC. Your provider accounts aren't touched.</span>
+    </div>`;
+}
+
+body.addEventListener("change", async (e) => {
+  if (e.target.id !== "import-file") return;
+  const f = e.target.files?.[0];
+  if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    const r = await api.post("/api/import", data);
+    toast(`Imported ${r.custom} custom channel${r.custom === 1 ? "" : "s"} and ${r.hidden} hidden channel${r.hidden === 1 ? "" : "s"}.`, 5000);
+    onChange();
+  } catch (err) {
+    toast(err instanceof SyntaxError ? "That file isn't JSON." : err.message, 5000);
+  }
+  e.target.value = "";
+});
+
+// ------------------------------------------------------------------ library
+
+const STATUS = {
+  "": ["All", ""],
+  ready: ["Ready to air", "ok"],
+  "needs-scan": ["Needs a scan", ""],
+  "not-ready": ["Not ready at provider", "warn"],
+  refused: ["Refused by provider", "bad"],
+  account: ["Account problem", "bad"],
+  problem: ["Problems", "warn"],
+  gone: ["Removed", ""],
+  excluded: ["Kept off air", ""],
+  other: ["Not a show or movie", ""],
+};
+let lib = { status: "", provider: "", q: "", limit: 50 };
+let libTimer = 0;
+
+async function library() {
+  const sources = await api.get("/api/sources");
+  const provs = [["", "All sources"], ...["torbox", "realdebrid", "local"].filter((p) => sources[p].connected).map((p) => [p, p === "local" ? "This PC" : PROVIDERS[p].name])];
+  setTimeout(libList);
+  return html`<h3>Library</h3>
+    <p class="lead">Every file DebridTV knows about, and exactly where it stands. Being in your account isn't the same as being playable, so each step is shown separately.</p>
+    <div class="x-libbar">
+      <input class="input" id="lib-q" type="search" placeholder="Search titles or file names" value="${lib.q}" aria-label="Search">
+      <select class="input" id="lib-prov" aria-label="Source">${raw(provs.map(([k, v]) => `<option value="${k}" ${k === lib.provider ? "selected" : ""}>${esc(v)}</option>`).join(""))}</select>
+    </div>
+    <div id="lib-results"><p class="muted">Loading…</p></div>`;
+}
+
+async function libList() {
+  const box = document.getElementById("lib-results");
+  if (!box) return;
+  const q = new URLSearchParams({ status: lib.status, provider: lib.provider, q: lib.q, limit: String(lib.limit) });
+  const r = await api.get(`/api/library/files?${q}`);
+  const all = Object.values(r.counts).reduce((a, b) => a + b, 0);
+  const chips = Object.entries(STATUS)
+    .filter(([k]) => k === "" || r.counts[k] || k === lib.status)
+    .map(([k, [label, cls]]) => html`<button class="x-chip ${cls}" data-lib-filter="${k}" aria-pressed="${String(lib.status === k)}">${label} <b>${k ? r.counts[k] ?? 0 : all}</b></button>`);
+  const rows = r.files.map((f) => {
+    const [label, cls] = STATUS[f.status] ?? [f.status, ""];
+    const facts = [
+      f.provider === "local" ? "This PC" : PROVIDERS[f.provider]?.name,
+      f.durationMs ? (f.durationMs < 60000 ? `${Math.round(f.durationMs / 1000)} s` : fmtDur(f.durationMs)) : null,
+      f.video ? `${f.container ?? ""} ${f.video}${f.audio?.length ? "/" + f.audio.join("+") : ""}`.trim() : null,
+      f.bytes ? fmtBytes(f.bytes) : null,
+      f.playableAt ? `played OK ${ago(f.playableAt)}` : null,
+      f.watched ? "watched" : f.seenMs ? `seen ${fmtDur(f.seenMs)}` : null,
+    ].filter(Boolean).join(" · ");
+    const canCheck = ["ready", "needs-scan", "problem"].includes(f.status) && f.provider !== "local";
+    return html`<div class="li x-file" style="grid-template-columns:1fr auto">
+      <div><div class="t">${f.title}</div>
+        <div class="d">${facts}</div>
+        ${f.status === "ready" ? "" : html`<div class="d x-why ${cls}">${f.message}</div>`}
+        <div class="d x-name" title="${f.name}">${f.name}</div>
+        <div class="x-acts">
+          ${canCheck ? html`<button class="linkish" data-check="${f.id}" title="Asks for one playback link">Check now</button>` : ""}
+          ${["ready", "needs-scan", "problem", "account", "excluded"].includes(f.status) ? html`<button class="linkish" data-exclude="${f.id}" data-excluded="${f.excluded ? "1" : "0"}">${f.excluded ? "Put back on the air" : "Keep off the air"}</button>` : ""}
+          ${f.kind !== "other" && f.status !== "not-ready" ? (f.watched ? html`<button class="linkish" data-mark="unwatched" data-item="${f.id}">Mark unwatched</button>` : html`<button class="linkish" data-mark="watched" data-item="${f.id}">Mark watched</button>`) : ""}
+        </div></div>
+      <span class="badge ${cls}">${label}</span></div>`;
+  });
+  box.innerHTML = String(html`<div class="x-chips">${chips}</div>
+    <div class="list">${rows.length ? rows : html`<p class="muted">${all ? "Nothing matches." : "No files yet. Connect a source in Sources."}</p>`}</div>
+    ${r.total > r.files.length ? html`<div class="row-actions"><button class="btn" data-lib-more>Show more (${r.total - r.files.length} left)</button></div>` : ""}
+    <p class="muted" style="margin-top:1em">This list is built from what DebridTV already knows; opening it costs no provider requests. "Check now" asks for one playback link.</p>`);
+}
+
+body.addEventListener("input", (e) => {
+  if (e.target.id === "lib-q") {
+    clearTimeout(libTimer);
+    libTimer = setTimeout(() => {
+      lib = { ...lib, q: e.target.value.trim(), limit: 50 };
+      libList();
+    }, 200);
+  }
+});
+body.addEventListener("change", (e) => {
+  if (e.target.id === "lib-prov") {
+    lib = { ...lib, provider: e.target.value, limit: 50 };
+    libList();
+  }
+});
+
+// Styles for the parts of this panel that the shared stylesheet doesn't cover yet.
+function addStyles() {
+  if (document.getElementById("panel-x-styles")) return;
+  const st = document.createElement("style");
+  st.id = "panel-x-styles";
+  st.textContent = `
+    .panel .linkish { background: none; border: 0; padding: 0; color: var(--cyan); cursor: pointer; font: inherit; font-size: .85em; font-weight: 600; }
+    .panel .linkish:hover { text-decoration: underline; }
+    .panel .x-acts { display: flex; flex-wrap: wrap; gap: .9em; margin-top: .35em; }
+    .panel .x-acct { margin: .6em 0 0; font-size: .92em; line-height: 1.45; }
+    .panel .x-acct.warn { color: var(--warn); } .panel .x-acct.bad { color: var(--bad); }
+    .panel .x-tile { text-align: left; color: inherit; font: inherit; cursor: pointer; }
+    .panel .x-tile:hover { border-color: var(--line-strong); }
+    .panel .x-tile.warn b { color: var(--warn); } .panel .x-tile.bad b { color: var(--bad); }
+    .panel .x-what { margin-top: .8em; font-size: .9em; color: var(--dim); }
+    .panel .x-what summary { cursor: pointer; font-weight: 600; }
+    .panel .x-what ul { margin: .5em 0 0; padding-left: 1.2em; line-height: 1.55; }
+    .panel .x-libbar { display: grid; grid-template-columns: 1fr auto; gap: .5em; margin-bottom: .7em; }
+    .panel .x-libbar select { width: auto; }
+    .panel .x-chips { display: flex; flex-wrap: wrap; gap: .4em; margin-bottom: .8em; }
+    .panel .x-chip { border: 1px solid var(--line-strong); background: transparent; color: var(--dim); border-radius: 99px; padding: .35em .8em; cursor: pointer; font: inherit; font-size: .85em; }
+    .panel .x-chip b { color: var(--ink); margin-left: .25em; }
+    .panel .x-chip[aria-pressed="true"] { background: var(--ink); color: var(--panel, #111); border-color: var(--ink); }
+    .panel .x-chip[aria-pressed="true"] b { color: inherit; }
+    .panel .x-chip.warn b { color: var(--warn); } .panel .x-chip.bad b { color: var(--bad); }
+    .panel .x-chip[aria-pressed="true"].warn b, .panel .x-chip[aria-pressed="true"].bad b { color: inherit; }
+    .panel .x-why.warn { color: var(--warn); } .panel .x-why.bad { color: var(--bad); } .panel .x-why.ok { color: var(--ok); }
+    .panel .x-name { font-family: var(--mono); font-size: .75em; opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34em; }
+    .panel a.btn { text-decoration: none; display: inline-block; }
+    @media (max-width: 560px) {
+      .panel .x-file { grid-template-columns: 1fr !important; }
+      .panel .x-file > .badge { order: -1; justify-self: start; }
+      .panel .x-libbar { grid-template-columns: 1fr; }
+      .panel .x-libbar select { width: 100%; }
+    }
+  `;
+  document.head.append(st);
 }
