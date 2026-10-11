@@ -10,6 +10,7 @@ import { now, sleep, clamp, pref, setPref, syncClock, toast } from "./util.js";
 import { staticOn, staticOff, click } from "./static.js";
 import { synthStart, synthStop, synthPaused } from "./synth.js";
 import { breakCard, offAirCard, unavailableCard, messageCard, hideCard } from "./cards.js";
+import * as cards from "./cards.js"; // lockedCard comes from workstream B
 import { osd, osdHide, bug, setBanner, showBanner } from "./ui.js";
 import { initSignOff, signedOff } from "./signoff.js";
 import { tracksFor, selectionFor, needsCompat, selectionQuery, audioTracks, subTracks, defaultAudio, isText, trackLabel, Captions } from "./tracks.js";
@@ -86,11 +87,18 @@ export async function tune(ch, { silent = false } = {}) {
   } catch (e) {
     if (my !== token) return;
     staticOff();
+    if (e.status === 403) return showLocked(ch, e.data ?? null);
     return messageCard(ch, "Signal lost", "Can't reach the tuner", `The DebridTV server on this PC isn't answering (${e.message}). Is it still running?`);
   }
   if (my !== token) return;
   syncClock(info.now, sent);
   tv.info = info;
+  // A PIN-locked channel (N-06b) gets a scrambled card: no link, no media, no bytes.
+  if (isLocked(ch, info)) {
+    staticOff();
+    scheduleBoundary(ch, info.segment ? info.segment.end : info.airing ? info.airing.end : now() + 60_000);
+    return showLocked(ch, info);
+  }
 
   const a = info.airing;
   const playable = a && info.segment?.kind === "program" && a.provider && a.provider !== "demo" && a.availability !== "policy-blocked";
@@ -241,14 +249,20 @@ async function playMedia(ch, info, my, forced = null, hold = 0) {
     clearTimeout(stallTimer);
     const route = media?.route;
     stopMedia();
+    if (isLocked(ch, info)) return staticOff(), showLocked(ch, info);
     // Ask the server what happened before doing anything else. A refusal (451) or a
     // file the account can't serve (409) is final: no retry, no compatibility-mode
     // second attempt, no other provider (ADR-0002).
     let item = null;
+    let status = 0;
     try {
       item = await api.get(`/api/item?id=${encodeURIComponent(a.itemId)}`);
-    } catch {}
+    } catch (e) {
+      status = e.status ?? 0;
+    }
     if (my !== token) return;
+    // The server refuses media on a locked channel with 403: final, show the lock.
+    if (status === 403) return staticOff(), showLocked(ch, info);
     if (item?.availability === "policy-blocked") return staticOff(), unavailableCard(ch, a, { policy: true });
     if (item?.availability === "unavailable") {
       staticOff();
@@ -427,6 +441,35 @@ function flushWatch(end = false) {
 }
 setInterval(() => flushWatch(false), 15_000);
 addEventListener("pagehide", () => flushWatch(true));
+
+// ------------------------------------------------------------------ locked channels
+
+const unlockedHere = new Set();
+
+/** Locked and not unlocked in this session. Reads the channel and /api/now flags. */
+function isLocked(ch, info) {
+  const locked = info?.channel?.locked ?? info?.locked ?? ch.locked;
+  const unlocked = info?.channel?.unlocked ?? info?.unlocked ?? ch.unlocked;
+  return !!locked && !unlocked && !unlockedHere.has(ch.id);
+}
+
+function showLocked(ch, info) {
+  tv.route = "card";
+  stopMedia();
+  synthStop();
+  if (cards.lockedCard) cards.lockedCard(ch, info);
+  else messageCard(ch, "Locked", "This channel is locked", "Enter the PIN to watch it.");
+  if (info) setBanner(ch, info, tv.route);
+}
+
+// B's PIN entry fires this; re-tune the channel on screen if it's the one unlocked.
+addEventListener("debridtv:unlocked", (e) => {
+  const id = e.detail?.channelId ?? e.detail?.id ?? tv.current?.id;
+  if (id) unlockedHere.add(id);
+  const ch = tv.channels.find((c) => c.id === id);
+  if (ch) ch.unlocked = true;
+  if (tv.current && (!id || tv.current.id === id)) tune(tv.current, { silent: true });
+});
 
 // ------------------------------------------------------------------ audio and captions
 

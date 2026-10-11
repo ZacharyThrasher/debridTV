@@ -201,6 +201,37 @@ describe("player", () => {
     await ctx.close();
   });
 
+  it("a locked channel asks for no link and opens no media until unlocked (N-06b)", async (t) => {
+    if (skip) return t.skip(skip);
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    await ctx.addInitScript(`localStorage.setItem("debridtv.prefs", ${JSON.stringify(JSON.stringify({ welcomed: true, startup: `ch:${direct!.id}` }))})`);
+    // Until the server marks channels, lock the test channel in the responses.
+    const lockIn = async (route: any) => {
+      const resp = await route.fetch();
+      const o = await resp.json();
+      for (const c of o.channels ?? []) if (c.id === direct!.id) Object.assign(c, { locked: true, unlocked: false });
+      if (o.channel?.id === direct!.id || new URL(route.request().url()).searchParams.get("channel") === direct!.id) Object.assign(o, { locked: true, unlocked: false });
+      await route.fulfill({ response: resp, json: o });
+    };
+    await ctx.route("**/api/bootstrap", lockIn);
+    await ctx.route("**/api/now?*", lockIn);
+    const page = await ctx.newPage();
+    const costly: string[] = [];
+    page.on("request", (r: any) => {
+      const u = new URL(r.url()).pathname;
+      if (u.startsWith("/media/") || u === "/api/prefetch") costly.push(u);
+    });
+    await page.goto(BASE + "/");
+    await sleep(3000);
+    assert.deepEqual(costly, [], "no link request and no media while locked");
+    assert.equal(await page.evaluate(() => document.getElementById("video")!.getAttribute("src")), null);
+    assert.ok(await page.locator("#card").isVisible(), "the locked card shows");
+    await page.evaluate((id: string) => dispatchEvent(new CustomEvent("debridtv:unlocked", { detail: { channelId: id } })), direct!.id);
+    await playing(page);
+    assert.ok(costly.some((u) => u.startsWith("/media/")), "plays once unlocked");
+    await ctx.close();
+  });
+
   it("signs off after the idle limit, stops streaming, and comes back live on a key (N-17b)", async (t) => {
     if (skip) return t.skip(skip);
     // 4 s of no input, then a 2 s prompt.
