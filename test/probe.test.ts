@@ -266,3 +266,50 @@ test("MP4 tracks carry their language from mdhd", async () => {
   assert.deepEqual(r.tracks?.map((t) => [t.kind, t.codec]), [["video", "h264"], ["audio", "aac"]]);
   assert.ok(r.tracks?.every((t) => /^[a-z]{3}$/.test(t.lang)));
 });
+
+test("N-22b: MP4 chapters from a Nero chpl list, or from a QuickTime chapter track that isn't mistaken for subtitles", async () => {
+  // fixture-chapters.mp4 carries both forms (moov first); fixture-chapters-qt.mp4 only the chapter track (moov last).
+  for (const name of ["fixture-chapters.mp4", "fixture-chapters-qt.mp4"]) {
+    const data = fx(name);
+    const r = await probe(memoryReader(data).read, data.byteLength);
+    assert.equal(r.container, "mp4");
+    assert.deepEqual(r.chaptersMs, [0, 2000, 5000], name);
+    assert.deepEqual(r.tracks?.map((t) => t.kind), ["video", "audio"], `${name}: ffmpeg counts the chapter track as data, so 0:s:N stays right`);
+    close(r.durationMs, 7500);
+  }
+});
+
+test("N-22b: Matroska chapters written after the media are found through the SeekHead with two small reads", async () => {
+  // A minimal file: SeekHead → Chapters, Info, Tracks, a 400 KB Cluster, then Chapters at 0 / 4 min / 9 min.
+  const vint = (n: number) => { const b = new Uint8Array(8); b[0] = 1; let x = n; for (let i = 7; i > 0; i--) { b[i] = x % 256; x = Math.floor(x / 256); } return b; };
+  const idBytes = (id: number) => { const out: number[] = []; for (let x = id; x > 0; x = Math.floor(x / 256)) out.unshift(x % 256); return out; };
+  const el = (id: number, ...kids: Uint8Array[]) => {
+    const body = concat(kids);
+    return concat([new Uint8Array(idBytes(id)), vint(body.length), body]);
+  };
+  const uint = (id: number, v: number, bytes = 8) => { const b = new Uint8Array(bytes); let x = v; for (let i = bytes - 1; i >= 0; i--) { b[i] = x % 256; x = Math.floor(x / 256); } return el(id, b); };
+  const f64 = (id: number, v: number) => { const b = new Uint8Array(8); new DataView(b.buffer).setFloat64(0, v); return el(id, b); };
+  const str = (id: number, s: string) => el(id, new TextEncoder().encode(s));
+  const chapters = el(0x1043a770, el(0x45b9, ...[0, 240_000, 540_000].map((ms) => el(0xb6, uint(0x73c4, ms + 1), uint(0x91, ms * 1_000_000)))));
+  const info = el(0x1549a966, uint(0x2ad7b1, 1_000_000, 4), f64(0x4489, 600_000));
+  const tracks = el(0x1654ae6b, el(0xae, uint(0xd7, 1, 1), uint(0x83, 1, 1), str(0x86, "V_MPEG4/ISO/AVC")));
+  const cluster = el(0x1f43b675, uint(0xe7, 0, 1), new Uint8Array(400 * 1024));
+  const seekHeadFor = (pos: number) => el(0x114d9b74, el(0x4dbb, el(0x53ab, new Uint8Array(idBytes(0x1043a770))), uint(0x53ac, pos)));
+  const seekLen = seekHeadFor(0).length;
+  const segPayload = (pos: number) => concat([seekHeadFor(pos), info, tracks, cluster, chapters]);
+  const body = segPayload(seekLen + info.length + tracks.length + cluster.length);
+  const file = concat([el(0x1a45dfa3, str(0x4282, "matroska")), el(0x18538067, body)]);
+  const { read, reads } = memoryReader(file);
+  const r = await probe(read, file.byteLength);
+  assert.equal(r.durationMs, 600_000);
+  assert.deepEqual(r.chaptersMs, [0, 240_000, 540_000]);
+  assert.equal(reads.length, 3, "head, chapter header, chapters");
+  assert.ok(r.bytesRead < 300 * 1024, `read ${r.bytesRead} bytes`);
+});
+
+function concat(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) (out.set(p, at), (at += p.length));
+  return out;
+}

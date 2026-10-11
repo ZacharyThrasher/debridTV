@@ -39,3 +39,12 @@ ffmpeg -y $V $A -f lavfi -i sine=frequency=660 -i s.srt -i ch.txt -t 8 -map 0:v 
   -metadata:s:a:0 language=eng -metadata:s:a:1 language=spa -metadata:s:a:1 title=Español \
   -metadata:s:s:0 language=eng -disposition:a:1 0 -disposition:s:0 forced fixture-tracks-chapters.mkv
 ```
+
+`fixture-chapters.mp4` / `fixture-chapters-qt.mp4` (MP4 chapters at 0 / 2 / 5 s): the first carries both a Nero
+`chpl` list and a QuickTime chapter track with moov first; the second only the chapter track, moov last.
+
+```sh
+printf ';FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=2000\ntitle=One\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=2000\nEND=5000\ntitle=Two\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=5000\nEND=7500\ntitle=Three\n' > ch.txt
+ffmpeg -y -i fixture-h264-aac-faststart.mp4 -i ch.txt -map 0 -map_metadata 1 -map_chapters 1 -c copy -movflags +faststart fixture-chapters.mp4
+ffmpeg -y -i fixture-h264-aac-faststart.mp4 -i ch.txt -map 0 -map_metadata 1 -map_chapters 1 -c copy -movflags +disable_chpl fixture-chapters-qt.mp4
+```

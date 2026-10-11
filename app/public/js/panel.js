@@ -31,10 +31,18 @@ export function initPanel(changed) {
   addStyles();
 }
 
-export function openPanel(which = tab) {
+/** `section` picks a part of a tab: openPanel("library", "ratings") opens the age ratings and focuses its search. */
+export function openPanel(which = tab, section) {
+  if (which === "library" && (section === "ratings" || section === "files")) lib = { ...lib, view: section };
   panel.hidden = false;
   document.body.classList.add("panel-open");
   showTab(which);
+  if (which === "library" && section === "ratings")
+    setTimeout(() => {
+      const q = document.getElementById("lib-q");
+      q?.scrollIntoView({ block: "nearest" });
+      q?.focus();
+    }, 150);
 }
 
 export function closePanel() {
