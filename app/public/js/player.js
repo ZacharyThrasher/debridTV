@@ -94,7 +94,9 @@ export async function tune(ch, { silent = false } = {}) {
   syncClock(info.now, sent);
   tv.info = info;
   // A PIN-locked channel (N-06b) gets a scrambled card: no link, no media, no bytes.
-  if (isLocked(ch, info)) {
+  // A redacted airing (itemId null on a locked channel) never reaches the media code,
+  // even if the lock flags were missing.
+  if (isLocked(ch, info) || (info.airing && info.airing.itemId == null && info.airing.provider !== "demo")) {
     staticOff();
     scheduleBoundary(ch, info.segment ? info.segment.end : info.airing ? info.airing.end : now() + 60_000);
     return showLocked(ch, info);
