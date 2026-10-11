@@ -629,6 +629,7 @@ async function privacy() {
     <p class="lead">Everything lives in one folder on this PC. Exports never include your API keys.</p>
     <div class="row-actions">
       <a class="btn" href="/api/export" download>Export settings</a>
+      <a class="btn" href="/api/export?only=lineup" download title="Numbers, names, custom channels and per-channel choices; no ratings or folders">Export channels only</a>
       <button class="btn" data-import-settings>Import settings…</button>
       <input type="file" id="import-file" accept="application/json,.json" hidden>
       <a class="btn" href="/api/history/export" download>Export history</a>
@@ -751,7 +752,9 @@ async function libList() {
       f.watched ? "watched" : f.seenMs ? `seen ${fmtDur(f.seenMs)}` : null,
     ].filter(Boolean).join(" · ");
     const canCheck = ["ready", "needs-scan", "problem"].includes(f.status) && f.provider !== "local";
-    return html`<div class="li x-file" style="grid-template-columns:1fr auto">
+    const pic = f.art?.thumb ?? f.art?.poster;
+    return html`<div class="li x-file" style="grid-template-columns:${pic ? "auto " : ""}1fr auto">
+      ${pic ? html`<img class="x-art" src="${pic}" alt="" loading="lazy" style="width:3.2em;height:4.6em;object-fit:cover;border-radius:6px;background:var(--line)" onerror="this.remove()">` : ""}
       <div><div class="t">${f.title}</div>
         <div class="d">${facts}</div>
         ${f.status === "ready" ? "" : html`<div class="d x-why ${cls}">${f.message}</div>`}

@@ -265,6 +265,13 @@ test("F4: settings export carries choices, never keys", async () => {
   assert.equal(x.sources.torbox, true);
   assert.ok(x.lineup.numbers);
   assert.doesNotMatch(text, new RegExp(`${TB_KEY}|${RD_KEY}`));
+  // N-26a: lineup only (the import reads `lineup`, which both files carry).
+  const only = await fetch(`${base}/api/export?only=lineup`);
+  assert.match(only.headers.get("content-disposition") ?? "", /debridtv-lineup\.json/);
+  const l = (await only.json()) as any;
+  assert.ok(l.lineup.numbers);
+  assert.equal(l.sources, undefined);
+  assert.equal(l.ratings, undefined);
 });
 
 test("N-03/N-16: rename, renumber (a taken number swaps), favorite, logo, kid and schedule settings stored", async () => {

@@ -73,3 +73,25 @@ dir experiments\out
 Send the newest `live-probe-*.json` from `experiments\out` (drag it into the project
 chat). It contains timings, sizes, status codes and hashed ETags only.
 Never paste a key into the chat; if one gets pasted, rotate it.
+
+## 6. Picture subtitles burned in (no provider traffic)
+
+This checks the one compatibility path the cloud can't: Blu-ray (PGS) or DVD
+(VobSub) subtitles drawn into the picture. It only reads a file on your PC.
+
+1. Put one video that has picture subtitles in a folder of its own, for example a
+   Blu-ray remux `.mkv` in `C:\Sandbox\pgs-test\`. (MKVToolNix or VLC lists them as
+   "HDMV PGS" or "VobSub".)
+2. Start the app from the checkout with ffmpeg installed (`ffmpeg -version` works in
+   the same window), then open http://127.0.0.1:7337:
+   ```powershell
+   npm start
+   ```
+3. Settings, Sources, This PC: add `C:\Sandbox\pgs-test`, then Scan now.
+4. Tune to the channel it lands on (the guide shows it), press **C** until the picture
+   subtitle track is chosen.
+5. Note: do the subtitles appear, are they in step with the speech (within about half
+   a second), and does changing channel and coming back keep them? A phone photo of
+   the screen is plenty.
+
+Send those three answers (yes/no each) in the project chat.
