@@ -42,8 +42,8 @@ export async function openChannelEditor(channel, opts = {}) {
   draft = defaults(channel);
   live = true;
   try {
-    const { enforced, timeZone, ratings, note, ...got } = await api.get(`/api/channels/${encodeURIComponent(channel.id)}/settings`);
-    info = { enforced, timeZone, ratings };
+    const { enforced, timeZone, ratings, note, specialsAvailable, ...got } = await api.get(`/api/channels/${encodeURIComponent(channel.id)}/settings`);
+    info = { enforced, timeZone, ratings, specialsAvailable: Number(specialsAvailable) || 0 };
     // Normalise: the server sends null for "not set" (logo, lists), which the form treats as defaults.
     for (const k of Object.keys(got)) if (got[k] == null) delete got[k];
     draft = { ...draft, ...got };
@@ -144,6 +144,9 @@ function schedule() {
   const sources = sourceOptions();
   return html`
     <p class="lead">Pin what plays at set times, like Saturday-morning cartoons. Outside its slots the channel plays its usual lineup.${info?.timeZone ? ` Times are in ${info.timeZone}.` : ""} Changes start when the program on now ends.</p>
+    ${info?.specialsAvailable > 0 ? html`<div class="opt"><div><div class="ol">Include specials</div>
+      <div class="od">${info.specialsAvailable} season 0 episode${info.specialsAvailable === 1 ? "" : "s"}. They air after the last season.</div></div>
+      <label class="switch"><input type="checkbox" data-k="specials" ${draft.specials ? "checked" : ""}><i></i></label></div>` : ""}
     ${raw(weekStrip(slots))}
     <div class="list ced-slots">${slots.length ? slots.map((s, i) => html`<div class="slot">
       <div class="days">${DAYS.map((d, di) => html`<button data-slot-day="${i}:${di + 1}" aria-pressed="${s.days.includes(di + 1)}">${d.slice(0, 2)}</button>`)}</div>
@@ -230,7 +233,7 @@ root.addEventListener("click", async (e) => {
   else if (d.save !== undefined) return save();
   else if (d.ratings !== undefined) {
     closeChannelEditor();
-    return import("./panel.js").then((m) => m.openPanel("library"));
+    return import("./panel.js").then((m) => m.openPanel("library", "ratings"));
   }
   else return;
   render();
