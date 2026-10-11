@@ -4,8 +4,9 @@
 import { html, raw, fmtTime, fmtClock, fmtDur, now, clamp } from "./util.js";
 import { api } from "./api.js";
 import { tv, tune } from "./player.js";
-import { logoHtml } from "./channel-editor.js";
-import { unlock, lockStatus, isRedacted, PIN_MAX, PIN_MIN } from "./lock.js";
+import { logoHtml, hasLogo } from "./channel-editor.js";
+import { unlock, lockStatus, isRedacted, isLocked, PIN_MAX, PIN_MIN } from "./lock.js";
+import { artOf, artImg } from "./ui.js";
 
 const el = document.getElementById("card");
 let countdownTo = 0;
@@ -45,7 +46,7 @@ export function breakCard(ch, info) {
   show(
     ch.hue,
     html`<header class="brk-top">
-        <div class="brk-chan"><span class="card-num">${ch.number}</span>${ch.logo?.kind === "text" && ch.logo.text ? raw(`<span class="brk-mark">${logoHtml(ch, "lg")}</span>`) : html`<span class="brk-name">${ch.name}</span>`}</div>
+        <div class="brk-chan"><span class="card-num">${ch.number}</span>${hasLogo(ch) ? raw(`<span class="brk-mark">${logoHtml(ch, "lg")}</span>`) : html`<span class="brk-name">${ch.name}</span>`}</div>
         <div class="brk-kicker">${mid ? "We'll be right back" : "Station break"}</div>
         <div class="brk-clock" data-clock aria-live="off">${fmtTime(now())}</div>
       </header>
@@ -59,6 +60,15 @@ export function breakCard(ch, info) {
       <p class="sr-only">${mid ? "Short break" : "Station break"} on ${ch.name}. ${next ? `${mid ? "Back to" : "Up next"}: ${next.title} at ${fmtTime(seg.end)}.` : ""}</p>`,
     "brk",
   );
+  // Fanart of what's next drifts behind the slides when the file has some (local files only).
+  const fan = isLocked(ch) ? null : artOf(next, "fanart", "thumb");
+  if (fan) {
+    const box = document.createElement("div");
+    box.className = "brk-fan";
+    box.setAttribute("aria-hidden", "true");
+    box.innerHTML = artImg(fan, "").html;
+    el.prepend(box);
+  }
   updateMeter();
   loadGuide(brk.key);
 }
@@ -87,7 +97,9 @@ function heroSlide() {
   const { next, mid, seg, ch } = brk;
   if (!next) return html`<div class="brk-slide brk-hero"><div class="brk-label">Stay tuned</div><div class="brk-title">${ch.name}</div>
     <div class="brk-sub">${ch.tagline || ""}</div><div class="brk-when">Back in <b data-countdown>${fmtClock(seg.end - now())}</b></div></div>`.html;
-  return html`<div class="brk-slide brk-hero">
+  const poster = isLocked(ch) ? null : artOf(next, "poster");
+  return html`<div class="brk-slide brk-hero ${poster ? "has-art" : ""}" data-art-box>
+    ${raw(artImg(poster, "brk-poster"))}
     <div class="brk-label">${mid ? "Back to" : "Up next"}${mid ? "" : html` · <span class="brk-at">${fmtTime(seg.end)}</span>`}</div>
     <div class="brk-title">${next.title}</div>
     <div class="brk-sub">${meta(next).join(" · ")}</div>
@@ -102,7 +114,7 @@ const SLIDES = [
   // Station ident (N-21): the channel's own mark, like a network bumper between shows.
   function ident() {
     const { ch } = brk;
-    const mark = ch.logo?.kind === "text" && ch.logo.text ? raw(logoHtml(ch, "xl")) : html`<span class="id-num">${ch.number}</span>`;
+    const mark = hasLogo(ch) ? raw(logoHtml(ch, "xl")) : html`<span class="id-num">${ch.number}</span>`;
     return html`<div class="brk-slide brk-ident"><div class="id-rays" aria-hidden="true"></div>
       <div class="brk-label">You're watching</div>
       <div class="id-mark">${mark}</div>

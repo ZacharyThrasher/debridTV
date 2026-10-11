@@ -1,10 +1,29 @@
 // On-screen display: the green channel number, the info banner, and the channel bug.
 
 import { html, raw, fmtTime, fmtDur, now, clamp, pref, onPrefsApplied } from "./util.js";
-import { logoHtml } from "./channel-editor.js";
+import { logoHtml, hasLogo } from "./channel-editor.js";
 import { isLocked, isRedacted } from "./lock.js";
 
-const hasMark = (c) => c?.logo?.kind === "text" && c.logo.text;
+const hasMark = hasLogo;
+
+/**
+ * An airing's own artwork (N-01c): local files only, as /api/art URLs; debrid files and
+ * locked items have none, which is the usual case, so every caller looks right without it.
+ * Returns the first of the kinds asked for that exists.
+ */
+export function artOf(a, ...kinds) {
+  if (!a?.art || isRedacted(a)) return null;
+  for (const k of kinds) if (typeof a.art[k] === "string" && a.art[k].startsWith("/api/art/")) return a.art[k];
+  return null;
+}
+/** An <img> for art that removes itself (and marks its box) if the file won't load. */
+export const artImg = (url, cls) => (url ? html`<img class="${cls}" src="${url}" alt="" decoding="async" data-art>` : "");
+document.addEventListener("error", (e) => {
+  const t = e.target;
+  if (!(t instanceof HTMLImageElement) || !t.hasAttribute("data-art")) return;
+  t.closest("[data-art-box]")?.classList.remove("has-art");
+  t.remove();
+}, true);
 
 const osdEl = document.getElementById("osd-num");
 const bannerEl = document.getElementById("banner");
@@ -147,13 +166,19 @@ function renderBanner() {
     meta = bits.join("");
   } else meta = html`<span class="badge warn">Off the air</span>`;
   if (info.next && !isLocked(ch) && !isRedacted(info.next)) next = html`<div class="next">Next at ${fmtTime(info.next.start)}<b>${info.next.title}</b></div>`;
+  // Episodes show their still (16:9) when there is one; movies their poster.
+  const art = isLocked(ch) ? null : a?.episode ? artOf(a, "thumb", "poster") : artOf(a, "poster", "thumb");
+  const wide = !!art && art === artOf(a, "thumb");
   bannerEl.style.setProperty("--h", ch.hue);
   bannerEl.innerHTML = html`
     <div class="chan"><div class="num" style="--h:${ch.hue}">${ch.number}</div><div class="cname">${hasMark(ch) ? raw(logoHtml(ch)) : ch.name}</div></div>
-    <div>
+    <div class="b-main ${art ? "has-art" : ""}" data-art-box>
+      ${raw(artImg(art, `b-art ${wide ? "wide" : "tall"}`))}
+      <div class="b-text">
       <div class="title">${title}</div>
       <div class="meta">${raw(meta)}</div>
       ${a ? raw(`<div class="progress"><i style="width:${pct.toFixed(2)}%"></i>${padAt(a)}</div>`) : ""}
+      </div>
     </div>
     <div style="display:grid;gap:calc(var(--u)*.5);justify-items:end">
       <div class="clock">${fmtTime(t)}</div>

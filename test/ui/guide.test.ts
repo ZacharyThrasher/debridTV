@@ -275,6 +275,28 @@ describe("format chips (N-37)", { skip }, () => {
   });
 });
 
+describe("artwork (N-01c)", { skip }, () => {
+  it("uses local art only, never for locked airings, and drops a picture that won't load", async () => {
+    const { page, ctx, errors } = await open();
+    const out = await js(page, `import("/js/ui.js").then((m) => [
+      m.artOf({ art: { poster: "/api/art/x/poster" } }, "thumb", "poster"),
+      m.artOf({ itemId: null, locked: true, title: "Locked", art: { poster: "/api/art/x/poster" } }, "poster"),
+      m.artOf({ art: { poster: "https://example.com/p.jpg" } }, "poster"),
+      m.artOf({}, "poster"),
+    ])`);
+    assert.deepEqual(out, ["/api/art/x/poster", null, null, null]);
+    await js(page, `import("/js/ui.js").then((m) => {
+      const box = Object.assign(document.createElement("div"), { className: "has-art", id: "artbox" });
+      box.setAttribute("data-art-box", "");
+      box.innerHTML = m.artImg("/api/art/no-such-item/poster", "x").html;
+      document.body.append(box);
+    })`);
+    await page.waitForFunction(`!document.querySelector("#artbox img") && !document.getElementById("artbox").classList.contains("has-art")`);
+    assert.deepEqual(errors.filter((e: string) => !/404|Failed to load/.test(e)), []);
+    await ctx.close();
+  });
+});
+
 describe("channel mix and exclusions (N-09, N-10)", { skip }, () => {
   it("Mix tab saves weights, genres and order settings, and reshuffles", async () => {
     const { page, ctx, errors } = await open();

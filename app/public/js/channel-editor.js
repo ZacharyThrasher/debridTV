@@ -109,6 +109,9 @@ function render() {
   </div>`.html;
 }
 
+/** True when the channel has its own mark (a wordmark or an image), not just the number badge. */
+export const hasLogo = (c) => !!((c?.logo?.kind === "text" && c.logo.text) || (c?.logo?.kind === "image" && /^data:image\//.test(c.logo.url ?? "")));
+
 /** A channel's mark: its logo when it has one, else the number badge. Shared look with the guide. */
 export function logoHtml(c, size = "") {
   const l = c.logo;
@@ -131,11 +134,15 @@ function identity() {
     </div>
     <h4>Logo</h4>
     <div class="seg" role="radiogroup" aria-label="Logo kind">
-      <button role="radio" data-logo-kind="badge" aria-checked="${String(l.kind !== "text")}">Number badge</button>
+      <button role="radio" data-logo-kind="badge" aria-checked="${String(l.kind !== "text" && l.kind !== "image")}">Number badge</button>
       <button role="radio" data-logo-kind="text" aria-checked="${String(l.kind === "text")}">Wordmark</button>
       <button role="radio" data-logo-kind="image" aria-checked="${String(l.kind === "image")}">Image</button>
     </div>
-    ${l.kind === "image" ? html`<div class="field"><label for="ced-img">Logo image (PNG, JPEG, WebP or SVG, up to 200 KB). It stays on this PC.</label>
+    ${l.kind === "image" ? html`${ch.art?.logo || ch.art?.poster ? html`<div class="ced-art">
+        ${[["logo", "The show's logo"], ["poster", "The show's poster"]].filter(([k]) => ch.art?.[k]).map(([k, label]) => html`<button class="ced-art-pick ${k}" data-art-logo="${k}">
+          <img src="${ch.art[k]}" alt="" loading="lazy"><span>${label}</span></button>`)}
+        <p class="ced-hint">Found beside the episodes on this PC.</p></div>` : ""}
+      <div class="field"><label for="ced-img">${ch.art?.logo || ch.art?.poster ? "Or choose an image" : "Logo image"} (PNG, JPEG, WebP or SVG, up to 200 KB). It stays on this PC.</label>
       <input id="ced-img" class="input" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" data-logo-file></div>` : ""}
     ${l.kind === "text" ? html`
       <div class="ced-row">
@@ -308,6 +315,7 @@ root.addEventListener("click", async (e) => {
   if (!b) return;
   const d = b.dataset;
   if (d.close !== undefined) return closeChannelEditor();
+  if (d.artLogo) return void useArtLogo(d.artLogo);
   if (d.tab) tab = d.tab;
   else if (d.logoKind) draft.logo = d.logoKind === "image" ? { ...draft.logo, kind: "image" } : { ...draft.logo, kind: d.logoKind, text: d.logoKind === "text" ? wordFrom(draft) : String(draft.number) };
   else if (d.logoStyle) draft.logo = { ...draft.logo, style: d.logoStyle };
@@ -358,13 +366,40 @@ root.addEventListener("change", (e) => {
   if (!t.matches?.("[data-logo-file]") || !t.files?.[0]) return;
   const f = t.files[0];
   if (f.size > 200_000) return toast("That image is over 200 KB. Try a smaller one.");
+  readLogo(f);
+});
+
+function readLogo(blob) {
   const rd = new FileReader();
   rd.onload = () => {
     draft.logo = { kind: "image", url: String(rd.result), hue: draft.logo.hue };
     render();
   };
-  rd.readAsDataURL(f);
-});
+  rd.readAsDataURL(blob);
+}
+
+/** Uses the show's own clear logo or poster (channel.art, local files only) as the channel logo.
+ * The server keeps logos as data: URLs, so a big picture is scaled down to fit first. */
+async function useArtLogo(kind) {
+  try {
+    const r = await fetch(ch.art[kind]);
+    if (!r.ok) throw new Error(String(r.status));
+    let blob = await r.blob();
+    if (blob.size > 200_000) blob = await shrink(blob, kind === "logo" ? 400 : 240);
+    if (!blob || blob.size > 200_000) return toast("That picture is too big to use as a logo.");
+    readLogo(blob);
+  } catch {
+    toast("Couldn't load that picture.");
+  }
+}
+
+async function shrink(blob, max) {
+  const bmp = await createImageBitmap(blob);
+  const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = Object.assign(document.createElement("canvas"), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  return new Promise((res) => c.toBlob(res, "image/webp", 0.86));
+}
 
 root.addEventListener("input", (e) => {
   const t = e.target;

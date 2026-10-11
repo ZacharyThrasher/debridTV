@@ -991,3 +991,60 @@ body[data-bezel="wood"] #tvset .tv-side {
 .lock-pad button:disabled { opacity: .4; }
 .brk-list li.lk .ti { color: rgba(255,255,255,.6); font-style: italic; }
 .crawl-track .ci.lk em { color: rgba(255,255,255,.55); font-style: italic; }
+
+/* ------------------------------------------------------------------ artwork (N-01c)
+   Local files can bring posters, stills and fanart (/api/art). Debrid files have none,
+   so every place below is designed first without art; art is a bonus layer. */
+.banner .b-main { display: flex; align-items: flex-end; gap: calc(var(--u)*1.4); min-width: 0; }
+.banner .b-text { min-width: 0; flex: 1; }
+.banner .b-art {
+  flex: none; display: block; object-fit: cover; border-radius: calc(var(--u)*.4);
+  box-shadow: 0 calc(var(--u)*.5) calc(var(--u)*1.6) rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.14);
+  animation: artin .5s var(--ease) both;
+}
+.banner .b-art.tall { height: calc(var(--u)*8.6); aspect-ratio: 2/3; }
+.banner .b-art.wide { height: calc(var(--u)*6.6); aspect-ratio: 16/9; }
+@keyframes artin { from { opacity: 0; transform: translateY(calc(var(--u)*.6)) scale(.97); } }
+
+.guide-details { position: relative; overflow: hidden; isolation: isolate; }
+.guide-details .gd-back {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: -1; opacity: .34;
+  -webkit-mask-image: linear-gradient(90deg, transparent 6%, #000 40%, #000 100%), linear-gradient(0deg, transparent, #000 60%);
+  mask-image: linear-gradient(90deg, transparent 6%, #000 40%, #000 100%);
+  filter: saturate(1.1); animation: artfade .8s var(--ease) both;
+}
+[data-tone="light"] .guide-details .gd-back { opacity: .18; }
+.guide-details .gd-poster {
+  position: absolute; right: calc(var(--u)*2.6); top: calc(var(--u)*1.6); bottom: calc(var(--u)*1.4); aspect-ratio: 2/3; max-height: calc(var(--u)*17);
+}
+.guide-details .gd-poster img {
+  width: 100%; height: 100%; object-fit: cover; border-radius: calc(var(--u)*.45); display: block;
+  box-shadow: 0 calc(var(--u)*.6) calc(var(--u)*2) rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.14); animation: artin .5s var(--ease) both;
+}
+.guide-details:has(.gd-poster img) { padding-right: calc(var(--u)*15); }
+@keyframes artfade { from { opacity: 0; } }
+
+.card .brk-fan { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.card .brk-fan img {
+  position: absolute; inset: -4%; width: 108%; height: 108%; object-fit: cover; opacity: .3; filter: saturate(.9) blur(1px);
+  -webkit-mask-image: radial-gradient(140% 120% at 75% 40%, #000 30%, transparent 85%); mask-image: radial-gradient(140% 120% at 75% 40%, #000 30%, transparent 85%);
+  animation: artfade 1.2s var(--ease) both, kenburns 60s ease-in-out infinite alternate;
+}
+@keyframes kenburns { to { transform: scale(1.07) translate(-1.5%, -1%); } }
+body.calm .card .brk-fan img { animation: artfade 1.2s var(--ease) both; }
+.card.brk .card-inner { z-index: 1; }
+.brk-hero.has-art { display: grid; grid-template-columns: auto 1fr; column-gap: calc(var(--u)*2.4); align-items: start; max-width: min(calc(var(--u)*90), 90%); }
+.brk-hero.has-art > :not(.brk-poster) { grid-column: 2; }
+.brk-hero .brk-poster {
+  grid-row: 1 / span 6; align-self: center; height: min(46vh, calc(var(--u)*24)); aspect-ratio: 2/3; object-fit: cover; border-radius: calc(var(--u)*.6);
+  box-shadow: 0 calc(var(--u)*1) calc(var(--u)*3) rgba(0,0,0,.65), 0 0 0 1px hsla(var(--h), 90%, 80%, .25); transform: rotate(-1.2deg);
+}
+.ced-art { display: flex; flex-wrap: wrap; gap: calc(var(--u)*.8); align-items: stretch; margin: calc(var(--u)*.6) 0 calc(var(--u)*.4); }
+.ced-art-pick {
+  display: grid; gap: .4em; justify-items: center; padding: .6em; border-radius: .6em; border: 1px solid var(--line-strong);
+  background: rgba(255,255,255,.04); color: var(--ink); font: inherit; font-size: .9em; cursor: pointer;
+}
+.ced-art-pick:hover, .ced-art-pick:focus-visible { border-color: hsl(var(--h) 90% 70%); background: hsla(var(--h), 80%, 55%, .14); }
+.ced-art-pick img { height: calc(var(--u)*4.4); max-width: calc(var(--u)*10); object-fit: contain; }
+.ced-art-pick.poster img { aspect-ratio: 2/3; object-fit: cover; border-radius: .3em; }
+.ced-art .ced-hint { flex-basis: 100%; margin: 0; color: var(--dim); font-size: .85em; }

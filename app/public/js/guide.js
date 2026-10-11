@@ -5,11 +5,11 @@
 import { api } from "./api.js";
 import { html, raw, fmtTime, fmtDur, now, clamp, toast, pref } from "./util.js";
 import { tv, tune } from "./player.js";
-import { logoHtml } from "./channel-editor.js";
-import { formatChips } from "./ui.js";
+import { logoHtml, hasLogo } from "./channel-editor.js";
+import { formatChips, artOf, artImg } from "./ui.js";
 import { isLocked, isRedacted } from "./lock.js";
 
-const wordmark = (c) => (c.logo?.kind === "text" && c.logo.text ? raw(logoHtml(c, "sm")) : null);
+const wordmark = (c) => (hasLogo(c) ? raw(logoHtml(c, "sm")) : null);
 
 const MIN = 60_000;
 const root = document.getElementById("guide");
@@ -194,8 +194,12 @@ function renderDetails(ch, a) {
   const pad = a.segments?.find((x) => x.kind === "break" && x.reason === "padding" && x.end - x.start >= 2 * MIN);
   const onNow = a.start <= t && t < a.end;
   const pct = onNow ? clamp((t - a.start) / (a.end - a.start), 0, 1) * 100 : 0;
+  // Local files may bring art (N-01c): a backdrop behind the text and a poster beside it.
+  const back = artOf(a, "fanart", "thumb");
+  const poster = artOf(a, "poster");
   details.style.setProperty("--h", ch.hue);
-  details.innerHTML = html`<div class="when">${fmtTime(a.start)} – ${fmtTime(a.end)}<span class="on-ch"><b>${ch.number}</b>${ch.name}</span></div>
+  details.innerHTML = html`${raw(artImg(back, "gd-back"))}${poster ? html`<div class="gd-poster" data-art-box>${raw(artImg(poster, ""))}</div>` : ""}
+    <div class="when">${fmtTime(a.start)} – ${fmtTime(a.end)}<span class="on-ch"><b>${ch.number}</b>${ch.name}</span></div>
     <div class="t">${a.title}</div>
     <div class="s">${raw(bits.join(""))}</div>
     ${a.description ? html`<div class="plot">${a.description}</div>` : ""}
