@@ -71,6 +71,7 @@ function render() {
   const pct = (ms) => ((ms - viewFrom) / s) * 100;
   const times = [];
   for (let m = viewFrom; m < viewTo; m += 30 * MIN) times.push(html`<span style="left:${pct(m)}%">${fmtTime(m)}</span>`);
+  if (t >= viewFrom && t < viewTo) times.push(html`<span class="now-mark" style="left:${pct(t)}%" aria-hidden="true"></span>`);
   const focus = airingAt(row, at);
 
   const rows = data.rows.map((r, ri) => {
@@ -87,7 +88,7 @@ function render() {
         if (a.start < viewFrom) cls.push("cut-left");
         if (ri === row && focus && a.start === focus.start) cls.push("focus");
         const sub = [a.episode, a.subtitle, a.year].filter(Boolean).join(" · ");
-        return html`<div class="${cls.join(" ")}" style="left:calc(${left}% + 2px);width:calc(${right - left}% - 4px)" data-row="${ri}" data-start="${a.start}" role="gridcell"
+        return html`<div class="${cls.join(" ")}" style="left:calc(${left}% + 2px);width:calc(${right - left}% - 4px)${a.start <= t && t < a.end ? `;--p:${(((t - Math.max(a.start, viewFrom)) / (Math.min(a.end, viewTo) - Math.max(a.start, viewFrom))) * 100).toFixed(1)}%` : ""}" data-row="${ri}" data-start="${a.start}" role="gridcell"
           aria-label="${a.title}, ${fmtTime(a.start)}">
           ${a.start < viewFrom ? raw('<span class="cont">◂</span>') : ""}
           ${a.watched ? raw('<span class="watched" title="Watched">✓</span>') : ""}

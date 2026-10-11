@@ -79,6 +79,7 @@ kbd {
   font-family: var(--body); font-size: .78em; font-weight: 600; padding: .1em .45em; border-radius: .35em;
   border: 1px solid var(--line-strong); background: rgba(255,255,255,.06); color: var(--ink);
 }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
 /* ------------------------------------------------------------------ stage */
@@ -289,6 +290,8 @@ body.calm .crawl-track { animation: none !important; }
 .banner .meta { display: flex; flex-wrap: wrap; gap: .45em .9em; align-items: center; margin-top: calc(var(--u)*.45); color: var(--dim); font-size: calc(var(--u)*1); }
 .banner .meta .ep { color: var(--ink); font-weight: 600; }
 .banner .progress { margin-top: calc(var(--u)*.8); height: calc(var(--u)*.35); border-radius: 99px; background: rgba(255,255,255,.14); overflow: hidden; max-width: calc(var(--u)*46); }
+.banner .progress { position: relative; }
+.banner .progress b { position: absolute; top: 0; bottom: 0; right: 0; background: repeating-linear-gradient(135deg, rgba(255,255,255,.18) 0 3px, transparent 3px 6px); }
 .banner .progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--amber), var(--magenta)); border-radius: inherit; }
 .banner .times { font-family: var(--mono); font-size: calc(var(--u)*1.6); color: var(--dim); }
 .banner .next { text-align: right; color: var(--dim); font-size: calc(var(--u)*.95); }
@@ -378,16 +381,22 @@ body.guide-open { background: var(--bg); }
 .row-track { position: relative; flex: 1; overflow: hidden; }
 .cell {
   position: absolute; top: 3px; bottom: 3px; border-radius: calc(var(--radius) * .9); padding: .25em .7em; overflow: hidden;
-  background: color-mix(in srgb, hsl(var(--h) 70% 55%) 9%, var(--cell));
+  --fill: color-mix(in srgb, hsl(var(--h) 70% 55%) 9%, var(--cell));
+  background: linear-gradient(var(--fill), var(--fill)) var(--panel-solid); /* opaque, so the now line passes behind */
   border: 1px solid var(--line); display: flex; flex-direction: column; justify-content: center; min-width: 0; cursor: pointer;
   transition: background .15s ease, box-shadow .15s ease;
 }
 .cell .ct { font-family: var(--display); font-weight: 700; font-size: calc(var(--u)*1.12); line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cell .cs { font-size: calc(var(--u)*.75); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cell.now { background: color-mix(in srgb, hsl(var(--h) 75% 55%) 18%, var(--cell-now)); }
+.cell.now {
+  --fill: color-mix(in srgb, hsl(var(--h) 75% 55%) 18%, var(--cell-now));
+  /* the part already aired is a shade lighter, up to the now line */
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ink) 10%, transparent) 0 var(--p, 0%), transparent var(--p, 0%)), linear-gradient(var(--fill), var(--fill)) var(--panel-solid);
+}
 .cell.past { opacity: .5; } /* ended items dim (N-15) */
 .cell.unavail .ct { text-decoration: line-through; text-decoration-thickness: 1px; color: var(--dim); }
-.cell.focus { outline: 3px solid var(--focus); outline-offset: -1px; box-shadow: 0 0 0 6px color-mix(in srgb, var(--focus) 18%, transparent); z-index: 1; background: color-mix(in srgb, var(--focus) 16%, var(--cell-now)); }
+.cell.focus { outline: 3px solid var(--focus); outline-offset: -1px; box-shadow: 0 0 0 6px color-mix(in srgb, var(--focus) 18%, transparent); z-index: 1; --fill: color-mix(in srgb, var(--focus) 16%, var(--cell-now)); }
+.cell.focus:not(.now) { background: linear-gradient(var(--fill), var(--fill)) var(--panel-solid); }
 .cell .cont { position: absolute; left: .25em; top: 50%; transform: translateY(-50%); color: var(--faint); font-size: .8em; }
 .cell.cut-left { padding-left: 1.2em; }
 .cell .watched { position: absolute; right: .45em; top: .35em; font-size: .7em; color: var(--ok); }
@@ -396,8 +405,14 @@ body.guide-open { background: var(--bg); }
   background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--ink) 7%, transparent) 6px 8px);
 }
 .cell > .ct, .cell > .cs { position: relative; }
-.now-line { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--magenta); box-shadow: 0 0 10px var(--magenta); z-index: 2; pointer-events: none; }
-.now-line::before { content: ""; position: absolute; top: -1px; left: -5px; border: 6px solid transparent; border-top-color: var(--magenta); }
+/* The now line runs behind the cells (they're translucent) so it never cuts through a title. */
+.now-line { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--magenta); box-shadow: 0 0 10px var(--magenta); z-index: 0; pointer-events: none; }
+.cell { z-index: 1; }
+.cell.focus { z-index: 2; }
+.grid-times .now-mark {
+  border: 0; padding: 0; top: auto; bottom: -1px; height: 0; width: 0; transform: translateX(-50%); z-index: 1;
+  border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 8px solid var(--magenta);
+}
 
 /* ------------------------------------------------------------------ settings panel */
 

@@ -43,15 +43,16 @@ export function breakCard(ch, info) {
     html`<header class="brk-top">
         <div class="brk-chan"><span class="card-num">${ch.number}</span><span class="brk-name">${ch.name}</span></div>
         <div class="brk-kicker">${mid ? "We'll be right back" : "Station break"}</div>
-        <div class="brk-clock" data-clock>${fmtTime(now())}</div>
+        <div class="brk-clock" data-clock aria-live="off">${fmtTime(now())}</div>
       </header>
-      <div class="brk-stage" data-stage>${raw(heroSlide())}</div>
+      <div class="brk-stage" data-stage aria-live="off">${raw(heroSlide())}</div>
       <footer class="brk-foot">
         <div class="brk-pips" data-pips aria-hidden="true"></div>
         <div class="brk-meter" aria-hidden="true"><i data-meter></i></div>
       </footer>
       <div class="brk-crawl" data-crawl aria-hidden="true"></div>
-      <div class="brk-ghost" aria-hidden="true">${ch.number}</div>`,
+      <div class="brk-ghost" aria-hidden="true">${ch.number}</div>
+      <p class="sr-only">${mid ? "Short break" : "Station break"} on ${ch.name}. ${next ? `${mid ? "Back to" : "Up next"}: ${next.title} at ${fmtTime(seg.end)}.` : ""}</p>`,
     "brk",
   );
   updateMeter();
@@ -210,7 +211,7 @@ export function unavailableCard(ch, airing, { policy = false, reason = "" } = {}
       <div class="card-title" style="font-size:calc(var(--u)*4.4)">${airing.title}</div>
       <div class="card-sub">${[airing.episode, airing.subtitle].filter(Boolean).join(" · ")}</div>
       <div class="why">${why}</div>
-      <div class="card-countdown">Next program in <span data-countdown>${fmtClock(airing.end - now())}</span></div>`,
+      <div class="card-countdown" aria-live="off">Next program in <span data-countdown>${fmtClock(airing.end - now())}</span></div>`,
     "warn",
   );
 }

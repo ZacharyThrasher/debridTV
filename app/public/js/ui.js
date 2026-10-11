@@ -50,6 +50,13 @@ export function tickBanner() {
   if (!bannerEl.hidden) renderBanner();
 }
 
+/** Where the slot's closing station break starts on the progress bar, hatched like the guide. */
+function padAt(a) {
+  const pad = a.segments?.find((x) => x.kind === "break" && x.reason === "padding" && x.end - x.start >= 2 * 60_000);
+  if (!pad) return "";
+  return `<b style="left:${(((pad.start - a.start) / (a.end - a.start)) * 100).toFixed(2)}%"></b>`;
+}
+
 const ROUTE_LABEL = { direct: "Direct play", live: "Compatibility mode", demo: "Demo picture", card: "" };
 
 function renderBanner() {
@@ -83,7 +90,7 @@ function renderBanner() {
     <div>
       <div class="title">${title}</div>
       <div class="meta">${raw(meta)}</div>
-      ${a ? raw(`<div class="progress"><i style="width:${pct.toFixed(2)}%"></i></div>`) : ""}
+      ${a ? raw(`<div class="progress"><i style="width:${pct.toFixed(2)}%"></i>${padAt(a)}</div>`) : ""}
     </div>
     <div style="display:grid;gap:calc(var(--u)*.5);justify-items:end">
       <div class="clock">${fmtTime(t)}</div>
