@@ -30,6 +30,8 @@ export interface NfoMeta {
   studios?: string[];
   tags?: string[];
   plot?: string;
+  /** An episode's show summary, from tvshow.nfo (On Demand's show page). */
+  showPlot?: string;
 }
 
 const ROOTS: Record<string, NfoMeta["kind"]> = { movie: "movie", episodedetails: "episode", tvshow: "show" };
@@ -90,7 +92,8 @@ export function parseNfo(text: string): NfoMeta | null {
 /** Fill gaps in an episode's metadata from its show's tvshow.nfo. */
 export function withShow(ep: NfoMeta | null, show: NfoMeta | null): NfoMeta | null {
   if (!show) return ep;
-  if (!ep) return { kind: "episode", rating: show.rating, ratingText: show.ratingText, genres: show.genres, studios: show.studios, tags: show.tags };
+  const showPlot = show.plot ? { showPlot: show.plot } : {};
+  if (!ep) return { kind: "episode", rating: show.rating, ratingText: show.ratingText, genres: show.genres, studios: show.studios, tags: show.tags, ...showPlot };
   return {
     ...ep,
     rating: ep.rating ?? show.rating,
@@ -98,6 +101,7 @@ export function withShow(ep: NfoMeta | null, show: NfoMeta | null): NfoMeta | nu
     genres: ep.genres ?? show.genres,
     studios: ep.studios ?? show.studios,
     tags: ep.tags ?? show.tags,
+    ...showPlot,
   };
 }
 

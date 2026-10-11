@@ -101,7 +101,7 @@ test("F4: lineup choices round-trip through an export, without overriding number
 
   const dst = new Lineup("lineup-test-dst.json");
   const r = dst.importSettings({ ...exported, custom: [...exported.custom, { id: "bad", name: 3 }] });
-  assert.deepEqual(r, { custom: 1, hidden: 1 });
+  assert.deepEqual(r, { custom: 1, hidden: 1, groups: 0 });
   assert.equal(dst.custom()[0]!.name, "Saturday");
   assert.deepEqual(dst.hidden(), ["mix:marathon"]);
   assert.equal(dst.importSettings({ custom: [{ id: "o", name: "Odd", showKeys: [], movieIds: [], ordering: "nonsense" }] }).custom, 1);

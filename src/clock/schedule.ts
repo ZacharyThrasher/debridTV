@@ -425,7 +425,7 @@ export class WindowPlan {
       const rev: ChannelRevision = prog
         ? { ...this.rev, seed: `${this.rev.seed}|${prog.key}`, itemIds: prog.itemIds, ordering: prog.ordering }
         : { ...this.rev, seed: `${this.rev.seed}|${w.key}` };
-      s = { key: w.key, rev, eligible: this.deps.eligible(rev.itemIds, w.maxRating), slotMs: prog ? (prog.slotMs ?? this.rev.slotMs) : this.rev.slotMs };
+      s = { key: w.key, rev, eligible: w.off ? [] : this.deps.eligible(rev.itemIds, w.maxRating), slotMs: prog ? (prog.slotMs ?? this.rev.slotMs) : this.rev.slotMs };
       this.sources.set(w.key, s);
     }
     return s;
