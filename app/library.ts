@@ -71,6 +71,8 @@ export interface LibItem {
   genre?: string;
   /** What the file's own .nfo (and its show's tvshow.nfo) says. Local folders only. */
   meta?: NfoMeta;
+  /** When DebridTV first saw this file (premieres). Missing for files seen before this was recorded. */
+  addedAt?: number;
 }
 
 export interface AccountState extends Partial<AccountInfo> {
@@ -285,6 +287,7 @@ export class Library {
       ready,
       parsed,
       present: true,
+      ...(prev ? {} : { addedAt: Date.now() }),
     };
     if (prev && !prev.present) {
       it.availability = "listed";

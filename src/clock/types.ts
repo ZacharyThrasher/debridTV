@@ -55,6 +55,24 @@ export interface ChannelRevision {
   maxRating?: Rating;
   /** Wall-clock rules: restricted hours and weekday time slots (see dayparts.ts). */
   dayparts?: Dayparts;
+  /** Show weights, airtime balance, premieres and marathons (see WindowPlan in schedule.ts). */
+  mix?: MixRules;
+}
+
+/**
+ * Instead of a fixed cycle, each next program comes from the show that is most
+ * behind its share: share = weight, "behind" = turns (or airtime) so far ÷ weight.
+ * Programs without a show count as one group, "films".
+ */
+export interface MixRules {
+  /** Group (show id, or "films") → weight 0–100; missing = 50; 0 = never. */
+  weights?: Record<string, number>;
+  /** Balance by turns taken (default) or by airtime. */
+  balance?: "count" | "duration";
+  /** Chance per pick (0–1) of staying on the picked show for up to maxMs. */
+  marathon?: { chance: number; maxMs: number };
+  /** Items to air first, once, with their show's weight tripled until they have. */
+  premieres?: string[];
 }
 
 export interface Channel {

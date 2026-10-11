@@ -235,3 +235,43 @@ test("N-37: banner badges prefer header facts and fall back to release-name tags
   ] });
   assert.deepEqual(mediaBadges(probed), { hdr: "hlg", height: 1080, audioChannels: 6 }, "the default audio track counts");
 });
+
+test("N-09b/N-05/N-10/N-09a: exclusions, watched rules, reshuffle and weights shape a channel at sync", async () => {
+  const { shapeRule, mixRules } = await import("../app/lineup.ts").then((m) => m);
+  const alpha = show("Alpha", 6, { genres: ["Comedy"] });
+  const bravo = show("Bravo", 6, { genres: ["Horror"] });
+  const all = [...alpha, ...bravo];
+  const watched = new Set([alpha[0]!.id, alpha[1]!.id]);
+  const info = (id: string) => {
+    const i = all.find((x) => x.id === id)!;
+    return { showKey: i.parsed.kind === "episode" ? i.parsed.showKey : undefined, genres: i.meta?.genres, watched: watched.has(id), recent: id === bravo[5]!.id };
+  };
+  const rule = { key: "mix:test", name: "Test", kind: "mix" as const, tagline: "", itemIds: all.map((i) => i.id), ordering: "round-robin-cyclic" as const };
+  assert.deepEqual(shapeRule(rule, { exclude: { genres: ["horror"] } }, {}, info)!.itemIds, alpha.map((i) => i.id), "genre matched loosely");
+  assert.deepEqual(shapeRule(rule, { exclude: { shows: ["alpha", "bravo"] } }, {}, info)!.itemIds, rule.itemIds, "a channel never goes dark from its own exclusions");
+  assert.equal(shapeRule({ ...rule, itemIds: bravo.map((i) => i.id) }, {}, { shows: ["bravo"] }, info), null, "excluded everywhere: the channel goes");
+  assert.deepEqual(shapeRule(rule, { watched: "unwatched" }, {}, info)!.itemIds, all.slice(2).map((i) => i.id));
+  const resumed = shapeRule(rule, { watched: "resume" }, {}, info)!.itemIds;
+  assert.deepEqual(resumed.slice(0, 6), [...alpha.slice(2), ...alpha.slice(0, 2)].map((i) => i.id), "Alpha picks up at episode 3");
+  assert.deepEqual(resumed.slice(6), bravo.map((i) => i.id), "nothing watched: from the start");
+  const m = mixRules({ weights: { alpha: 80 }, balance: "time", marathons: true, premieres: true, reshuffle: 2 }, rule, info);
+  assert.equal(m.seed, "mix:test~2");
+  assert.deepEqual(m.mix, { weights: { alpha: 80 }, balance: "duration", marathon: { chance: 0.03, maxMs: 4 * 60 * MIN }, premieres: [bravo[5]!.id] });
+  assert.deepEqual(mixRules({}, rule, info), { seed: "mix:test", mix: undefined });
+
+  // Through sync: a reshuffle and weights become a new revision after the current program.
+  const clock = new StationClock(all.map((i) => ({ id: i.id, title: i.name, durationMs: i.durationMs, showId: i.parsed.kind === "episode" ? i.parsed.showKey : undefined, source: { provider: "local" as const, ref: i.ref } })));
+  const lu = new Lineup("lineup-shape.json");
+  const t0 = Date.UTC(2026, 9, 11, 12, 7);
+  lu.sync(clock, autoRules(all, []), t0, { info });
+  const key = "mix:half-hour";
+  const ch = () => lu.allChannels().find((c) => c.meta.ruleKey === key)!;
+  const onNow = clock.airingAt(ch(), t0 + MIN)!;
+  lu.updateSettings(key, { reshuffle: true, weights: { alpha: 100, bravo: 0 } });
+  lu.sync(clock, autoRules(all, []), t0 + MIN, { info });
+  const rev = ch().revisions[ch().revisions.length - 1]!;
+  assert.equal(rev.effectiveFromMs, onNow.endMs);
+  assert.equal(rev.seed, `${key}~1`);
+  const later = clock.airingsBetween(ch(), rev.effectiveFromMs, rev.effectiveFromMs + 6 * 60 * MIN);
+  assert.ok(later.length > 5 && later.every((a) => alpha.some((x) => x.id === a.itemId)), "weight 0 keeps Bravo off");
+});

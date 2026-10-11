@@ -10,11 +10,13 @@
 import { cycleOrder } from "./ordering.ts";
 import { windows, type Window } from "./dayparts.ts";
 import { allowedUnder, normalizeRating, type Rating } from "./ratings.ts";
+import { hash32, seededShuffle } from "./rng.ts";
 import type {
   Airing,
   Channel,
   ChannelRevision,
   MediaItem,
+  MixRules,
   Segment,
   TuneTarget,
 } from "./types.ts";
@@ -61,7 +63,7 @@ export class StationClock {
     const ri = revisionIndexAt(channel, t);
     if (ri < 0) return null;
     const rev = channel.revisions[ri]!;
-    if (rev.dayparts?.rules.length) {
+    if (planned(rev)) {
       const p = this.plan(rev).find(t);
       return p ? this.buildAiring(channel, ri, p.itemId, p.startMs, p.slotMs, p.endMs) : null;
     }
@@ -89,7 +91,7 @@ export class StationClock {
         const ri = revisionIndexAt(channel, t);
         const rev = channel.revisions[ri];
         const next = channel.revisions.find((r) => r.effectiveFromMs > t);
-        const resume = rev?.dayparts?.rules.length ? this.plan(rev).nextStart(t, Math.min(toMs, next?.effectiveFromMs ?? Infinity)) : null;
+        const resume = rev && planned(rev) ? this.plan(rev).nextStart(t, Math.min(toMs, next?.effectiveFromMs ?? Infinity)) : null;
         if (resume != null) {
           t = resume;
           continue;
@@ -253,6 +255,28 @@ interface Cursor {
   pending: string[];
 }
 
+interface MixGroup {
+  key: string;
+  ids: string[];
+  order: string[];
+  pos: number;
+  lap: number;
+  /** Turns or airtime so far. */
+  aired: number;
+  premieres: string[];
+}
+
+interface MixCursor {
+  groups: MixGroup[];
+  turn: number;
+  marathon?: { key: string; untilMs: number };
+}
+
+/** Revisions the clock plans forward instead of repeating a fixed cycle. */
+function planned(rev: ChannelRevision): boolean {
+  return !!(rev.dayparts?.rules.length || rev.mix);
+}
+
 interface Source {
   key: string;
   eligible: string[];
@@ -303,7 +327,11 @@ export class WindowPlan {
   constructor(rev: ChannelRevision, deps: PlanDeps) {
     this.rev = rev;
     this.deps = deps;
-    this.gen = windows(rev.dayparts!, rev.effectiveFromMs, rev.maxRating);
+    this.gen = rev.dayparts?.rules.length
+      ? windows(rev.dayparts, rev.effectiveFromMs, rev.maxRating)
+      : (function* () {
+          yield { startMs: rev.effectiveFromMs, endMs: Infinity, program: -1, maxRating: rev.maxRating, key: `base|${rev.maxRating ?? "any"}` };
+        })();
     this.t = rev.effectiveFromMs;
   }
 
@@ -414,8 +442,79 @@ export class WindowPlan {
     return o;
   }
 
+  private readonly mixes = new Map<string, MixCursor>();
+
+  /**
+   * Weighted pick (MixRules): the show furthest behind its share whose next
+   * program fits; ties broken by a seeded hash so it is stable but not alphabetical.
+   */
+  private pickMix(src: Source, room: number, mix: MixRules): string | null {
+    let mc = this.mixes.get(src.key);
+    if (!mc) {
+      const groups = new Map<string, MixGroup>();
+      for (const id of src.eligible) {
+        const key = this.deps.meta(id)?.showId ?? "films";
+        const g = groups.get(key) ?? { key, ids: [], order: [], pos: 0, lap: 0, aired: 0, premieres: [] };
+        g.ids.push(id);
+        groups.set(key, g);
+      }
+      const prem = new Set(mix.premieres ?? []);
+      for (const g of groups.values()) {
+        g.premieres = g.ids.filter((id) => prem.has(id));
+        g.order = this.groupOrder(src, g);
+      }
+      mc = { groups: [...groups.values()].filter((g) => (mix.weights?.[g.key] ?? 50) > 0), turn: 0 };
+      this.mixes.set(src.key, mc);
+    }
+    const next = (g: MixGroup) => g.premieres[0] ?? g.order[g.pos]!;
+    const fits = (g: MixGroup) => this.deps.length(next(g), src.slotMs) <= room;
+    let chosen: MixGroup | undefined;
+    // After a marathon, another show goes next (if one fits).
+    let rest: string | undefined;
+    if (mc.marathon && this.t < mc.marathon.untilMs) chosen = mc.groups.find((g) => g.key === mc!.marathon!.key && fits(g));
+    if (mc.marathon && !chosen) {
+      rest = mc.marathon.key;
+      mc.marathon = undefined;
+    }
+    if (!chosen) {
+      let best = Infinity;
+      let bestTie = Infinity;
+      const others = rest ? mc.groups.some((g) => g.key !== rest && fits(g)) : false;
+      for (const g of mc.groups) {
+        if (!fits(g) || (others && g.key === rest)) continue;
+        const w = (mix.weights?.[g.key] ?? 50) * (g.premieres.length ? 3 : 1);
+        const score = g.aired / w;
+        const tie = hash32(`${src.rev.seed}|${mc.turn}|${g.key}`);
+        if (score < best - 1e-9 || (Math.abs(score - best) <= 1e-9 && tie < bestTie)) (best = score), (bestTie = tie), (chosen = g);
+      }
+      if (!chosen) return null;
+      if (mix.marathon && mc.groups.length > 1 && hash32(`${src.rev.seed}|${mc.turn}|marathon`) / 4294967296 < mix.marathon.chance)
+        mc.marathon = { key: chosen.key, untilMs: this.t + mix.marathon.maxMs };
+    }
+    const id = next(chosen);
+    if (chosen.premieres.length) chosen.premieres.shift();
+    else if (++chosen.pos >= chosen.order.length) {
+      chosen.lap++;
+      chosen.pos = 0;
+      chosen.order = this.groupOrder(src, chosen);
+    }
+    chosen.aired += mix.balance === "duration" ? this.deps.length(id, src.slotMs) : 1;
+    mc.turn++;
+    return id;
+  }
+
+  /** A show's episodes in order (shuffled per lap for shuffle orderings); films shuffled per lap. */
+  private groupOrder(src: Source, g: MixGroup): string[] {
+    const shuffle = g.key === "films" || src.rev.ordering.includes("shuffle");
+    if (shuffle) return seededShuffle(g.ids, `${src.rev.seed}|${g.key}|${g.lap}`);
+    const pos = new Map(g.ids.map((id, i) => [id, i]));
+    const rank = (id: string) => { const m = this.deps.meta(id); return [m?.season ?? 0, m?.episode ?? 0, pos.get(id)!]; };
+    return g.ids.slice().sort((a, b) => { const x = rank(a), y = rank(b); return x[0]! - y[0]! || x[1]! - y[1]! || x[2]! - y[2]!; });
+  }
+
   /** The next program for this source that fits in `room`, advancing its place in line. */
   private pick(src: Source, room: number): string | null {
+    if (this.rev.mix) return this.pickMix(src, room, this.rev.mix);
     const c = this.cursors.get(src.key) ?? { k: 0, i: 0, pending: [] };
     this.cursors.set(src.key, c);
     const fits = (id: string) => this.deps.length(id, src.slotMs) <= room;

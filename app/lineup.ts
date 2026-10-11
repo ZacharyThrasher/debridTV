@@ -39,6 +39,24 @@ interface LineupState {
   hidden: string[];
   /** The viewer's own touches per channel (by rule key), kept across rebuilds. */
   settings?: Record<string, ChannelSettings>;
+  /** Shows and genres kept off every channel (N-09b). */
+  exclude?: Exclusions;
+}
+
+export interface Exclusions {
+  /** Show keys (as in "show:<key>" rule keys). */
+  shows?: string[];
+  /** Genre names, matched without regard to case or punctuation. */
+  genres?: string[];
+}
+
+/** What sync needs to know about an item to apply exclusions and watched rules. */
+export interface ItemInfo {
+  showKey?: string;
+  genres?: string[];
+  watched?: boolean;
+  /** Added to the library recently enough to premiere. */
+  recent?: boolean;
 }
 
 export type ChannelLogo =
@@ -70,7 +88,23 @@ export interface ChannelSettings {
   slots?: TimeSlot[];
   /** Air season-0 specials too (after the regular seasons). Off by default (N-05). */
   specials?: boolean;
+  /** Share of turns per show (show key, or "films"): 0–100, default 50, 0 = never (N-09a). */
+  weights?: Record<string, number>;
+  /** Even out turns (default) or airtime (N-09d). */
+  balance?: "episodes" | "time";
+  /** Now and then stay on one show for up to four hours (N-09e). */
+  marathons?: boolean;
+  /** Recently added programs air first (N-09c). */
+  premieres?: boolean;
+  /** all (default), unwatched only, or resume each show after its last watched episode (N-05). */
+  watched?: "all" | "unwatched" | "resume";
+  /** Shows and genres kept off this channel (N-09b). */
+  exclude?: Exclusions;
+  /** Bumped by "refresh schedule": a new shuffle from the end of the current program (N-10). */
+  reshuffle?: number;
 }
+
+const WEIGHT_KEYS = /^[\w:. -]{1,200}$/;
 
 export const RATINGS = RATING_SCALE;
 
@@ -132,6 +166,16 @@ export class Lineup {
     });
   }
 
+  exclusions(): Exclusions {
+    return this.file.get().exclude ?? {};
+  }
+
+  setExclusions(ex: Exclusions): void {
+    this.file.update((s) => {
+      s.exclude = ex.shows?.length || ex.genres?.length ? ex : undefined;
+    });
+  }
+
   settingsFor(ruleKey: string): ChannelSettings {
     return this.file.get().settings?.[ruleKey] ?? {};
   }
@@ -142,7 +186,7 @@ export class Lineup {
    */
   updateSettings(
     ruleKey: string,
-    patch: { name?: string | null; number?: number; favorite?: boolean; logo?: ChannelLogo | null; kid?: boolean; restrictedHours?: RestrictedHours[]; slots?: TimeSlot[]; specials?: boolean },
+    patch: { name?: string | null; number?: number; favorite?: boolean; logo?: ChannelLogo | null; kid?: boolean; restrictedHours?: RestrictedHours[]; slots?: TimeSlot[]; specials?: boolean } & Partial<Pick<ChannelSettings, "weights" | "balance" | "marathons" | "premieres" | "watched" | "exclude">> & { reshuffle?: boolean },
   ): { ok: true; swappedWith?: string } | { ok: false; error: string } {
     const s = this.file.get();
     const ch = s.channels.find((c) => c.meta.ruleKey === ruleKey);
@@ -176,6 +220,13 @@ export class Lineup {
     if (patch.restrictedHours !== undefined) cur.restrictedHours = patch.restrictedHours.length ? patch.restrictedHours : undefined;
     if (patch.slots !== undefined) cur.slots = patch.slots.length ? patch.slots : undefined;
     if (patch.specials !== undefined) cur.specials = patch.specials || undefined;
+    if (patch.weights !== undefined) cur.weights = Object.keys(patch.weights).length ? patch.weights : undefined;
+    if (patch.balance !== undefined) cur.balance = patch.balance === "time" ? "time" : undefined;
+    if (patch.marathons !== undefined) cur.marathons = patch.marathons || undefined;
+    if (patch.premieres !== undefined) cur.premieres = patch.premieres || undefined;
+    if (patch.watched !== undefined) cur.watched = patch.watched === "all" ? undefined : patch.watched;
+    if (patch.exclude !== undefined) cur.exclude = patch.exclude.shows?.length || patch.exclude.genres?.length ? patch.exclude : undefined;
+    if (patch.reshuffle) cur.reshuffle = (cur.reshuffle ?? 0) + 1;
     s.settings = { ...s.settings, [ruleKey]: cur };
     if (cur.name) ch.name = cur.name;
     this.file.set(s);
@@ -183,16 +234,16 @@ export class Lineup {
   }
 
   /** What a settings export carries: choices, not library facts or credentials. */
-  exportSettings(): { numbers: Record<string, number>; custom: CustomChannel[]; hidden: string[]; settings: Record<string, ChannelSettings> } {
+  exportSettings(): { numbers: Record<string, number>; custom: CustomChannel[]; hidden: string[]; settings: Record<string, ChannelSettings>; exclude: Exclusions } {
     const s = this.file.get();
-    return { numbers: { ...s.numbers }, custom: s.custom.slice(), hidden: s.hidden.slice(), settings: { ...s.settings } };
+    return { numbers: { ...s.numbers }, custom: s.custom.slice(), hidden: s.hidden.slice(), settings: { ...s.settings }, exclude: s.exclude ?? {} };
   }
 
   /**
    * Bring back exported choices. Custom channels and hidden flags are merged by id;
    * a remembered number is only taken if nothing here already uses it.
    */
-  importSettings(x: { numbers?: unknown; custom?: unknown; hidden?: unknown; settings?: unknown }): { custom: number; hidden: number } {
+  importSettings(x: { numbers?: unknown; custom?: unknown; hidden?: unknown; settings?: unknown; exclude?: unknown }): { custom: number; hidden: number } {
     let custom = 0;
     let hidden = 0;
     this.file.update((s) => {
@@ -212,6 +263,9 @@ export class Lineup {
           const c = cleanSettings(v);
           if (c) s.settings = { ...s.settings, [k]: c };
         }
+      const ex = cleanExclusions(x.exclude);
+      if (ex && (ex.shows?.length || ex.genres?.length))
+        s.exclude = { shows: [...new Set([...(s.exclude?.shows ?? []), ...(ex.shows ?? [])])], genres: [...new Set([...(s.exclude?.genres ?? []), ...(ex.genres ?? [])])] };
       if (x.numbers && typeof x.numbers === "object") {
         const used = new Set(Object.values(s.numbers));
         for (const [k, n] of Object.entries(x.numbers as Record<string, unknown>))
@@ -231,17 +285,12 @@ export class Lineup {
    * boundary so they look like they've been on air all along; existing channels
    * change only at the end of what is airing now.
    */
-  sync(clock: StationClock, rulesIn: Rule[], now: number, opts: { timeZone?: string } = {}): { added: number; revised: number; removed: number } {
+  sync(clock: StationClock, rulesIn: Rule[], now: number, opts: { timeZone?: string; info?: (id: string) => ItemInfo | undefined } = {}): { added: number; revised: number; removed: number } {
     const s = this.file.get();
-    let rules = rulesIn;
     const timeZone = opts.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const audience = (r: Rule) => scheduleRules(s.settings?.[r.key] ?? {}, byKey, timeZone);
-    // Specials stay off unless asked for (N-05).
-    rules = rules.map((r) => {
-      if (!r.specialIds?.length || s.settings?.[r.key]?.specials) return r;
-      const sp = new Set(r.specialIds);
-      return { ...r, itemIds: r.itemIds.filter((id) => !sp.has(id)) };
-    });
+    const info = opts.info ?? (() => undefined);
+    const audience = (r: Rule) => ({ ...scheduleRules(s.settings?.[r.key] ?? {}, byKey, timeZone), ...mixRules(s.settings?.[r.key] ?? {}, r, info) });
+    const rules = rulesIn.flatMap((r) => shapeRule(r, s.settings?.[r.key] ?? {}, s.exclude ?? {}, info) ?? []);
     const byKey = new Map(rules.map((r) => [r.key, r]));
     let added = 0;
     let revised = 0;
@@ -262,7 +311,7 @@ export class Lineup {
           id: `ch-${hash32(r.key).toString(36)}`,
           number,
           name: s.settings?.[r.key]?.name ?? r.name,
-          revisions: [{ effectiveFromMs: anchor, seed: r.key, itemIds: r.itemIds, ordering: r.ordering, slotMs: r.slotMs, midBreakMs: r.midBreakMs, ...audience(r) }],
+          revisions: [{ effectiveFromMs: anchor, itemIds: r.itemIds, ordering: r.ordering, slotMs: r.slotMs, midBreakMs: r.midBreakMs, ...audience(r) }],
           meta: { ruleKey: r.key, kind: r.kind, hue: hash32(r.key) % 360, tagline: r.tagline },
         });
         added++;
@@ -273,6 +322,8 @@ export class Lineup {
       const cur = existing.revisions[existing.revisions.length - 1]!;
       const aud = audience(r);
       const same =
+        cur.seed === aud.seed &&
+        JSON.stringify(cur.mix) === JSON.stringify(aud.mix) &&
         cur.maxRating === aud.maxRating &&
         JSON.stringify(cur.dayparts) === JSON.stringify(aud.dayparts) &&
         cur.ordering === r.ordering &&
@@ -289,6 +340,77 @@ export class Lineup {
     this.file.set(s);
     return { added, revised, removed };
   }
+}
+
+/**
+ * A rule's programs after the viewer's choices: specials (N-05), exclusions
+ * (N-09b, global and per channel) and watched rules. If exclusions or "unwatched"
+ * would leave nothing, the channel keeps its full list rather than going dark.
+ */
+export function shapeRule(r: Rule, st: ChannelSettings, global: Exclusions, info: (id: string) => ItemInfo | undefined): Rule | null {
+  let ids = r.itemIds;
+  if (r.specialIds?.length && !st.specials) {
+    const sp = new Set(r.specialIds);
+    ids = ids.filter((id) => !sp.has(id));
+  }
+  // Kept off everywhere: a channel left with nothing (say, the excluded show's own) goes away.
+  const gShows = new Set(global.shows ?? []);
+  const gGenres = new Set((global.genres ?? []).map(slug));
+  if (gShows.size || gGenres.size) {
+    ids = ids.filter((id) => {
+      const i = info(id);
+      return !(i?.showKey && gShows.has(i.showKey)) && !i?.genres?.some((g) => gGenres.has(slug(g)));
+    });
+    if (!ids.length) return null;
+  }
+  const shows = new Set(st.exclude?.shows ?? []);
+  const genres = new Set((st.exclude?.genres ?? []).map(slug));
+  if (shows.size || genres.size) {
+    const kept = ids.filter((id) => {
+      const i = info(id);
+      return !(i?.showKey && shows.has(i.showKey)) && !i?.genres?.some((g) => genres.has(slug(g)));
+    });
+    if (kept.length) ids = kept;
+  }
+  if (st.watched === "unwatched") {
+    const kept = ids.filter((id) => !info(id)?.watched);
+    if (kept.length) ids = kept;
+  } else if (st.watched === "resume") ids = resumeOrder(ids, info);
+  return ids === r.itemIds ? r : { ...r, itemIds: ids };
+}
+
+/** Each show's episodes rotated to start after its last watched one, in the same slots of the list. */
+function resumeOrder(ids: string[], info: (id: string) => ItemInfo | undefined): string[] {
+  const groups = new Map<string, number[]>();
+  ids.forEach((id, i) => {
+    const k = info(id)?.showKey ?? `__${id}`;
+    groups.set(k, [...(groups.get(k) ?? []), i]);
+  });
+  const out = ids.slice();
+  for (const pos of groups.values()) {
+    const eps = pos.map((i) => ids[i]!);
+    let last = -1;
+    eps.forEach((id, i) => info(id)?.watched && (last = i));
+    const start = last + 1 >= eps.length ? 0 : last + 1;
+    pos.forEach((p, i) => (out[p] = eps[(start + i) % eps.length]!));
+  }
+  return out;
+}
+
+/** Weights, balance, marathons, premieres and reshuffles as the clock takes them. */
+export function mixRules(st: ChannelSettings, r: Rule, info: (id: string) => ItemInfo | undefined): Pick<ChannelRevision, "mix" | "seed"> {
+  const seed = st.reshuffle ? `${r.key}~${st.reshuffle}` : r.key;
+  const premieres = st.premieres ? r.itemIds.filter((id) => info(id)?.recent) : [];
+  if (!st.weights && !st.balance && !st.marathons && !premieres.length) return { seed, mix: undefined };
+  return {
+    seed,
+    mix: {
+      ...(st.weights ? { weights: st.weights } : {}),
+      ...(st.balance === "time" ? { balance: "duration" as const } : {}),
+      ...(st.marathons ? { marathon: { chance: 0.03, maxMs: 4 * 60 * MIN } } : {}),
+      ...(premieres.length ? { premieres } : {}),
+    },
+  };
 }
 
 /**
@@ -325,7 +447,36 @@ export function cleanSettings(v: unknown): ChannelSettings | null {
   const sl = cleanSlots(x.slots);
   if (sl?.length) out.slots = sl;
   if (x.specials === true) out.specials = true;
+  const w = cleanWeights(x.weights);
+  if (w && Object.keys(w).length) out.weights = w;
+  if (x.balance === "time") out.balance = "time";
+  if (x.marathons === true) out.marathons = true;
+  if (x.premieres === true) out.premieres = true;
+  if (x.watched === "unwatched" || x.watched === "resume") out.watched = x.watched;
+  const ex = cleanExclusions(x.exclude);
+  if (ex && (ex.shows?.length || ex.genres?.length)) out.exclude = ex;
+  if (typeof x.reshuffle === "number" && Number.isInteger(x.reshuffle) && x.reshuffle > 0) out.reshuffle = x.reshuffle;
   return out;
+}
+
+export function cleanWeights(v: unknown): Record<string, number> | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const out: Record<string, number> = {};
+  for (const [k, n] of Object.entries(v as Record<string, unknown>).slice(0, 500)) {
+    if (!WEIGHT_KEYS.test(k) || typeof n !== "number" || !Number.isFinite(n) || n < 0 || n > 100) return null;
+    if (Math.round(n) !== 50) out[k] = Math.round(n);
+  }
+  return out;
+}
+
+export function cleanExclusions(v: unknown): Exclusions | null {
+  if (!v || typeof v !== "object") return null;
+  const x = v as Record<string, unknown>;
+  const list = (a: unknown) => (Array.isArray(a) && a.every((s) => typeof s === "string") ? [...new Set((a as string[]).map((s) => s.trim().slice(0, 200)).filter(Boolean))].slice(0, 500) : a === undefined ? [] : null);
+  const shows = list(x.shows);
+  const genres = list(x.genres);
+  if (!shows || !genres) return null;
+  return { ...(shows.length ? { shows } : {}), ...(genres.length ? { genres } : {}) };
 }
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
