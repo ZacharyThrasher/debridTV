@@ -87,7 +87,7 @@ export async function tune(ch, { silent = false } = {}) {
   } catch (e) {
     if (my !== token) return;
     staticOff();
-    if (e.status === 403) return showLocked(ch, e.data ?? null);
+    if (e.status === 403) return showLocked(ch, null); // body is { error, locked, final }
     return messageCard(ch, "Signal lost", "Can't reach the tuner", `The DebridTV server on this PC isn't answering (${e.message}). Is it still running?`);
   }
   if (my !== token) return;
@@ -462,12 +462,12 @@ function showLocked(ch, info) {
   if (info) setBanner(ch, info, tv.route);
 }
 
-// B's PIN entry fires this; re-tune the channel on screen if it's the one unlocked.
+// The PIN entry fires this. Unlocking is global (detail.channelId is null), so the
+// server's flags decide from here on; we just re-tune the channel on screen.
 addEventListener("debridtv:unlocked", (e) => {
-  const id = e.detail?.channelId ?? e.detail?.id ?? tv.current?.id;
+  const id = e.detail?.channelId ?? null;
   if (id) unlockedHere.add(id);
-  const ch = tv.channels.find((c) => c.id === id);
-  if (ch) ch.unlocked = true;
+  for (const c of tv.channels) if (!id || c.id === id) c.unlocked = true;
   if (tv.current && (!id || tv.current.id === id)) tune(tv.current, { silent: true });
 });
 

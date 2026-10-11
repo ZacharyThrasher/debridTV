@@ -226,7 +226,10 @@ describe("player", () => {
     assert.deepEqual(costly, [], "no link request and no media while locked");
     assert.equal(await page.evaluate(() => document.getElementById("video")!.getAttribute("src")), null);
     assert.ok(await page.locator("#card").isVisible(), "the locked card shows");
-    await page.evaluate((id: string) => dispatchEvent(new CustomEvent("debridtv:unlocked", { detail: { channelId: id } })), direct!.id);
+    // Unlocking is global: the server stops marking the channel, and the event names none.
+    await ctx.unroute("**/api/bootstrap");
+    await ctx.unroute("**/api/now?*");
+    await page.evaluate(() => dispatchEvent(new CustomEvent("debridtv:unlocked", { detail: { channelId: null } })));
     await playing(page);
     assert.ok(costly.some((u) => u.startsWith("/media/")), "plays once unlocked");
     await ctx.close();
