@@ -164,7 +164,29 @@ async function sources() {
             </div>
             <div class="muted">A scan asks for one playback link per file and reads its header. Files a provider refused or hasn't finished are skipped.</div>`}
     </div>
+    ${s.local.connected ? raw(await silenceCard()) : ""}
     <p class="muted">Your keys and library facts are stored in <code>${s.dataDir}</code>.</p>`;
+}
+
+/** N-22c: break points from silences, for episodes on this PC without chapters. Off until started. */
+async function silenceCard() {
+  const v = await api.get("/api/silence").catch(() => null);
+  if (!v || !v.eligible) return "";
+  const pct = v.total ? Math.round((v.done / v.total) * 100) : 0;
+  return html`<h3>Breaks in your own files</h3>
+    <p class="lead">Episodes on this PC that have no chapters can still get station breaks where the sound drops out, like the fade before an ad. DebridTV listens to each file's soundtrack once, on this PC. Files from Real-Debrid or TorBox are never checked: that would mean downloading them.</p>
+    <div class="src">
+      ${v.running
+        ? html`<div class="src-head"><b>Listening${v.current ? html`: ${v.current}` : ""}</b><span class="muted">${v.done} / ${v.total}</span></div>
+            <div class="progressbar"><i style="width:${pct}%"></i></div>
+            <div class="row-actions"><button class="btn" data-silence-stop>Stop</button></div>`
+        : html`<div class="src-head"><b>${v.withBreaks} of ${v.eligible} episodes have break points from silences</b></div>
+            ${!v.ffmpeg ? html`<div class="muted" style="color:var(--warn)">This needs ffmpeg on this PC.</div>` : ""}
+            <div class="row-actions">
+              <button class="btn primary" data-silence-start ${v.pending && v.ffmpeg ? "" : "disabled"}>${v.pending ? `Check ${v.pending} episode${v.pending === 1 ? "" : "s"}` : "All checked"}</button>
+              <span class="muted">Uses this PC's processor for a moment per episode. Breaks change once the program on now ends.</span>
+            </div>`}
+    </div>`;
 }
 
 function accountLine(id, a) {
@@ -228,6 +250,14 @@ body.addEventListener("click", async (e) => {
       onChange();
     } else if ("scanStart" in b.dataset) {
       await api.post("/api/scan/start", { perMinute: Number(document.getElementById("pace")?.value ?? 30) });
+    } else if ("silenceStart" in b.dataset) {
+      busy("Starting…");
+      const r = await api.post("/api/silence/start");
+      toast(`Listening to ${r.total} episode${r.total === 1 ? "" : "s"} for quiet moments.`);
+      render();
+    } else if ("silenceStop" in b.dataset) {
+      await api.post("/api/silence/stop");
+      render();
     } else if ("scanStop" in b.dataset) {
       await api.post("/api/scan/stop");
     } else if ("scanRetry" in b.dataset) {
@@ -549,7 +579,16 @@ function signOffOpt() {
   const cur = Number(pref("signOffHours") ?? 4);
   const opts = [[0, "Never"], [2, "2 hours"], [3, "3 hours"], [4, "4 hours"], [6, "6 hours"], [8, "8 hours"]];
   return html`<div class="opt"><div><div class="ol">Sign off after</div><div class="od">With nobody pressing anything, ask "Still watching?" and then stop playing, so a sleeping viewer doesn't stream all night.</div></div>
-    <select class="input" style="width:auto" data-pref-select="signOffHours" data-num="1" aria-label="Sign off after">${raw(opts.map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`).join(""))}</select></div>`;
+    <select class="input" style="width:auto" data-pref-select="signOffHours" data-num="1" aria-label="Sign off after">${raw(opts.map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`).join(""))}</select></div>
+    ${raw(compatQualityOpt())}`;
+}
+
+/** N-19: when a file has to be converted for this browser, how big the picture may be (0 = as the file is, up to 1080p). */
+function compatQualityOpt() {
+  const cur = Number(pref("compatMaxHeight") ?? 0);
+  const opts = [[0, "Original"], [1080, "1080p"], [720, "720p"]];
+  return html`<div class="opt"><div><div class="ol">Max quality when converting</div><div class="od">Some files have to be converted on this PC before the browser can play them. A lower size is easier on an older PC.</div></div>
+    <select class="input" style="width:auto" data-pref-select="compatMaxHeight" data-num="1" aria-label="Max quality when converting">${raw(opts.map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`).join(""))}</select></div>`;
 }
 
 const IDLE_FALLBACK = { stay: "Stay open", close: "Close the guide", tune: "Tune to the highlighted channel" };
