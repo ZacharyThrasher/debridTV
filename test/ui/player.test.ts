@@ -227,7 +227,7 @@ describe("player", () => {
       assert.equal(un.ok, true);
       await page.evaluate(() => dispatchEvent(new CustomEvent("debridtv:unlocked", { detail: { channelId: null } })));
       await playing(page);
-      assert.ok(costly.some((u) => u.startsWith("/media/")), "plays once unlocked");
+      assert.ok((costly as string[]).some((u) => u.startsWith("/media/")), "plays once unlocked");
       await ctx.close();
     } finally {
       await post("/api/lock/pin", { old: "2468", pin: null });
