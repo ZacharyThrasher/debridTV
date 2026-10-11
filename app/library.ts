@@ -103,6 +103,8 @@ export interface Config {
   localDirs?: string[];
   /** Duration-scan pace (items per minute). */
   scanPerMinute?: number;
+  /** Daily settings backups to keep (0 = none). Default 14. */
+  backupKeep?: number;
 }
 
 export interface ScanState {

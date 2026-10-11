@@ -9,7 +9,7 @@
 // against the mock providers on a spare port.
 
 import http from "node:http";
-import { readFileSync, existsSync, statSync, createReadStream } from "node:fs";
+import { readFileSync, existsSync, statSync, createReadStream, rmSync } from "node:fs";
 import { join, extname, dirname, resolve } from "node:path";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
@@ -29,6 +29,7 @@ import { Lineup, autoRules, cleanExclusions, cleanLogo, cleanRestricted, cleanSl
 import { Meters } from "./meters.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
 import { demoItems } from "./demo.ts";
+import { backupIfDue, listBackups, readBackup } from "./backups.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(HERE, "public");
@@ -138,6 +139,36 @@ function itemInfo(items: LibItem[], now: number): (id: string) => ItemInfo | und
     recent: i.addedAt != null && now - i.addedAt < PREMIERE_DAYS * 24 * 60 * MIN,
   }]));
   return (id) => map.get(id);
+}
+
+/** What "Export settings" and the daily backup contain: choices, never keys (gate F4). */
+function settingsExport() {
+  const c = config.get();
+  return {
+    exportedAt: new Date().toISOString(), app: "DebridTV", version: VERSION,
+    note: "Settings only. API keys are never exported.",
+    sources: { torbox: !!c.torboxKey, realdebrid: !!c.rdToken, localDirs: c.localDirs ?? [] },
+    scanPerMinute: c.scanPerMinute ?? 30,
+    lineup: liveLineup.exportSettings(),
+    ratings: library.manualRatings(),
+  };
+}
+function importSettings(res: http.ServerResponse, body: Record<string, unknown>) {
+  const l = (body as { lineup?: unknown }).lineup;
+  if (!l || typeof l !== "object") return json(res, 400, { error: "That isn't a DebridTV settings file." });
+  const n = liveLineup.importSettings(l as never);
+  const ratings = library.importRatings((body as { ratings?: unknown }).ratings);
+  rebuild();
+  return json(res, 200, { ok: true, ...n, ratings });
+}
+const backupDir = () => join(dataDir(), "backups");
+function dailyBackup() {
+  try {
+    const made = backupIfDue(backupDir(), settingsExport(), Date.now(), config.get().backupKeep ?? 14);
+    if (made) meters.log("backup", `Settings backed up (${made.name})`);
+  } catch (e) {
+    meters.log("error", `backup: ${e instanceof Error ? e.message : e}`);
+  }
 }
 
 /** Restricted hours and time slots follow this zone: $DEBRIDTV_TZ, else this computer's. */
@@ -821,26 +852,25 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       return json(res, 200, { ok: false, message: `${plainError(e)}.` });
     }
   }
-  if (p === "/api/export") {
-    // Settings round trip without credentials (gate F4).
-    const c = config.get();
-    return download(res, "debridtv-settings.json", {
-      exportedAt: new Date().toISOString(), app: "DebridTV", version: VERSION,
-      note: "Settings only. API keys are never exported.",
-      sources: { torbox: !!c.torboxKey, realdebrid: !!c.rdToken, localDirs: c.localDirs ?? [] },
-      scanPerMinute: c.scanPerMinute ?? 30,
-      lineup: liveLineup.exportSettings(),
-      ratings: library.manualRatings(),
-    });
+  if (p === "/api/export") return download(res, "debridtv-settings.json", settingsExport());
+  if (p === "/api/backups" && m === "GET") {
+    const keep = config.get().backupKeep ?? 14;
+    return json(res, 200, { keep, folder: backupDir(), backups: listBackups(backupDir()) });
   }
-  if (p === "/api/import" && m === "POST") {
-    const l = (body as { lineup?: unknown }).lineup;
-    if (!l || typeof l !== "object") return json(res, 400, { error: "That isn't a DebridTV settings file." });
-    const n = liveLineup.importSettings(l as never);
-    const ratings = library.importRatings((body as { ratings?: unknown }).ratings);
-    rebuild();
-    return json(res, 200, { ok: true, ...n, ratings });
+  if (p === "/api/backups" && m === "POST") {
+    // { keep } changes how many daily backups are kept (0 = no automatic backups); { now: true } writes one now.
+    if (typeof body.keep === "number") config.update((c) => {
+      c.backupKeep = Math.max(0, Math.min(90, Math.round(body.keep as number)));
+    }, { secret: true });
+    const made = body.now === true ? backupIfDue(backupDir(), settingsExport(), Date.now(), config.get().backupKeep ?? 14, true) : null;
+    return json(res, 200, { keep: config.get().backupKeep ?? 14, made, backups: listBackups(backupDir()) });
   }
+  if (p === "/api/backups/restore" && m === "POST") {
+    const data = readBackup(backupDir(), String(body.name ?? ""));
+    if (!data) return json(res, 404, { error: "No such backup." });
+    return importSettings(res, data as Record<string, unknown>);
+  }
+  if (p === "/api/import" && m === "POST") return importSettings(res, body);
   if (p === "/api/forget" && m === "POST") {
     // Everything DebridTV knows, gone: keys, library facts, history, channels.
     if (body.confirm !== "forget everything") return json(res, 400, { error: "confirmation missing" });
@@ -851,6 +881,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     ledger = new WatchLedger();
     liveLineup.reset();
     demoLineup.reset();
+    rmSync(backupDir(), { recursive: true, force: true });
     rebuild();
     return json(res, 200, { ok: true });
   }
@@ -1014,7 +1045,8 @@ function historyRow(r: HistoryState["recent"][number], h: HistoryState) {
 }
 
 // Keep channels in step as time passes (rules may add items as scans finish).
-const tick = opts.timers === false ? null : setInterval(scheduleRebuild, 5 * MIN);
+const tick = opts.timers === false ? null : setInterval(() => (scheduleRebuild(), dailyBackup()), 5 * MIN);
+if (opts.timers !== false) setTimeout(dailyBackup, 10_000).unref();
 tick?.unref();
 
 return {
