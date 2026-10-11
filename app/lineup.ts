@@ -11,6 +11,7 @@ import { hash32 } from "../src/clock/rng.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
 import { JsonFile } from "./store.ts";
 import { airsAsExtra, breakpoints, type LibItem } from "./library.ts";
+import type { ExternalIds } from "../src/library/nfo.ts";
 
 const MIN = 60_000;
 
@@ -629,12 +630,32 @@ function nextNumber(numbers: Record<string, number>, preferred?: number): number
 }
 
 /** Automatic rules. Without genre metadata, channels are built from what is known for sure. */
-export function autoRules(items: LibItem[], custom: CustomChannel[], groups: ContentGroup[] = []): Rule[] {
-  const usable = dedupe(
-    items.filter(
-      (i) => i.present && i.ready !== false && !i.excluded && i.durationMs && i.parsed.kind !== "other" && i.availability !== "policy-blocked",
-    ),
-  );
+/**
+ * What channels may air: one copy per episode or film (N-01d), none of a refused
+ * title, one show key per show. `keptOf` maps every copy's id to the copy that airs.
+ */
+export function usableLibrary(items: LibItem[], idsOf: IdsOf = nfoIds): { usable: LibItem[]; keptOf: Map<string, string>; showOf: (k: string) => string } {
+  // Every present copy takes part in matching, so a copy a provider refused keeps its title off the air (E6).
+  const copyGroups = dedupeGroups(
+    items.filter((i) => i.present && !i.excluded && i.parsed.kind !== "other"),
+    idsOf,
+    airable,
+  ).filter((g) => g.keep && !g.refused);
+  // A pick made on any copy (custom channels, groups) means the copy that airs.
+  const keptOf = new Map(copyGroups.flatMap((g) => g.copies.map((c) => [c.id, g.keep!.id] as const)));
+  // Counted over every copy, so the channel keeps its name whichever copy airs.
+  const aliases = showAliases(copyGroups.flatMap((g) => g.copies), idsOf);
+  const usable = copyGroups.map((g) => {
+    const i = g.keep!;
+    const a = i.parsed.kind === "episode" ? aliases.get(i.parsed.showKey) : undefined;
+    return a && i.parsed.kind === "episode" && a.key !== i.parsed.showKey ? { ...i, parsed: { ...i.parsed, showKey: a.key, show: a.name } } : i;
+  });
+  return { usable, keptOf, showOf: (k: string) => aliases.get(k)?.key ?? k };
+}
+
+/** Automatic rules. Without genre metadata, channels are built from what is known for sure. */
+export function autoRules(items: LibItem[], custom: CustomChannel[], groups: ContentGroup[] = [], idsOf: IdsOf = nfoIds): Rule[] {
+  const { usable, keptOf, showOf } = usableLibrary(items, idsOf);
   const rules: Rule[] = [];
   const eps = usable.filter((i) => i.parsed.kind === "episode");
   const movies = usable.filter((i) => i.parsed.kind === "movie");
@@ -689,11 +710,13 @@ export function autoRules(items: LibItem[], custom: CustomChannel[], groups: Con
       rules.push({ key: `movies:${d}s`, name: `${decadeName(d)} Cinema`, kind: "movies", tagline: `Films from the ${String(d).slice(2)}s`,
         itemIds: list.map((i) => i.id).sort(), ordering: "shuffle", slotMs: 30 * MIN });
 
-  const groupIds = new Map(groups.map((g) => [g.id, groupItems(g, eps, movies)]));
+  const groupIds = new Map(groups.map((g) => [g.id, groupItems(g, eps, movies, showOf, keptOf)]));
   for (const c of custom) {
+    const showKeys = new Set(c.showKeys.map(showOf));
+    const movieIds = new Set(c.movieIds.map((id) => keptOf.get(id) ?? id));
     const ids = [...new Set([
-      ...sortEpisodes(eps.filter((e) => e.parsed.kind === "episode" && c.showKeys.includes(e.parsed.showKey))).map((i) => i.id),
-      ...movies.filter((m) => c.movieIds.includes(m.id)).map((m) => m.id),
+      ...sortEpisodes(eps.filter((e) => e.parsed.kind === "episode" && showKeys.has(e.parsed.showKey))).map((i) => i.id),
+      ...movies.filter((m) => movieIds.has(m.id)).map((m) => m.id),
       ...(c.groupIds ?? []).flatMap((g) => groupIds.get(g) ?? []),
     ])];
     if (ids.length)
@@ -811,12 +834,68 @@ export function metadataRules(usable: LibItem[]): Rule[] {
   return rules;
 }
 
+/**
+ * Seasonal presets (N-02a) on top of seasonal channels (N-32): a ready-made
+ * content group with its own channel, on the air only between its dates. Offered
+ * only when the library has enough matching titles, by genre or tag from the
+ * viewer's .nfo files, or a holiday word in a film's or show's name.
+ */
+export interface SeasonalPreset {
+  id: string;
+  name: string;
+  description: string;
+  season: DateRange;
+  genres: string[];
+  words?: RegExp;
+  ordering: Ordering;
+}
+
+export const SEASONAL_PRESETS: SeasonalPreset[] = [
+  { id: "s-october-horror", name: "October Horror", season: { from: "10-01", to: "10-31" }, genres: ["horror", "halloween"], words: /\bhalloween\b/i,
+    ordering: "block-shuffle", description: "Horror shows and films every day in October. Off the air the rest of the year." },
+  { id: "s-holidays", name: "Holiday Classics", season: { from: "12-01", to: "12-31" }, genres: ["christmas", "holiday", "holidays", "xmas"],
+    words: /\b(christmas|xmas|holiday|holidays|santa|grinch|noel|nutcracker|scrooge)\b/i,
+    ordering: "block-shuffle", description: "Christmas and holiday programs all through December." },
+  { id: "s-summer", name: "Summer Adventures", season: { from: "06-21", to: "09-01" }, genres: ["adventure"],
+    ordering: "shuffle", description: "Adventure shows and films from midsummer to the start of September." },
+];
+/** A preset is offered from this many matching titles and hours. */
+export const PRESET_MIN_TITLES = 3;
+export const PRESET_MIN_HOURS = 3;
+
+/** Which shows and films a preset would air from a usable library. */
+export function presetMatches(p: SeasonalPreset, usable: LibItem[]): { entries: GroupEntry[]; shows: number; films: number; hours: number } {
+  const want = new Set(p.genres);
+  const hit = (i: LibItem) => {
+    const labels = [...(i.meta?.genres ?? (i.genre ? [i.genre] : [])), ...(i.meta?.tags ?? [])].map((g) => g.toLowerCase().trim());
+    if (labels.some((g) => want.has(g))) return true;
+    const name = i.parsed.kind === "episode" ? i.parsed.show : i.parsed.kind === "movie" ? i.parsed.title : "";
+    return !!p.words && p.words.test(name);
+  };
+  const shows = new Map<string, number>();
+  const films: LibItem[] = [];
+  const byShow = new Map<string, LibItem[]>();
+  for (const i of usable) if (i.parsed.kind === "episode") byShow.set(i.parsed.showKey, [...(byShow.get(i.parsed.showKey) ?? []), i]);
+  for (const [key, eps] of byShow) if (eps.some(hit)) shows.set(key, eps.reduce((n, e) => n + (e.durationMs ?? 0), 0));
+  for (const i of usable) if (i.parsed.kind === "movie" && hit(i)) films.push(i);
+  const year = (i: LibItem) => (i.parsed.kind === "movie" ? i.parsed.year : undefined) ?? 9999;
+  films.sort((a, b) => year(a) - year(b) || a.id.localeCompare(b.id));
+  const ms = [...shows.values()].reduce((n, x) => n + x, 0) + films.reduce((n, f) => n + (f.durationMs ?? 0), 0);
+  return {
+    entries: [...[...shows.keys()].sort().map((key) => ({ kind: "show" as const, key })), ...films.map((f) => ({ kind: "movie" as const, id: f.id }))],
+    shows: shows.size, films: films.length, hours: Math.round(ms / 360_000) / 10,
+  };
+}
+
 /** A group's programs: each show's episodes in order, each film, in the group's entry order; nothing twice. */
-export function groupItems(g: ContentGroup, eps: LibItem[], movies: LibItem[]): string[] {
+export function groupItems(g: ContentGroup, eps: LibItem[], movies: LibItem[], showOf = (k: string) => k, keptOf = new Map<string, string>()): string[] {
   const out = new Set<string>();
   for (const e of g.entries) {
-    if (e.kind === "show") for (const i of sortEpisodes(eps.filter((x) => x.parsed.kind === "episode" && x.parsed.showKey === e.key))) out.add(i.id);
-    else if (movies.some((m) => m.id === e.id)) out.add(e.id);
+    if (e.kind === "show") for (const i of sortEpisodes(eps.filter((x) => x.parsed.kind === "episode" && x.parsed.showKey === showOf(e.key)))) out.add(i.id);
+    else {
+      const id = keptOf.get(e.id) ?? e.id;
+      if (movies.some((m) => m.id === id)) out.add(id);
+    }
   }
   return [...out];
 }
@@ -864,25 +943,111 @@ export function midBreakFor(items: LibItem[], slotMs: number): number | undefine
   return undefined;
 }
 
+/** A film's or show's database ids as known on this PC (.nfo, TMDB cache); for an episode, its show's. */
+export type IdsOf = (i: LibItem) => ExternalIds | undefined;
+export const nfoIds: IdsOf = (i) => (i.parsed.kind === "episode" ? i.meta?.showIds : i.parsed.kind === "movie" ? i.meta?.ids : undefined);
+
+/** Every copy of one episode or film, and the one that airs. */
+export interface CopyGroup {
+  /** The copy channels use; null when no copy is usable yet. */
+  keep: LibItem | null;
+  /** All copies, the kept one first. */
+  copies: LibItem[];
+  /** A provider refused one of these copies: the title stays off the air, never fetched elsewhere. */
+  refused: boolean;
+}
+
+/** A copy that may go on the air: finished at its provider, timed, not refused. */
+export const airable = (i: LibItem) => i.ready !== false && !!i.durationMs && i.availability !== "policy-blocked";
+
+const ID_KINDS = ["tmdb", "imdb", "tvdb"] as const;
+
+/** Two cuts of one title are different programs (D4); PAL speed-up (4%) and re-encodes are not. */
+function sameCut(a: LibItem, b: LibItem): boolean {
+  if (a.durationMs == null || b.durationMs == null) return true;
+  return Math.abs(a.durationMs - b.durationMs) <= Math.max(2 * MIN, 0.05 * Math.max(a.durationMs, b.durationMs));
+}
+
 /**
- * The same episode on two providers must not air twice as often (gate D3). Keep
- * one copy: local first, then whichever is known playable, then TorBox (LIVE-001:
- * fewer refusals so far), then Real-Debrid. Editions with very different runtimes
- * are kept apart (D4).
+ * The same episode or film from several places (gate D3, parity N-01d). Copies
+ * match on a TMDB, IMDb or TVDB id when the .nfo or the TMDB cache knows one,
+ * else on the parsed name (show + season + episode, or title + year). Names never
+ * join two copies whose ids disagree, and cuts with other runtimes stay apart
+ * (D4). Only local facts are used: nothing is fetched to decide.
+ *
+ * The kept copy: local first, then whichever is known playable, then TorBox
+ * (LIVE-001: fewer refusals so far), then Real-Debrid. `usable` says which copies
+ * may air (finished, timed).
  */
-export function dedupe(items: LibItem[]): LibItem[] {
+export function dedupeGroups(items: LibItem[], idsOf: IdsOf = nfoIds, usable: (i: LibItem) => boolean = () => true): CopyGroup[] {
   const rank = (i: LibItem) =>
     (i.provider === "local" ? 0 : 10) + (i.availability === "playable" ? 0 : 5) + (i.provider === "torbox" ? 0 : i.provider === "realdebrid" ? 1 : 2);
-  const best = new Map<string, LibItem>();
-  for (const i of items) {
+  const parent = items.map((_, k) => k);
+  const find = (k: number): number => (parent[k] === k ? k : (parent[k] = find(parent[k]!)));
+  const ids = items.map((i) => idsOf(i));
+  const clash = (a: number, b: number) => ID_KINDS.some((k) => ids[a]?.[k] && ids[b]?.[k] && ids[a]![k] !== ids[b]![k]);
+  const byKey = new Map<string, number[]>();
+  items.forEach((i, k) => {
     const p = i.parsed;
-    const minutes = Math.round((i.durationMs ?? 0) / (5 * MIN));
-    const key =
-      p.kind === "episode" ? `e|${p.showKey}|${p.season}|${p.episode}|${minutes}` : p.kind === "movie" ? `m|${p.titleKey}|${p.year ?? ""}|${minutes}` : i.id;
-    const cur = best.get(key);
-    if (!cur || rank(i) < rank(cur)) best.set(key, i);
+    if (p.kind !== "episode" && p.kind !== "movie") return;
+    const tail = p.kind === "episode" ? `|${p.season}|${p.episode}` : "";
+    const keys = ID_KINDS.flatMap((t) => (ids[k]?.[t] ? [`${p.kind[0]}|${t}:${ids[k]![t]}${tail}`] : []));
+    keys.push(p.kind === "episode" ? `e|${p.showKey}${tail}` : `m|${p.titleKey}|${p.year ?? ""}`);
+    for (const key of keys) {
+      const list = byKey.get(key) ?? [];
+      const other = list.find((o) => sameCut(items[o]!, i) && !clash(o, k));
+      if (other != null) parent[find(k)] = find(other);
+      list.push(k);
+      byKey.set(key, list);
+    }
+  });
+  const groups = new Map<number, LibItem[]>();
+  items.forEach((i, k) => groups.set(find(k), [...(groups.get(find(k)) ?? []), i]));
+  return [...groups.values()].map((list) => {
+    const copies = list.slice().sort((a, b) => Number(usable(b)) - Number(usable(a)) || rank(a) - rank(b) || a.id.localeCompare(b.id));
+    const keep = usable(copies[0]!) ? copies[0]! : null;
+    return { keep, copies, refused: copies.some((c) => c.availability === "policy-blocked") };
+  });
+}
+
+/** One copy per episode or film (see dedupeGroups); titles a provider refused are left out entirely. */
+export function dedupe(items: LibItem[], idsOf: IdsOf = nfoIds): LibItem[] {
+  return dedupeGroups(items, idsOf).flatMap((g) => (g.keep && !g.refused ? [g.keep] : []));
+}
+
+/**
+ * One show under two names ("The Office" and "The Office (US)") when their ids
+ * agree: every name maps to the one with the most episodes, so it gets one
+ * channel, in episode order.
+ */
+export function showAliases(eps: LibItem[], idsOf: IdsOf = nfoIds): Map<string, { key: string; name: string }> {
+  const count = new Map<string, { n: number; name: string }>();
+  const byId = new Map<string, Set<string>>();
+  for (const e of eps) {
+    if (e.parsed.kind !== "episode") continue;
+    const k = e.parsed.showKey;
+    count.set(k, { n: (count.get(k)?.n ?? 0) + 1, name: e.parsed.show });
+    const ids = idsOf(e);
+    for (const t of ID_KINDS) if (ids?.[t]) byId.set(`${t}:${ids[t]}`, (byId.get(`${t}:${ids[t]}`) ?? new Set()).add(k));
   }
-  return [...best.values()];
+  const parent = new Map<string, string>();
+  const find = (k: string): string => {
+    const p = parent.get(k) ?? k;
+    return p === k ? k : (parent.set(k, find(p)), parent.get(k)!);
+  };
+  for (const keys of byId.values()) {
+    const [first, ...rest] = [...keys];
+    for (const k of rest) parent.set(find(k), find(first!));
+  }
+  const members = new Map<string, string[]>();
+  for (const k of count.keys()) members.set(find(k), [...(members.get(find(k)) ?? []), k]);
+  const out = new Map<string, { key: string; name: string }>();
+  for (const list of members.values()) {
+    if (list.length < 2) continue;
+    const best = list.slice().sort((a, b) => count.get(b)!.n - count.get(a)!.n || a.localeCompare(b))[0]!;
+    for (const k of list) out.set(k, { key: best, name: count.get(best)!.name });
+  }
+  return out;
 }
 
 export function sortEpisodes(list: LibItem[]): LibItem[] {

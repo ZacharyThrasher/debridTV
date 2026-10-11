@@ -418,7 +418,7 @@ body.guide-open { background: var(--bg); }
   font-family: var(--display); font-weight: 700; letter-spacing: .06em; font-size: calc(var(--u)*1); color: var(--dim);
 }
 .grid-rows { position: absolute; left: 0; right: 0; top: calc(var(--u)*2); bottom: 0; overflow: hidden; }
-.grid-scroll { position: absolute; left: 0; right: 0; top: 0; transition: transform .22s var(--ease); }
+.grid-scroll { position: absolute; left: 0; right: 0; top: 0; transition: transform var(--guide-scroll, .22s) var(--ease); }
 .row { position: relative; height: var(--row); border-bottom: 1px solid var(--line); display: flex; }
 .row-label {
   width: var(--label); flex: none; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: .7em; padding: 0 .9em;
@@ -1418,3 +1418,4 @@ html[data-where="device"] .ced-pin { display: none !important; }
 .badge.kind { color: var(--ink); background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .banner .b-art.square { height: calc(var(--u)*7.4); aspect-ratio: 1; border-radius: calc(var(--radius) * .6); }
 .banner .artist { font-weight: 700; }
+.od-src { font-size: .85em; letter-spacing: .02em; opacity: .85; }

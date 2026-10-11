@@ -109,10 +109,13 @@ function cover(title, sub, hueKey = title) {
   return html`<span class="od-cover" style="--h:${hueOf(hueKey)};--fit:${fit}" aria-hidden="true"><span class="od-cover-t">${title}</span>${sub ? html`<span class="od-cover-s">${sub}</span>` : ""}</span>`;
 }
 
+const SOURCE_NAMES = { local: "This PC", torbox: "TorBox", realdebrid: "Real-Debrid", demo: "Demo" };
+const sourceName = (p) => SOURCE_NAMES[p] ?? p;
+
 function meta(it) {
   return [it.label && html`<span class="ep">${it.label}</span>`, it.year && html`<span>${it.year}</span>`, it.genre && html`<span>${it.genre}</span>`,
     it.rating && html`<span class="rating">${it.rating}</span>`, it.durationMs && html`<span>${fmtDur(it.durationMs)}</span>`, raw(formatChips(it)),
-    it.watched && raw('<span class="badge ok">✓ Watched</span>'), blocked(it) && html`<span class="badge bad">${it.availability === "policy-blocked" ? "Refused by provider" : "Unavailable"}</span>`]
+    it.watched && raw('<span class="badge ok">✓ Watched</span>'), it.sources?.length > 1 && html`<span class="od-src" title="The same program from more than one source; it plays from the first">${it.sources.map(sourceName).join(" · ")}</span>`, blocked(it) && html`<span class="badge bad">${it.availability === "policy-blocked" ? "Refused by provider" : "Unavailable"}</span>`]
     .filter((x) => x && String(x));
 }
 

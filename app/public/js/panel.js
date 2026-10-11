@@ -271,6 +271,13 @@ body.addEventListener("click", async (e) => {
     } else if ("gotoLibrary" in b.dataset) {
       lib = { ...lib, status: b.dataset.gotoLibrary, provider: b.dataset.provider === "local" ? "local" : b.dataset.provider ?? "", q: "", limit: 50 };
       return showTab("library");
+    } else if (b.dataset.preset) {
+      busy("Adding…");
+      const r = await api.post("/api/presets", { id: b.dataset.preset });
+      const c = r.preset?.channel;
+      toast(c ? `${r.preset.name} is channel ${c.number}. It airs ${r.preset.season.inSeason ? "now through" : "from"} ${monthDay(r.preset.season.inSeason ? r.preset.season.to : r.preset.season.from)}.` : "Added.");
+      onChange();
+      return void render();
     } else if ("contentGroups" in b.dataset) {
       // N-07: groups.js (B) owns the dialog; a change can add or drop a group channel.
       const { openGroups } = await import("./groups.js");
@@ -433,7 +440,7 @@ const ORDERINGS = {
 };
 
 async function channels() {
-  const [r, lk] = await Promise.all([api.get("/api/channels"), api.get("/api/lock").catch(() => null)]);
+  const [r, lk, pre] = await Promise.all([api.get("/api/channels"), api.get("/api/lock").catch(() => null), api.get("/api/presets").catch(() => ({ presets: [] }))]);
   const lockBtn = (c) => !lk?.pinSet ? "" : html`<button class="btn" data-lock-channel="${c.id}" data-on="${c.locked ? "1" : "0"}" aria-pressed="${String(!!c.locked)}"
     aria-label="${c.locked ? "Unlock" : "Lock"} ${c.name}" style="${c.locked ? "color:var(--amber);border-color:var(--amber)" : "opacity:.5"}" title="${c.locked ? "Locked: needs the PIN to watch" : "Lock with the PIN"}">${c.locked ? "🔒" : "🔓"}</button>`;
   const items = r.channels.map((c) => {
@@ -455,7 +462,28 @@ async function channels() {
     <div class="row-actions" style="margin-bottom:1em"><button class="btn primary" data-new-channel>+ New channel</button>
       <button class="btn" data-content-groups>Content groups…</button>
       <button class="btn" data-exclusions>Keep shows or genres off every channel…</button></div>
+    ${pre.presets.length ? raw(seasonalPresets(pre.presets)) : ""}
     <div class="list">${raw(items.join(""))}</div>`;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const monthDay = (md) => `${MONTHS[Number(md.slice(0, 2)) - 1]} ${Number(md.slice(3))}`;
+
+/** Ready-made seasonal channels the library has enough for (N-02a). */
+function seasonalPresets(list) {
+  const rows = list.map((p) => {
+    const what = [p.shows && `${p.shows} show${p.shows === 1 ? "" : "s"}`, p.films && `${p.films} film${p.films === 1 ? "" : "s"}`].filter(Boolean).join(" and ") || "nothing yet";
+    const when = `${monthDay(p.season.from)} to ${monthDay(p.season.to)}`;
+    const state = p.channel ? `On channel ${p.channel.number}${p.season.inSeason ? ", on the air now" : ", waiting for its dates"}` : "";
+    return html`<div class="li x-preset">
+      <div><div class="t">${p.name} <small class="muted">${when}</small></div>
+        <div class="d">${p.description}</div>
+        <div class="d">${what} from your library, ${p.hours} h${state ? html` · <b>${state}</b>` : ""}</div></div>
+      <div class="inline"><button class="btn ${p.added ? "" : "primary"}" data-preset="${p.id}" title="${p.added ? "Picks up anything new that fits" : "Adds a channel that airs only between these dates"}">${p.added ? "Update" : "Add"}</button></div></div>`;
+  });
+  return html`<div class="field"><label>Seasonal channels</label>
+    <p class="muted" style="margin:.2em 0 .6em">Ready-made from the genres in your files. Each is a content group with its own channel, on the air only between its dates; remove one in Content groups.</p>
+    <div class="list">${raw(rows.join(""))}</div></div>`;
 }
 
 async function builder() {
@@ -603,6 +631,18 @@ function compatQualityOpt() {
 
 const IDLE_FALLBACK = { stay: "Stay open", close: "Close the guide", tune: "Tune to the highlighted channel" };
 
+/** N-15: how fast the guide glides between rows, and how far Page Up/Down (Channel Up/Down on a remote) goes. */
+function guideScrollOpts(guide, opt) {
+  const speeds = guide.GUIDE_SCROLL ?? { smooth: { label: "Smooth" }, slow: { label: "Slow" }, instant: { label: "Instant" } };
+  const pages = guide.GUIDE_PAGE ?? { 3: "3 channels", 6: "6 channels", screen: "A full screen" };
+  const speed = pref("guideScroll") ?? "smooth";
+  const page = String(pref("guidePage") ?? "6");
+  return html`<div class="opt"><div><div class="ol">Guide scrolling</div><div class="od">How the guide moves between channels, and how far Page Up and Page Down (Channel Up and Down on a remote) jump.</div></div>
+      <span style="display:flex;gap:.4em;flex-wrap:wrap">
+      <select class="input" style="width:auto" data-pref-select="guideScroll" aria-label="Guide scroll speed">${raw(Object.entries(speeds).map(([k, v]) => opt(k, v.label, speed)).join(""))}</select>
+      <select class="input" style="width:auto" data-pref-select="guidePage" aria-label="Guide page size">${raw(Object.entries(pages).map(([k, v]) => opt(k, `Page: ${v}`, page)).join(""))}</select></span></div>`;
+}
+
 async function startupOpts() {
   const [{ channels }, guide] = await Promise.all([api.get("/api/bootstrap"), import("./guide.js").catch(() => ({}))]);
   const idle = guide.IDLE_ACTIONS ?? IDLE_FALLBACK;
@@ -617,6 +657,7 @@ async function startupOpts() {
           ...channels.map((c) => opt(`ch:${c.id}`, `Channel ${c.number} · ${c.name}`, start))].join(""))}</select></div>
     <div class="opt"><div><div class="ol">When the guide sits idle</div><div class="od">If nobody touches the guide for a while.</div></div>
       <select class="input" style="width:auto" data-pref-select="guideIdle" aria-label="When the guide sits idle">${raw(Object.entries(idle).map(([k, v]) => opt(k, label(v), idleNow)).join(""))}</select></div>
+    ${raw(guideScrollOpts(guide, opt))}
     ${idleNow !== "stay" ? html`<div class="opt"><div><div class="ol">Idle after</div></div>
       <select class="input" style="width:auto" data-pref-select="guideIdleMin" data-num="1" aria-label="Idle minutes">${raw([1, 2, 5, 10].map((n) => `<option value="${n}" ${n === mins ? "selected" : ""}>${n} minute${n === 1 ? "" : "s"}</option>`).join(""))}</select></div>` : ""}`;
 }
@@ -820,6 +861,13 @@ async function libList() {
   const chips = Object.entries(STATUS)
     .filter(([k]) => k === "" || r.counts[k] || k === lib.status)
     .map(([k, [label, cls]]) => html`<button class="x-chip ${cls}" data-lib-filter="${k}" aria-pressed="${String(lib.status === k)}">${label} <b>${k ? r.counts[k] ?? 0 : all}</b></button>`);
+  const where = (p) => (p === "local" ? "This PC" : PROVIDERS[p]?.name ?? p);
+  // The same program from several sources (N-01d): one copy airs; say which.
+  const copiesLine = (f) => {
+    const others = [...new Set(f.copies.filter((c) => c.id !== f.id).map((c) => where(c.provider)))].join(", ");
+    const airing = f.copies.find((c) => c.airs);
+    return airing?.id === f.id ? `Also in ${others}. This copy airs.` : airing ? `Also in ${others}. The ${where(airing.provider)} copy airs instead.` : `Also in ${others}.`;
+  };
   const rows = r.files.map((f) => {
     const [label, cls] = STATUS[f.status] ?? [f.status, ""];
     const facts = [
@@ -837,6 +885,7 @@ async function libList() {
       <div><div class="t">${f.title}</div>
         <div class="d">${facts}</div>
         ${f.status === "ready" ? "" : html`<div class="d x-why ${cls}">${f.message}</div>`}
+        ${f.copies ? html`<div class="d x-copies">${copiesLine(f)}</div>` : ""}
         <div class="d x-name" title="${f.name}">${f.name}</div>
         <div class="x-acts">
           ${canCheck ? html`<button class="linkish" data-check="${f.id}" title="Asks for one playback link">Check now</button>` : ""}

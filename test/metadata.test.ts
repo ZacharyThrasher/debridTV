@@ -275,3 +275,19 @@ test("N-09b/N-05/N-10/N-09a: exclusions, watched rules, reshuffle and weights sh
   const later = clock.airingsBetween(ch(), rev.effectiveFromMs, rev.effectiveFromMs + 6 * 60 * MIN);
   assert.ok(later.length > 5 && later.every((a) => alpha.some((x) => x.id === a.itemId)), "weight 0 keeps Bravo off");
 });
+
+test("N-01d: .nfo database ids: <uniqueid>, the older tags, and an episode's show ids from tvshow.nfo", () => {
+  const movie = parseNfo(`<movie><title>Heat</title><uniqueid type="imdb" default="true">tt0113277</uniqueid><uniqueid type="tmdb">949</uniqueid>
+    <actor><name>Al</name><uniqueid type="tmdb">1158</uniqueid></actor></movie>`)!;
+  assert.deepEqual(movie.ids, { imdb: "tt0113277", tmdb: "949" }, "an actor's id is not the film's");
+  assert.deepEqual(parseNfo(`<movie><title>Old</title><id>tt0000001</id><tmdbid>12</tmdbid></movie>`)!.ids, { tmdb: "12", imdb: "tt0000001" });
+  assert.equal(parseNfo(`<tvshow><title>X</title><id>73244</id></tvshow>`)!.ids, undefined, "a bare scraper id is too vague");
+  assert.equal(parseNfo(`<movie><uniqueid type="imdb">not-an-id</uniqueid></movie>`)!.ids, undefined);
+
+  const dir = mkdtempSync(join(tmpdir(), "debridtv-ids-"));
+  mkdirSync(join(dir, "The Office", "Season 1"), { recursive: true });
+  writeFileSync(join(dir, "The Office", "tvshow.nfo"), `<tvshow><title>The Office</title><uniqueid type="tmdb">2316</uniqueid><uniqueid type="tvdb">73244</uniqueid></tvshow>`);
+  const meta = localMeta(join(dir, "The Office", "Season 1", "The.Office.S01E01.mkv"), dir, "episode")!;
+  assert.deepEqual(meta.showIds, { tmdb: "2316", tvdb: "73244" });
+  rmSync(dir, { recursive: true, force: true });
+});

@@ -169,6 +169,12 @@ export class OnlineMetadata {
     return { overview: t.overview };
   }
 
+  /** The TMDB id the cache matched to an item's film or show (dedupe, N-01d). Reads the cache only. */
+  tmdbId(it: LibItem | undefined): string | undefined {
+    const t = this.titleFor(it);
+    return t ? String(t.id) : undefined;
+  }
+
   /** Which picture kinds the cache has for an item. */
   kinds(it: LibItem | undefined): OnlineKind[] {
     const t = this.titleFor(it);

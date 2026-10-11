@@ -275,6 +275,8 @@ test("F4: settings export carries choices, never keys", async () => {
 });
 
 test("N-03/N-16: rename, renumber (a taken number swaps), favorite, logo, kid and schedule settings stored", async () => {
+  // The previous test's exclusion rebuilds the lineup after a short pause; wait for it under load.
+  await until(async () => (await get("/api/bootstrap")).body.channels.length >= 2);
   const chans = (await get("/api/bootstrap")).body.channels;
   const ch = chans.find((c: any) => c.name === "Test Show") ?? chans[0];
   const other = chans.find((c: any) => c.id !== ch.id);

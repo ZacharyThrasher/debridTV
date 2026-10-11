@@ -3,7 +3,7 @@
 // browsing costs 0 provider calls and 0 bytes; media is read only once the viewer
 // presses play, through the usual /media routes.
 
-import { dedupe, sortEpisodes } from "./lineup.ts";
+import { dedupe, sortEpisodes, type IdsOf } from "./lineup.ts";
 import type { LibItem } from "./library.ts";
 
 /** Under this much seen, a program isn't "in progress" yet. */
@@ -19,6 +19,8 @@ export interface OnDemandDeps {
   locked: (id: string) => boolean;
   /** Fields the server adds per item (availability, art, codecs, rating). */
   extra: (it: LibItem) => Record<string, unknown>;
+  /** Database ids known on this PC, so copies from several sources show once (N-01d). */
+  ids?: IdsOf;
 }
 
 export interface Recent {
@@ -27,10 +29,9 @@ export interface Recent {
   channel: string;
 }
 
-/** Files On Demand offers: present, video, not refused, not hidden by a lock; one copy per episode or film. */
+/** Files On Demand offers: present, video, not hidden by a lock; one copy per episode or film, none of a refused title. */
 export function offered(d: OnDemandDeps): LibItem[] {
-  return dedupe(d.items.filter((i) => i.present && (i.parsed.kind === "episode" || i.parsed.kind === "movie")
-    && i.availability !== "policy-blocked" && !d.locked(i.id)));
+  return dedupe(d.items.filter((i) => i.present && (i.parsed.kind === "episode" || i.parsed.kind === "movie") && !d.locked(i.id)), d.ids);
 }
 
 export function resumeMs(d: OnDemandDeps, it: LibItem): number | null {

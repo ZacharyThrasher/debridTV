@@ -46,6 +46,13 @@ const MOVIES: Array<[string, number, number, string[], string]> = [
   ["Rollerdisco Requiem", 1988, 94, ["Comedy"], "PG-13"],
   ["Arcade of Tomorrow", 1983, 89, ["Sci-Fi", "Family"], "PG"],
   ["Polaroid Coast", 1996, 103, ["Drama", "Romance"], "PG-13"],
+  // Enough horror and holiday films for the seasonal presets (N-02a) to show up in the demo.
+  ["Fog Over Maple Street", 1985, 91, ["Horror"], "R"],
+  ["The Basement Tapes", 1990, 88, ["Horror", "Mystery"], "R"],
+  ["Midnight Drive-In", 1982, 86, ["Horror", "Comedy"], "PG-13"],
+  ["A Snowglobe Christmas", 1994, 93, ["Family"], "G"],
+  ["Santa's Night Shift", 1997, 95, ["Comedy", "Family"], "PG"],
+  ["The Holiday Switchboard", 1989, 102, ["Romance"], "PG"],
 ];
 
 const WORDS_A = ["The", "A", "One", "Last", "Big", "Little", "Lost", "Secret", "Second", "Long", "Late"];

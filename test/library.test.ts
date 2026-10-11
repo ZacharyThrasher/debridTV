@@ -11,7 +11,8 @@ process.env.DEBRIDTV_HOME = home;
 process.on("exit", () => rmSync(home, { recursive: true, force: true }));
 
 const { Library, fileStatus } = await import("../app/library.ts");
-const { Lineup, autoRules } = await import("../app/lineup.ts");
+const lineupMod = await import("../app/lineup.ts");
+const { Lineup, autoRules } = lineupMod;
 const { Meters } = await import("../app/meters.ts");
 const { StationClock } = await import("../src/clock/schedule.ts");
 const { parseName } = await import("../src/library/parse.ts");
@@ -225,4 +226,51 @@ test("N-22b: chapters become mid-program breaks only where they fit the slot", a
   assert.equal(midBreakFor(show("Plain Show", 6), 30 * MIN), undefined, "no chapters, no invented breaks");
   const rule = autoRules(eps, []).find((r) => r.key === "show:chap show")!;
   assert.equal(rule.midBreakMs, 120_000);
+});
+
+test("N-01d: copies match on .nfo ids across names; names never join copies whose ids disagree", () => {
+  const { dedupeGroups } = lineupMod;
+  const office = (name: string, ids: Record<string, string>, over: Partial<LibItem> = {}) =>
+    item(name, { meta: { kind: "episode", showIds: ids }, ...over });
+  const us = office("The.Office.US.S01E01.mkv", { tmdb: "2316" }, { provider: "realdebrid" });
+  const plain = office("The.Office.S01E01.mkv", { tmdb: "2316", imdb: "tt0386676" });
+  const uk = office("The.Office.S01E01.mkv", { imdb: "tt0290978" }, { provider: "local" });
+  const groups = dedupeGroups([us, plain, uk]);
+  const g = groups.find((x) => x.copies.includes(us))!;
+  assert.deepEqual(g.copies.map((c) => c.id).sort(), [us.id, plain.id].sort(), "same TMDB id joins different names");
+  assert.equal(g.keep, plain, "TorBox before Real-Debrid");
+  assert.ok(groups.some((x) => x.copies.length === 1 && x.keep === uk), "same name, other IMDb id: another show");
+
+  const film = (prov: LibItem["provider"], name: string, imdb: string, minutes = 120) =>
+    item(name, { provider: prov, durationMs: minutes * MIN, meta: { kind: "movie", ids: { imdb } } });
+  const a = film("torbox", "Heat.1995.1080p.mkv", "tt0113277");
+  const b = film("local", "Heat (Director's Edition).mkv", "tt0113277", 116); // PAL speed-up: same cut
+  const c = film("realdebrid", "Heat.1995.Extended.mkv", "tt0113277", 140); // a longer cut stays apart (D4)
+  const fg = dedupeGroups([a, b, c]);
+  assert.equal(fg.length, 2);
+  assert.equal(fg.find((x) => x.copies.includes(a))!.keep, b, "the copy on this PC airs");
+});
+
+test("N-01d: TMDB-cache ids join copies; one show under two names gets one channel, in order", () => {
+  const ids = (i: LibItem) => (i.parsed.kind === "episode" && /office/.test(i.parsed.showKey) ? { tmdb: "2316" } : undefined);
+  const a = show("The Office US", 4);
+  const b = Array.from({ length: 6 }, (_, k) => item(`The.Office.S01E${String(k + 1).padStart(2, "0")}.mkv`, { provider: "realdebrid" }));
+  const rules = autoRules([...a, ...b], [{ id: "c", name: "Mine", showKeys: ["the office us"], movieIds: [], ordering: "cyclic", slotMinutes: 30 }], [], ids);
+  const shows = rules.filter((r) => r.kind === "show");
+  assert.equal(shows.length, 1, "one channel for both names");
+  assert.equal(shows[0]!.key, "show:the office", "named after the copy with the most episodes");
+  assert.equal(shows[0]!.itemIds.length, 6, "each episode once");
+  assert.deepEqual(shows[0]!.itemIds.slice(0, 4), a.map((i) => i.id), "TorBox copies of 1-4, then Real-Debrid's 5-6, in order");
+  assert.equal(rules.find((r) => r.key === "custom:c")!.itemIds.length, 6, "a pick of either name means the show");
+});
+
+test("N-01d/E6: a refused copy keeps its title off the air; picks of another copy follow the kept one", () => {
+  const refused = item("Some.Film.2001.mkv", { provider: "realdebrid", durationMs: 100 * MIN, availability: "policy-blocked" });
+  const twin = item("Some.Film.2001.mkv", { durationMs: 100 * MIN });
+  const others = ["Alpha", "Bravo", "Charlie", "Delta"].map((t, k) => item(`${t}.${2001 + k}.mkv`, { durationMs: 95 * MIN }));
+  const rdOther = item("Alpha.2001.mkv", { provider: "realdebrid", durationMs: 95 * MIN });
+  const rules = autoRules([refused, twin, ...others, rdOther], [{ id: "c", name: "Mine", showKeys: [], movieIds: [rdOther.id], ordering: "cyclic", slotMinutes: null }]);
+  const ids = new Set(rules.flatMap((r) => r.itemIds));
+  assert.ok(!ids.has(twin.id) && !ids.has(refused.id), "never fetched elsewhere");
+  assert.deepEqual(rules.find((r) => r.key === "custom:c")!.itemIds, [others[0]!.id], "the Real-Debrid pick airs as the TorBox copy");
 });

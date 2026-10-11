@@ -10,6 +10,7 @@
 // against the mock providers on a spare port.
 
 import http from "node:http";
+import type { ExternalIds } from "../src/library/nfo.ts";
 import { readFileSync, existsSync, statSync, createReadStream, rmSync } from "node:fs";
 import { join, extname, dirname, resolve } from "node:path";
 import type { AddressInfo } from "node:net";
@@ -26,7 +27,7 @@ import { seasonState, validTimeZone } from "../src/clock/dayparts.ts";
 import { parseVttBlock } from "../src/library/vtt.ts";
 import { RATINGS, normalizeRating, ratingRank } from "../src/clock/ratings.ts";
 import { Library, ART_MAX_BYTES, type ArtKind, displayTitle, effectiveRating, mediaBadges, fileStatus, plainError, PROVIDER_NAMES, STATUS_ORDER, type Config, type LibItem, type ProviderBases, type RemoteProvider } from "./library.ts";
-import { Lineup, autoRules, cleanGroup, cleanDates, cleanExclusions, cleanLogo, cleanRestricted, cleanSlots, cleanWeights, type ItemInfo, type StationChannel, type CustomChannel } from "./lineup.ts";
+import { Lineup, airable, autoRules, dedupeGroups, nfoIds, presetMatches, usableLibrary, SEASONAL_PRESETS, PRESET_MIN_HOURS, PRESET_MIN_TITLES, cleanGroup, cleanDates, cleanExclusions, cleanLogo, cleanRestricted, cleanSlots, cleanWeights, type ItemInfo, type StationChannel, type CustomChannel } from "./lineup.ts";
 import { Meters } from "./meters.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
 import { demoItems } from "./demo.ts";
@@ -124,6 +125,22 @@ function isDemo(): boolean {
   return liveLineup.channels().length === 0;
 }
 
+/** Database ids known on this PC for a film or show: the .nfo's, then the TMDB cache's (N-01d). Never looked up here. */
+function idsOf(i: LibItem): ExternalIds | undefined {
+  const own = nfoIds(i);
+  const tmdb = own?.tmdb ? undefined : online.tmdbId(i);
+  return tmdb ? { ...own, tmdb } : own;
+}
+/** Each file's copies of the same title, for files that have more than one (N-01d): where it lives and which copy airs. */
+function copiesById(items: LibItem[]): Map<string, Array<{ id: string; provider: string; airs: boolean }>> {
+  const out = new Map<string, Array<{ id: string; provider: string; airs: boolean }>>();
+  for (const g of dedupeGroups(items.filter((i) => i.present && !i.excluded && i.parsed.kind !== "other"), idsOf, airable)) {
+    if (g.copies.length < 2) continue;
+    const view = g.copies.map((c) => ({ id: c.id, provider: c.provider, airs: !g.refused && g.keep?.id === c.id }));
+    for (const c of g.copies) out.set(c.id, view);
+  }
+  return out;
+}
 function allItems(): LibItem[] {
   return isDemo() ? demo : liveLibrary();
 }
@@ -159,9 +176,9 @@ function rebuild() {
   });
   meters.cache = { bytes: edge.bytes(), files: edge.entries() };
   const timeZone = stationTimeZone();
-  liveLineup.sync(liveClock, autoRules(liveItems, liveLineup.custom(), liveLineup.groups()), now, { timeZone, info: itemInfo(liveItems, now) });
+  liveLineup.sync(liveClock, autoRules(liveItems, liveLineup.custom(), liveLineup.groups(), idsOf), now, { timeZone, info: itemInfo(liveItems, now) });
   const demoClock = new StationClock(demoMedia());
-  demoLineup.sync(demoClock, autoRules(demo, demoLineup.custom(), demoLineup.groups()), now, { timeZone, info: itemInfo(demo, now) });
+  demoLineup.sync(demoClock, autoRules(demo, demoLineup.custom(), demoLineup.groups(), idsOf), now, { timeZone, info: itemInfo(demo, now) });
   clock = isDemo() ? demoClock : liveClock;
   // Fill in posters and descriptions the files lack; skips PIN-locked items. No-op without a TMDB key.
   if (!isDemo()) void online.sync(liveItems, lockedItem);
@@ -407,7 +424,7 @@ function ratingCoverage(c: StationChannel) {
 
 /** The shows (and films) a channel draws from, for weight sliders and exclusions. */
 function channelGroups(c: StationChannel) {
-  const rule = autoRules(allItems(), lineup().custom(), lineup().groups()).find((r) => r.key === c.meta.ruleKey);
+  const rule = autoRules(allItems(), lineup().custom(), lineup().groups(), idsOf).find((r) => r.key === c.meta.ruleKey);
   const out = new Map<string, { key: string; name: string; count: number; genres: string[] }>();
   for (const id of rule?.itemIds ?? []) {
     const it = itemById(id);
@@ -423,7 +440,7 @@ function channelGroups(c: StationChannel) {
 
 /** How many season-0 specials this channel's rule could air (shown or not). */
 function specialsOf(c: StationChannel): number {
-  const rule = autoRules(allItems(), lineup().custom(), lineup().groups()).find((r) => r.key === c.meta.ruleKey);
+  const rule = autoRules(allItems(), lineup().custom(), lineup().groups(), idsOf).find((r) => r.key === c.meta.ruleKey);
   return rule?.specialIds?.length ?? 0;
 }
 
@@ -1051,6 +1068,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 50)));
     const counts = Object.fromEntries(STATUS_ORDER.map((k) => [k, 0])) as Record<string, number>;
     const rows: Array<{ it: LibItem; status: string; message: string }> = [];
+    const copies = copiesById(liveLibrary());
     for (const it of liveLibrary()) {
       if (prov && it.provider !== prov) continue;
       if (q && !`${displayTitle(it)} ${it.name}`.toLowerCase().includes(q)) continue;
@@ -1067,6 +1085,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
         container: it.container, video: it.video, audio: it.audio, excluded: !!it.excluded,
         checkedAt: it.availabilityAt ?? null, playableAt: it.playableAt ?? null, goneAt: it.goneAt ?? null,
         etagChanges: it.etagChanges ?? 0, watched: isWatched(it.id, it.durationMs), seenMs: ledger.seenMs(it.id),
+        ...(copies.has(it.id) ? { copies: copies.get(it.id) } : {}),
       })),
     });
   }
@@ -1363,6 +1382,22 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     rebuild();
     return json(res, 200, { ok: true, group: groupsView().groups.find((x) => x.id === g.id) });
   }
+  if (p === "/api/presets" && m === "GET") return json(res, 200, { presets: presetsView() });
+  if (p === "/api/presets" && m === "POST") {
+    // N-02a: add (or refresh) a seasonal preset as a content group with its own channel and dates.
+    if (guarded()) return json(res, 403, PIN_NEEDED);
+    const preset = SEASONAL_PRESETS.find((x) => x.id === body.id);
+    if (!preset) return json(res, 404, { error: "No such preset." });
+    const found = presetMatches(preset, usableLibrary(allItems(), idsOf).usable);
+    if (!found.entries.length) return json(res, 409, { error: `Nothing in your library fits ${preset.name} yet.` });
+    const l = lineup();
+    l.saveGroup({ id: preset.id, name: l.groups().find((g) => g.id === preset.id)?.name ?? preset.name, description: preset.description,
+      entries: found.entries, ordering: preset.ordering, channel: true });
+    rebuild();
+    const r = l.updateSettings(`group:${preset.id}`, { season: preset.season });
+    if (r.ok) rebuild();
+    return json(res, 200, { ok: true, preset: presetsView().find((x) => x.id === preset.id) });
+  }
   if (p === "/api/groups/delete" && m === "POST") {
     if (guarded()) return json(res, 403, PIN_NEEDED);
     if (!lineup().deleteGroup(String(body.id ?? ""))) return json(res, 404, { error: "No such group." });
@@ -1413,7 +1448,7 @@ let groupSets: { gen: number; l: Lineup; sets: Map<string, string[]> } | null = 
 function groupPrograms(): Map<string, string[]> {
   const l = lineup();
   if (!groupSets || groupSets.gen !== lockGen || groupSets.l !== l) {
-    const rules = autoRules(allItems(), l.custom(), l.groups());
+    const rules = autoRules(allItems(), l.custom(), l.groups(), idsOf);
     const sets = new Map<string, string[]>();
     for (const g of l.groups()) sets.set(g.id, rules.find((r) => r.key === `group:${g.id}`)?.itemIds ?? []);
     groupSets = { gen: lockGen, l, sets };
@@ -1440,6 +1475,23 @@ function groupForAiring(c: StationChannel): (itemId: string) => { id: string; na
     return g ? { id: g.id, name: g.name, ...(g.description ? { description: g.description } : {}) } : undefined;
   };
 }
+/** Seasonal presets the library has enough for, and the ones already added (N-02a). Local facts only. */
+function presetsView() {
+  const l = lineup();
+  const usable = usableLibrary(allItems(), idsOf).usable;
+  return SEASONAL_PRESETS.flatMap((p) => {
+    const found = presetMatches(p, usable);
+    const channel = l.allChannels().find((c) => c.meta.ruleKey === `group:${p.id}`);
+    const added = l.groups().some((g) => g.id === p.id);
+    const enough = found.shows + found.films >= PRESET_MIN_TITLES && found.hours >= PRESET_MIN_HOURS;
+    if (!enough && !added) return [];
+    return [{
+      id: p.id, name: p.name, description: p.description, season: seasonView(p.season), shows: found.shows, films: found.films, hours: found.hours, added,
+      ...(channel ? { channel: { id: channel.id, number: channel.number, name: channel.name } } : {}),
+    }];
+  });
+}
+
 function groupsView() {
   const l = lineup();
   const progs = groupPrograms();
@@ -1475,8 +1527,11 @@ function groupsView() {
 /** On Demand reads the library and history only: 0 provider calls, 0 bytes (N-30). */
 function onDemandDeps(): OnDemandDeps {
   const manual = library.manualRatings();
+  const items = allItems().filter((i) => i.present);
+  const copies = copiesById(items);
   return {
-    items: allItems().filter((i) => i.present),
+    items,
+    ids: idsOf,
     seenMs: (id) => ledger.seenMs(id),
     furthestMs: (id) => ledger.furthestMs(id),
     watched: (id, d) => isWatched(id, d),
@@ -1487,6 +1542,8 @@ function onDemandDeps(): OnDemandDeps {
       ...availabilityView(it),
       art: artView(it),
       codecs: { container: it.container, video: it.video, audio: it.audio, ...mediaBadges(it) },
+      // Every place this title lives, the copy that plays first (N-01d).
+      sources: copies.get(it.id)?.map((c) => c.provider) ?? [it.provider],
     }),
   };
 }

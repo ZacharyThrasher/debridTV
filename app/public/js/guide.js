@@ -74,6 +74,19 @@ function poke() {
 }
 for (const t of ["keydown", "pointerdown", "wheel", "touchstart"]) addEventListener(t, () => guideOpen() && poke(), { passive: true, capture: true });
 
+// Scroll speed and page size (N-15). Page Up/Down (Channel Up/Down on a remote) turn this many rows.
+export const GUIDE_SCROLL = {
+  smooth: { label: "Smooth", seconds: 0.22 },
+  slow: { label: "Slow, like a cable guide channel", seconds: 0.6 },
+  instant: { label: "Instant", seconds: 0 },
+};
+export const GUIDE_PAGE = { 3: "3 channels", 6: "6 channels", screen: "A full screen" };
+const rowsOnScreen = () => Math.max(1, Math.round((grid.querySelector(".grid-rows")?.clientHeight || grid.clientHeight) / rowPx()) || 6);
+function pageRows() {
+  const p = pref("guidePage") ?? "6";
+  return p === "screen" ? Math.max(1, rowsOnScreen() - 1) : Number(p) || 6;
+}
+
 async function load() {
   const from = floor30(now()) - 30 * MIN;
   try {
@@ -143,7 +156,8 @@ function render() {
   const s = span();
   const viewTo = viewFrom + s;
   const t = now();
-  const rowsVisible = Math.max(1, Math.round((grid.querySelector(".grid-rows")?.clientHeight || grid.clientHeight) / rowPx()) || 6);
+  const rowsVisible = rowsOnScreen();
+  grid.style.setProperty("--guide-scroll", `${(GUIDE_SCROLL[pref("guideScroll")] ?? GUIDE_SCROLL.smooth).seconds}s`);
   if (row < scrollRow) scrollRow = row;
   if (row >= scrollRow + rowsVisible) scrollRow = row - rowsVisible + 1;
   scrollRow = clamp(scrollRow, 0, Math.max(0, data.rows.length - rowsVisible));
@@ -348,7 +362,8 @@ function paintPreview(ch, a, fresh) {
 
 export function guideKey(e) {
   if (!data) return false;
-  const k = e.key;
+  // A remote's Channel Up/Down turns the guide a page, as on a cable box.
+  const k = e.key === "ChannelUp" ? "PageUp" : e.key === "ChannelDown" ? "PageDown" : e.key;
   // The toolbar (Now, Settings): a remote reaches it with Up from the top row.
   const tl = tools();
   const ti = tl.indexOf(document.activeElement);
@@ -375,8 +390,11 @@ export function guideKey(e) {
   const cur = airingAt(row, at);
   const idx = list.indexOf(cur);
   if (k === "ArrowDown" || k === "ArrowUp" || k === "PageDown" || k === "PageUp") {
-    const step = k === "PageDown" ? 6 : k === "PageUp" ? -6 : k === "ArrowDown" ? 1 : -1;
+    const page = k === "PageDown" || k === "PageUp";
+    const step = page ? (k === "PageDown" ? 1 : -1) * pageRows() : k === "ArrowDown" ? 1 : -1;
     row = clamp(row + step, 0, data.rows.length - 1);
+    // A page turns the whole view, so the highlight keeps its place on screen.
+    if (page) scrollRow = clamp(scrollRow + step, 0, Math.max(0, data.rows.length - rowsOnScreen()));
   } else if (k === "ArrowRight") {
     const nx = list[idx + 1];
     if (nx && nx.start < data.to) {

@@ -126,6 +126,33 @@ describe("guide", { skip }, () => {
     await ctx.close();
   });
 
+  it("N-15: page size and scroll speed are settings; Channel Up/Down turn a page", async () => {
+    const remote = (page: any, key: string) => js(page, `(document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "${key}", bubbles: true, cancelable: true }))`);
+    const focusRow = (page: any) => js(page, `[...document.querySelectorAll(".row")].findIndex((r) => r.querySelector(".cell.focus"))`);
+    const { page, ctx, errors } = await open({ prefs: { guidePage: "3", guideScroll: "instant" } });
+    await page.keyboard.press("g");
+    await page.waitForSelector(".cell.focus");
+    assert.equal(await js(page, `getComputedStyle(document.querySelector(".grid-scroll")).transitionDuration`), "0s");
+    const r0 = await focusRow(page);
+    await page.keyboard.press("PageDown");
+    assert.equal((await focusRow(page)) - r0, 3);
+    await remote(page, "ChannelUp");
+    assert.equal(await focusRow(page), r0);
+    await ctx.close();
+
+    const b = await open({ prefs: { guidePage: "screen", guideScroll: "slow" } });
+    await b.page.keyboard.press("g");
+    await b.page.waitForSelector(".cell.focus");
+    assert.equal(await js(b.page, `getComputedStyle(document.querySelector(".grid-scroll")).transitionDuration`), "0.6s");
+    const onScreen = await js(b.page, `Math.round(document.querySelector(".grid-rows").clientHeight / document.querySelector(".row").getBoundingClientRect().height)`);
+    const total = await js(b.page, `document.querySelectorAll(".row").length`);
+    const s0 = await focusRow(b.page);
+    await remote(b.page, "ChannelDown");
+    assert.equal(await focusRow(b.page), Math.min(total - 1, s0 + onScreen - 1), "a full screen, keeping one row for context");
+    assert.deepEqual([...errors, ...b.errors], []);
+    await b.ctx.close();
+  });
+
   it("previews the highlighted channel from the station clock only (N-14), never media", async () => {
     const { page, ctx, requests } = await open();
     await page.keyboard.press("g");
