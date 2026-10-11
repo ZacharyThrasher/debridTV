@@ -1,8 +1,8 @@
 {
-  "ranAt": "2026-10-11T07:40:35.039Z",
-  "commit": "aa685f5",
+  "ranAt": "2026-10-11T07:47:02.673Z",
+  "commit": "63a47d5",
   "node": "v22.22.0",
-  "pass": 25,
+  "pass": 26,
   "total": 27,
   "results": [
     {
@@ -63,7 +63,7 @@
       ],
       "name": "info banner shows title, times and what's next",
       "pass": true,
-      "detail": " 4Marathon Harbor Lights S2 · E5“Late Visitor”Sitcom23 minLIVEDemo picture 7:38 AM 7:30 – 8:00 AM Next at 8:00 AMHarbor Lights "
+      "detail": " 4Marathon Harbor Lights S2 · E5“Late Visitor”Sitcom23 minLIVEDemo picture 7:45 AM 7:30 – 8:00 AM Next at 8:00 AMHarbor Lights "
     },
     {
       "id": "A05",
@@ -157,7 +157,7 @@
       "pass": true,
       "detail": {
         "item": "Harbor Lights",
-        "offset": 557349
+        "offset": 946332
       }
     },
     {
@@ -248,10 +248,10 @@
       "name": "tuning in joins the program at station time (direct play)",
       "pass": true,
       "detail": {
-        "videoMs": 3288,
-        "stationMs": 3399,
-        "item": "Audit Show S1 · E7",
-        "driftMs": -111
+        "videoMs": 32304,
+        "stationMs": 32399,
+        "item": "Audit Show S1 · E3",
+        "driftMs": -95
       }
     },
     {
@@ -263,11 +263,11 @@
       "pass": true,
       "detail": {
         "pausedShown": true,
-        "pausedAtMs": 4998,
-        "videoMs": 12548,
-        "stationMs": 12636,
-        "item": "Audit Show S1 · E7",
-        "driftMs": -88
+        "pausedAtMs": 32512,
+        "videoMs": 40016,
+        "stationMs": 40126,
+        "item": "Audit Show S1 · E3",
+        "driftMs": -110
       }
     },
     {
@@ -279,13 +279,13 @@
       "pass": true,
       "detail": [
         {
-          "title": "Audit Show · S01E07",
-          "seenMs": 8746,
+          "title": "Audit Show · S01E03",
+          "seenMs": 8759,
           "watched": false
         },
         {
           "title": "Harbor Lights · S02E05",
-          "seenMs": 39662,
+          "seenMs": 39821,
           "watched": false
         }
       ]
@@ -345,11 +345,9 @@
       "id": "A27",
       "rows": [],
       "name": "every settings tab renders",
-      "pass": false,
+      "pass": true,
       "detail": {
-        "broken": [
-          "library"
-        ]
+        "broken": []
       }
     }
   ]

@@ -130,7 +130,7 @@ NO_PROXY=127.0.0.1 node docs/parity/audit/app-audit.mjs
 | Run | Commit | Result |
 |---|---|---|
 | Shared branch | `d68292c` | **26/27** ([app-audit.json](evidence/app-audit.json)) |
-| Trial merge of shared + `y7lgyq` (C) + `uy3380` (B) | `aa685f5` (local only) | **25/27** ([app-audit-merged.json](evidence/app-audit-merged.json)); merges clean, `npm test` 130/130 |
+| Trial merge of shared + `y7lgyq` (C, to `a982cf3`) + `uy3380` (B, to `0062b72`) | `63a47d5` (local only) | **26/27** ([app-audit-merged.json](evidence/app-audit-merged.json)); merges clean, `npm test` 139/139. An earlier merge (`aa685f5`) failed A27 before C's Library tab landed. |
 
 | Check | What it proves | Rows | Shared | Merge |
 |---|---|---|---|---|
@@ -160,7 +160,7 @@ NO_PROXY=127.0.0.1 node docs/parity/audit/app-audit.mjs
 | A24 | an AC-3 file plays through compatibility mode, labelled in the banner | N-19, N-37 | ✅ | ✅ |
 | A25 | six fast presses request media only for the landing channel | N-13 | ✅ | ✅ |
 | A26 | phone-width guide has no horizontal overflow | N-34 | ✅ | ✅ |
-| A27 | every settings tab renders | — | ✅ | ❌ `library` tab has a button (B) but no renderer in `panel.js` (C) |
+| A27 | every settings tab renders | — | ✅ | ✅ (failed at `aa685f5`, fixed by C's `e8d444c`) |
 
 Limits of this audit: local files only (the app can't yet be pointed at the mock providers from the audit; C's `createApp` tests cover provider paths), Chromium without H.264, and A25 landed on a channel in a break, so it shows no stray streams rather than the cost of the final tune (EXP-002/006 measure that). Visual quality is judged from screenshots, not asserted.
 
@@ -170,7 +170,7 @@ Ranked by what a viewer would notice first, then by cost/safety. Owner = workstr
 
 | # | Gap | Rows | Owner | Why it matters |
 |---|---|---|---|---|
-| 1 | Library tab button with no renderer after merging B + C | — | C (B coordinate) | Visible broken tab once both branches land (A27). |
+| 1 | ~~Library tab button with no renderer after merging B + C~~ fixed on C's branch (`e8d444c`), A27 passes on the merge | — | C | Resolved 2026-10-11. |
 | 2 | Auto sign-off / "are you still watching" | N-17b | A | A viewer who falls asleep streams all night from RD/TorBox: real bytes and Remote Traffic risk. Zero-cost to build. |
 | 3 | Mid-program breaks never happen in the app | N-22b | C (rules, chapter read in probe) + B (card) | Clock already supports them (C3); NTV's signature feel; costs 0 media. |
 | 4 | Subtitles and audio-track choice | N-18a | A (+ C for track list from probe) | Foreign/anime libraries unwatchable without them; compat mode always takes track 1. |
