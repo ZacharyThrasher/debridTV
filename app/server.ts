@@ -1253,6 +1253,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   }
   if (p === "/api/channels/hide" && m === "POST") {
     lineup().setHidden(String(body.ruleKey), !!body.hidden);
+    lockGen++;
     return json(res, 200, { ok: true });
   }
   if (p === "/api/channels/custom" && m === "POST") {
