@@ -74,7 +74,7 @@ Research core:
 
 - [Experiment log](docs/experiments/LOG.md) — hypothesis → experiment → result → next.
 - [Decisions](docs/decisions/) — ADRs with the evidence behind them.
-- [NostalgiaTV parity register](docs/parity/nostalgiatv.md) — per surface and version, with a DebridTV status column. Parity is tracked row by row, never declared from the presence of a guide.
+- [NostalgiaTV parity register](docs/parity/nostalgiatv.md) — 61 rows per surface and version, with a DebridTV status column scored only from tests and the [app audit](docs/parity/audit/app-audit.mjs). Parity is tracked row by row, never declared from the presence of a guide.
 
 ## Boundaries (held until the account holder explicitly approves)
 

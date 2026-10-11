@@ -277,3 +277,31 @@ SDK's "1 hour" wording; the 3 h claim is still unconfirmed past 120 min.
 was observed). Expiry is still handled by invalidate-and-re-resolve-once, so a wrong
 guess costs one API call, not a failure. For a 1-hour program that's 1 link request
 instead of 6.
+
+### PARITY-001 — App audit against the NostalgiaTV register (2026-10-11)
+
+**Question.** Which NostalgiaTV parity rows does the app actually do, as opposed to
+having code or a guide for them?
+
+**Method.** New `docs/parity/audit/app-audit.mjs`: real app in a throwaway data dir,
+generated local media (VP9/Opus WebM episodes, one AC-3 MKV, one duplicate copy), Chromium
+via Playwright, 27 checks. No provider traffic. Run on the shared branch (`d68292c`) and on a
+local trial merge with the C (`project-thread-y7lgyq`) and B (`project-thread-uy3380`) branches.
+
+**Result.** Shared branch 26/27, trial merge 25/27 (merge clean, `npm test` 130/130).
+- Tuning in lands within **0.1-0.15 s** of station time (direct play); pausing 5 s inside a
+  program and resuming comes back at live, same program, 0.09 s off.
+- Guide browsing 12 h ahead across every row: **0** media and **0** link requests.
+- Watched flips between 85% and 92% seen file time, and the guide shows it.
+- An AC-3 file plays through compatibility mode with the banner saying so.
+- **Fails:** no channel ever has a mid-program break (A17: the clock supports them but no
+  rule turns them on and the probe reads no chapters); after the merge, the new Library
+  settings tab has no renderer (A27).
+
+**Register.** `docs/parity/nostalgiatv.md` v0.2: of 61 rows, 9 verified, 13 partly verified,
+8 partial (unit-tested core or branch only), 1 core-only, 1 gate, 27 not started, 2 N/A.
+Ranked gaps are in the register; top three are the broken Library tab after merge, auto
+sign-off (a sleeping viewer streams all night), and mid-program breaks.
+
+**Next.** Re-run the audit after each merge; add checks as B and C ship (Prevue breaks,
+exclusions, export). Fold the playback checks (A20/A21/A25) into `npm test`.
