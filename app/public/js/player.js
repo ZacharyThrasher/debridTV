@@ -364,7 +364,7 @@ function startLive(offsetMs, a, onPlaying, onError) {
     onPlaying();
   };
   video.onerror = onError;
-  video.src = `/media/${encodeURIComponent(a.itemId)}/live?start=${(offsetMs / 1000).toFixed(2)}&v=${v}&tok=${tok}${aacOk ? "" : "&ac=opus"}${selectionQuery(m.sel)}`;
+  video.src = `/media/${encodeURIComponent(a.itemId)}/live?start=${(offsetMs / 1000).toFixed(2)}&v=${v}&tok=${tok}${aacOk ? "" : "&ac=opus"}${capQuery()}${selectionQuery(m.sel)}`;
   video.play().catch(() => autoplayHint());
   if (m.sel?.sub != null && !m.sel.burn) {
     tracksFor(a.itemId).then((tracks) => {
@@ -407,6 +407,16 @@ async function alignLive(m, tok, requestedMs) {
     await sleep(250);
   }
   video.playbackRate = 1;
+}
+
+/**
+ * Transcode cap (parity N-19): when compatibility mode has to convert the picture,
+ * pref "compatMaxHeight" (720 or 1080; unset = up to 1080) limits its size, for
+ * PCs that can't convert 4K in real time. A copied picture is never scaled.
+ */
+function capQuery() {
+  const h = Number(pref("compatMaxHeight"));
+  return h === 720 || h === 1080 ? `&maxh=${h}` : "";
 }
 
 function autoplayHint() {

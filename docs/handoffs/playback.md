@@ -14,13 +14,27 @@ Branch: `claude/project-thread-vyi2fe` (fast-forwardable onto `claude/debridtv-r
 - **Picture shape** `applyAspect()` (N-17a): pref `aspect` auto/fill/4:3/zoom (Z key in main.js).
 - **Errors**: after a media error the player asks `/api/item`; policy-blocked or unavailable is
   final (no compat retry). Mid-program stall → toast after 7 s; no reopen (it made hung providers worse).
-- **Tests**: `test/ui/player.test.ts` (join at live, pause→live, surf cost, peek, sign-off ×2).
+- **On Demand** (N-30): `playOnDemand(itemId, {fromMs})`, `backToLive()`, `seekBy(ms)`, `tv.onDemand`
+  `{itemId, fromMs, durationMs, title, positionMs}`, event `debridtv:ondemand` (detail, or null at end).
+  A direct file seeks in place; a compat stream restarts 400 ms after the presses settle. Pause holds, and a compat
+  stream paused for more than 30 s restarts there. The end of the file, any tune, or sign-off returns to live.
+  Final errors show a toast and go back to live. Watch spans use channel "ondemand".
+- **Music** `music.js` (N-23a): `kind: "track"` airings play through the same `<video>` path. The screen has a sleeve
+  or initials, a spinning disc, track details, a progress bar and a themed LED analyser (Web Audio, routed only once
+  running). Shapes are assumed until C4 confirms them.
+- **Compat audio**: the player sends `&ac=opus` when the browser has no AAC (needs C's patch in serveLive).
+  `&maxh=720|1080` comes from pref `compatMaxHeight` (ADR-0004; needs C's server side and a settings control).
+- **Tests**: `test/ui/player.test.ts` covers join at live, pause→live, surf cost, peek, lock, sign-off ×2, On Demand,
+  and audio and captions (N-18a: two-language MKV plus numbered SRT; it skips until the server takes `&ac=opus`).
 
 ## Open
 - Chrome/Edge MKV direct play with H.264/HEVC on Zachary's Windows PC (Playwright Chromium has no H.264).
 - Peek and edge-cache numbers on a real provider (needs a run on Zachary's PC).
 - Declined: filling the edge-cache head at probe time (~1 GB of unwatched media across 938 files breaks the core rule). The cache stays viewer-filled.
 - Bitmap-subtitle burn-in has no fixture yet.
+- Waiting on C4: `&ac=opus`, a `D_WEBVTT` probe mapping, an optional video map for audio-only compat,
+  `&maxh`, and music airing shapes. Then add an end-to-end music test.
+- No passthrough: browsers can't bitstream AC-3 or DTS (ADR-0004).
 
 ## Bench
 `experiments/exp008-browser-peek.ts` (own metered server, `INDEX_CACHE`, `JITTER`, `VARIANTS`),
