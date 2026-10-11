@@ -430,6 +430,7 @@ async function look() {
     ${raw(sw("calm", "Reduce motion", "Turn off animations."))}
     ${raw(await startupOpts())}
     ${raw(signOffOpt())}
+    ${raw(bugOpts())}
     <div class="opt"><div><div class="ol">Volume</div></div><input type="range" min="0" max="1" step="0.05" value="${pref("volume")}" data-volume aria-label="Volume"></div>`;
 }
 
@@ -441,6 +442,20 @@ body.addEventListener("change", (e) => {
     if (t.dataset.prefSelect === "guideIdle") render();
   }
 });
+
+/** N-16: where the channel bug sits and how strong it is; the rating card at program start. */
+function bugOpts() {
+  const pos = pref("bugPos") ?? "br";
+  const op = Number(pref("bugOpacity") ?? 1);
+  const corners = [["br", "Bottom right"], ["bl", "Bottom left"], ["tr", "Top right"], ["tl", "Top left"]];
+  const levels = [[1, "Solid"], [0.7, "70%"], [0.4, "40%"], [0.1, "Faint"]];
+  return html`<div class="opt"><div><div class="ol">Channel bug</div><div class="od">The little channel logo in the corner of the picture.</div></div>
+      <span style="display:flex;gap:.4em;flex-wrap:wrap">
+      <select class="input" style="width:auto" data-pref-select="bugPos" aria-label="Bug corner">${raw(corners.map(([v, l]) => `<option value="${v}" ${v === pos ? "selected" : ""}>${l}</option>`).join(""))}</select>
+      <select class="input" style="width:auto" data-pref-select="bugOpacity" data-num="1" aria-label="Bug opacity">${raw(levels.map(([v, l]) => `<option value="${v}" ${Math.abs(v - op) < 0.01 ? "selected" : ""}>${l}</option>`).join(""))}</select></span></div>
+    <div class="opt"><div><div class="ol">Rating card</div><div class="od">Show "Rated PG-13" and the like for a few seconds when a program starts.</div></div>
+      <label class="switch"><input type="checkbox" data-pref="ratingCard" ${pref("ratingCard") !== false ? "checked" : ""}><i></i></label></div>`;
+}
 
 /** N-17b: after this long with no key, tap or click, the set asks if you're still watching, then signs off. */
 function signOffOpt() {
