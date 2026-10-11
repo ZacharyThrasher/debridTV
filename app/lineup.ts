@@ -102,6 +102,8 @@ export interface ChannelSettings {
   exclude?: Exclusions;
   /** Bumped by "refresh schedule": a new shuffle from the end of the current program (N-10). */
   reshuffle?: number;
+  /** Needs the parental PIN to watch (N-06b). Has no effect while no PIN is set. */
+  locked?: boolean;
 }
 
 const WEIGHT_KEYS = /^[\w:. -]{1,200}$/;
@@ -186,7 +188,7 @@ export class Lineup {
    */
   updateSettings(
     ruleKey: string,
-    patch: { name?: string | null; number?: number; favorite?: boolean; logo?: ChannelLogo | null; kid?: boolean; restrictedHours?: RestrictedHours[]; slots?: TimeSlot[]; specials?: boolean } & Partial<Pick<ChannelSettings, "weights" | "balance" | "marathons" | "premieres" | "watched" | "exclude">> & { reshuffle?: boolean },
+    patch: { name?: string | null; number?: number; favorite?: boolean; logo?: ChannelLogo | null; kid?: boolean; restrictedHours?: RestrictedHours[]; slots?: TimeSlot[]; specials?: boolean; locked?: boolean } & Partial<Pick<ChannelSettings, "weights" | "balance" | "marathons" | "premieres" | "watched" | "exclude">> & { reshuffle?: boolean },
   ): { ok: true; swappedWith?: string } | { ok: false; error: string } {
     const s = this.file.get();
     const ch = s.channels.find((c) => c.meta.ruleKey === ruleKey);
@@ -227,6 +229,7 @@ export class Lineup {
     if (patch.watched !== undefined) cur.watched = patch.watched === "all" ? undefined : patch.watched;
     if (patch.exclude !== undefined) cur.exclude = patch.exclude.shows?.length || patch.exclude.genres?.length ? patch.exclude : undefined;
     if (patch.reshuffle) cur.reshuffle = (cur.reshuffle ?? 0) + 1;
+    if (patch.locked !== undefined) cur.locked = patch.locked || undefined;
     s.settings = { ...s.settings, [ruleKey]: cur };
     if (cur.name) ch.name = cur.name;
     this.file.set(s);
@@ -273,6 +276,20 @@ export class Lineup {
       }
     });
     return { custom, hidden };
+  }
+
+  /** Rule keys of channels marked locked (whether or not a PIN makes that count). */
+  lockedKeys(): string[] {
+    return Object.entries(this.file.get().settings ?? {}).filter(([, v]) => v.locked).map(([k]) => k);
+  }
+
+  /** Removing the PIN unlocks every channel for good, so a new PIN starts with none locked. */
+  clearLocks(): number {
+    const keys = this.lockedKeys();
+    if (keys.length) this.file.update((s) => {
+      for (const k of keys) if (s.settings?.[k]) delete s.settings[k]!.locked;
+    });
+    return keys.length;
   }
 
   /** Forget channels, numbers and choices. */
@@ -456,6 +473,7 @@ export function cleanSettings(v: unknown): ChannelSettings | null {
   const ex = cleanExclusions(x.exclude);
   if (ex && (ex.shows?.length || ex.genres?.length)) out.exclude = ex;
   if (typeof x.reshuffle === "number" && Number.isInteger(x.reshuffle) && x.reshuffle > 0) out.reshuffle = x.reshuffle;
+  if (x.locked === true) out.locked = true;
   return out;
 }
 
