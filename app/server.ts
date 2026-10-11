@@ -314,6 +314,9 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://${HOST}`);
   const p = url.pathname;
   // Same-origin only: refuse cross-site requests so a web page can't drive the TV.
+  // Host check blocks DNS-rebinding pages from reading this server as if it were theirs.
+  const host = req.headers.host ?? "";
+  if (host !== `${HOST}:${PORT}` && host !== `localhost:${PORT}`) return json(res, 403, { error: "unexpected host" });
   const origin = req.headers.origin;
   if (origin && origin !== `http://${HOST}:${PORT}` && origin !== `http://localhost:${PORT}`) return json(res, 403, { error: "cross-origin" });
   try {
