@@ -4,7 +4,7 @@
 import { html, raw, fmtTime, fmtClock, fmtDur, now, clamp } from "./util.js";
 import { api } from "./api.js";
 import { tv, tune } from "./player.js";
-import { logoHtml, hasLogo } from "./channel-editor.js";
+import { logoHtml, hasLogo, datesSpan } from "./channel-editor.js";
 import { unlock, lockStatus, isRedacted, isLocked, PIN_MAX, PIN_MIN } from "./lock.js";
 import { artOf, artImg } from "./ui.js";
 
@@ -220,9 +220,18 @@ function updateMeter() {
 
 export function offAirCard(ch) {
   countdownTo = 0;
+  // A seasonal channel (N-32) is off the air between its dates, not broken.
+  const s = ch.season;
+  const back = s && !s.inSeason && s.nextChangeMs ? new Date(s.nextChangeMs).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : "";
   show(
     ch.hue,
-    html`<div class="card-kicker">Off the air</div>
+    s && !s.inSeason
+      ? html`<div class="card-kicker">Off season</div>
+      <div class="card-title">${ch.name}</div>
+      <div><span class="card-num">${ch.number}</span></div>
+      <div class="why season-why">${back ? html`Back on the air <b>${back}</b>.` : "Back on the air when its season comes round."} This channel only runs from ${datesSpan(s)} each year. Change its season in the channel's Schedule settings.</div>
+      <div class="elsewhere" data-elsewhere></div>`
+      : html`<div class="card-kicker">Off the air</div>
       <div class="card-title">${ch.name}</div>
       <div><span class="card-num">${ch.number}</span></div>
       <div class="why">This channel has nothing it can schedule yet. Programs join a channel once their running time is known: open Settings → Sources and run a library scan.</div>

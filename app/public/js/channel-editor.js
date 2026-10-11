@@ -10,12 +10,16 @@
 //   balance "episodes" | "time", marathons, premieres, watched "all" | "unwatched" | "resume",
 //   exclude { shows?, genres? }; GET also returns groups [{ key, name, count, genres }].
 //   POST /api/channels/:id/refresh deals a new order from the end of the program on now.
+//   Seasons (N-32): season { from: "MM-DD", to: "MM-DD" } | null keeps the channel on the air only
+//   between those dates each year (GET adds inSeason, nextChangeMs); slots take dates the same way.
+//   Content groups (N-07): a slot's source can be "group:<id>" (GET /api/groups lists them).
 // Until that endpoint exists, the editor runs on a local draft and says so.
 
 import { api } from "./api.js";
 import { html, raw, toast, clamp, fmtTime } from "./util.js";
 import { tv } from "./player.js";
 import { lockStatus, setPin, withPin, PIN_MIN, PIN_MAX } from "./lock.js";
+import { openGroups } from "./groups.js"; // first, so its Escape handler runs before the editor's
 
 const root = document.createElement("div");
 root.className = "ced";
@@ -38,6 +42,8 @@ let info = null; // { enforced, timeZone, ratings } from the server, never sent 
 let lastFocus = null;
 let lockInfo = null; // { pinSet } from /api/lock
 let pinForm = null; // { old, pin, again } while setting or changing the PIN
+let groupList = []; // content groups, as slot sources (N-07)
+let customDates = new Set(); // date pickers opened on "Custom dates"
 
 export const editorOpen = () => !root.hidden;
 
@@ -59,10 +65,15 @@ export async function openChannelEditor(channel, opts = {}) {
     draft.slots = Array.isArray(draft.slots) ? draft.slots.map((x) => ({ ...x, days: Array.isArray(x.days) ? x.days : [] })) : [];
     draft.weights = { ...(draft.weights ?? {}) };
     draft.exclude = { shows: [...(draft.exclude?.shows ?? [])], genres: [...(draft.exclude?.genres ?? [])] };
+    // The server adds whether it's in season now; only the dates are ours to send back.
+    info.season = draft.season ?? null;
+    draft.season = draft.season?.from ? { from: draft.season.from, to: draft.season.to } : null;
   } catch (e) {
     live = false;
     info = null;
   }
+  customDates = new Set();
+  await loadGroups();
   lockInfo = await lockStatus(); // null when this build has no locks
   if (lockInfo && typeof info?.pinSet === "boolean") lockInfo.pinSet = info.pinSet;
   pinForm = null;
@@ -223,6 +234,8 @@ function schedule() {
     ${info?.specialsAvailable > 0 ? html`<div class="opt"><div><div class="ol">Include specials</div>
       <div class="od">${info.specialsAvailable} season 0 episode${info.specialsAvailable === 1 ? "" : "s"}. They air after the last season.</div></div>
       <label class="switch"><input type="checkbox" data-k="specials" aria-label="Include specials" ${draft.specials ? "checked" : ""}><i></i></label></div>` : ""}
+    <div class="opt season-opt"><div><div class="ol">Season</div><div class="od">On the air only between these dates each year, like a Halloween or holiday channel. The rest of the year it's off the air.</div>${seasonStatus()}</div>
+      ${datesControl("season", "Season")}</div>
     ${raw(weekStrip(slots))}
     <div class="list ced-slots">${slots.length ? slots.map((s, i) => html`<div class="slot">
       <div class="days">${DAYS.map((d, di) => html`<button data-slot-day="${i}:${di + 1}" aria-pressed="${String(s.days.includes(di + 1))}">${d.slice(0, 2)}</button>`)}</div>
@@ -230,8 +243,10 @@ function schedule() {
       <span class="muted">to</span>
       <input class="input" type="time" data-slot="${i}:to" value="${s.to}" aria-label="To">
       <select class="input" data-slot="${i}:source" aria-label="What plays">${sources.map((o) => html`<option value="${o.value}" ${o.value === s.source ? "selected" : ""}>${o.label}</option>`)}</select>
-      <button class="icon-btn" data-slot-del="${i}" aria-label="Remove slot">✕</button></div>`) : html`<div class="muted">No time slots yet.</div>`}</div>
-    <button class="btn" data-slot-add data-first>+ Add a time slot</button>`.html;
+      <button class="icon-btn" data-slot-del="${i}" aria-label="Remove slot">✕</button>
+      <div class="slot-dates"><span class="muted">Runs</span>${datesControl(`slot:${i}`, "Slot dates")}</div></div>`) : html`<div class="muted">No time slots yet.</div>`}</div>
+    <div class="row-actions"><button class="btn" data-slot-add data-first>+ Add a time slot</button>
+      <button class="linkish" data-groups>${groupList.length ? `Content groups (${groupList.length})…` : "Make a content group…"}</button></div>`.html;
 }
 
 function audience() {
@@ -302,9 +317,88 @@ function weekStrip(slots) {
 }
 
 function sourceOptions() {
+  const groups = groupList.map((g) => ({ value: `group:${g.id}`, label: `Group: ${g.name}` }));
   const shows = tv.channels.filter((c) => c.kind === "show").map((c) => ({ value: c.ruleKey, label: c.name }));
-  const mixes = tv.channels.filter((c) => c.kind !== "show" && c.id !== ch.id).map((c) => ({ value: c.ruleKey, label: `Same as ${c.name}` }));
-  return [...shows, ...mixes];
+  const mixes = tv.channels.filter((c) => c.kind !== "show" && c.kind !== "group" && c.id !== ch.id).map((c) => ({ value: c.ruleKey, label: `Same as ${c.name}` }));
+  return [...groups, ...shows, ...mixes];
+}
+
+async function loadGroups() {
+  try {
+    groupList = (await api.get("/api/groups")).groups ?? [];
+  } catch {
+    groupList = [];
+  }
+}
+
+// ------------------------------------------------------------------ dates (N-32)
+// A yearly date range, "MM-DD" to "MM-DD" (it may wrap the new year). Presets cover the
+// usual seasons; "Custom dates" opens month and day pickers a remote can step through.
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+export const SEASONS = {
+  "10-01:10-31": "October (spooky season)",
+  "11-25:01-01": "Holidays (late Nov to New Year's)",
+  "12-01:12-31": "December",
+  "06-01:08-31": "Summer (June to August)",
+  "02-01:02-14": "Valentine's (Feb 1 to 14)",
+};
+const pad2 = (n) => String(n).padStart(2, "0");
+const monthDay = (md) => {
+  const [m, d] = md.split("-").map(Number);
+  return `${MONTHS[m - 1]} ${d}`;
+};
+/** "Oct 1 to Oct 31" for a yearly range. */
+export const datesSpan = (r) => (r?.from ? `${monthDay(r.from)} to ${monthDay(r.to)}` : "all year");
+/** A short name for a range: the preset's ("October"), else "Nov 25 – Jan 6". */
+export function datesLabel(r) {
+  if (!r?.from) return "All year";
+  return SEASONS[`${r.from}:${r.to}`]?.replace(/ \(.*\)$/, "") ?? `${monthDay(r.from)} – ${monthDay(r.to)}`;
+}
+
+function getDates(key) {
+  if (key === "season") return draft.season;
+  if (key.startsWith("slot:")) return draft.slots[Number(key.slice(5))]?.dates ?? null;
+  return null;
+}
+function setDates(key, v) {
+  if (key === "season") draft.season = v;
+  else if (key.startsWith("slot:")) {
+    const sl = draft.slots[Number(key.slice(5))];
+    if (!sl) return;
+    if (v) sl.dates = v;
+    else delete sl.dates;
+  }
+}
+
+function datesControl(key, label) {
+  const v = getDates(key);
+  const preset = v ? `${v.from}:${v.to}` : "";
+  const custom = customDates.has(key) || (v && !SEASONS[preset]);
+  const id = key.replace(":", "-");
+  const part = (end, i) => {
+    const [m, d] = (v?.[end] ?? (end === "from" ? "10-01" : "10-31")).split("-").map(Number);
+    return html`<select class="input" id="dt-${id}-${end}-m" data-dates-part="${key}:${end}:m" aria-label="${label}: ${end === "from" ? "first" : "last"} month">${MONTHS.map((n, k) => html`<option value="${k + 1}" ${k + 1 === m ? "selected" : ""}>${n}</option>`)}</select>
+      <select class="input dd" id="dt-${id}-${end}-d" data-dates-part="${key}:${end}:d" aria-label="${label}: ${end === "from" ? "first" : "last"} day">${Array.from({ length: 31 }, (_, k) => html`<option ${k + 1 === d ? "selected" : ""}>${k + 1}</option>`)}</select>${i ? "" : html`<span class="muted">to</span>`}`;
+  };
+  return html`<div class="dates">
+    <select class="input" id="dt-${id}" data-dates="${key}" aria-label="${label}">
+      <option value="" ${!v && !custom ? "selected" : ""}>All year</option>
+      ${Object.entries(SEASONS).map(([k, n]) => html`<option value="${k}" ${k === preset && !custom ? "selected" : ""}>${n}</option>`)}
+      <option value="custom" ${custom ? "selected" : ""}>Custom dates…</option>
+    </select>
+    ${custom ? html`<span class="dates-pick">${part("from", 0)}${part("to", 1)}</span>` : ""}
+  </div>`;
+}
+
+/** What the server said about the saved season, while the dates are unchanged. */
+function seasonStatus() {
+  const s = info?.season;
+  if (!s?.from || !draft.season || s.from !== draft.season.from || s.to !== draft.season.to) return "";
+  const when = s.nextChangeMs ? new Date(s.nextChangeMs).toLocaleDateString(undefined, { month: "long", day: "numeric" }) : "";
+  return s.inSeason
+    ? html`<div class="season-now on">● On the air now${when ? `, until ${when}` : ""}</div>`
+    : html`<div class="season-now off">○ Off the air now${when ? `, back ${when}` : ""}</div>`;
 }
 
 // ------------------------------------------------------------------ input
@@ -320,7 +414,10 @@ root.addEventListener("click", async (e) => {
   else if (d.logoKind) draft.logo = d.logoKind === "image" ? { ...draft.logo, kind: "image" } : { ...draft.logo, kind: d.logoKind, text: d.logoKind === "text" ? wordFrom(draft) : String(draft.number) };
   else if (d.logoStyle) draft.logo = { ...draft.logo, style: d.logoStyle };
   else if (d.slotAdd !== undefined) draft.slots = [...draft.slots, { days: [6], from: "08:00", to: "11:00", source: sourceOptions()[0]?.value ?? "" }];
-  else if (d.slotDel) draft.slots = draft.slots.filter((_, i) => i !== Number(d.slotDel));
+  else if (d.slotDel) {
+    draft.slots = draft.slots.filter((_, i) => i !== Number(d.slotDel));
+    customDates = new Set([...customDates].filter((k) => !k.startsWith("slot:")));
+  }
   else if (d.slotDay) {
     const [i, day] = d.slotDay.split(":").map(Number);
     const s = draft.slots[i];
@@ -347,6 +444,9 @@ root.addEventListener("click", async (e) => {
     }
   }
   else if (d.pinCancel !== undefined) pinForm = null;
+  else if (d.groups !== undefined) {
+    return openGroups({ onChanged: async () => (await loadGroups(), render()) });
+  }
   else if (d.rhAdd !== undefined) draft.restrictedHours = [{ from: "06:00", to: "22:00", maxRating: "PG-13" }];
   else if (d.rhDel) draft.restrictedHours = draft.restrictedHours.filter((_, i) => i !== Number(d.rhDel));
   else if (d.save !== undefined) return save();
@@ -415,7 +515,24 @@ root.addEventListener("input", (e) => {
     draft.weights[d.weight] = Number(t.value);
     return refreshMix(t);
   } else if (d.logo) draft.logo = { ...draft.logo, [d.logo]: d.logo === "hue" ? Number(t.value) : t.value };
-  else if (d.slot) {
+  else if (d.dates) {
+    if (t.value === "custom") {
+      customDates.add(d.dates);
+      setDates(d.dates, getDates(d.dates) ?? { from: "10-01", to: "10-31" });
+    } else {
+      customDates.delete(d.dates);
+      const [from, to] = t.value.split(":");
+      setDates(d.dates, t.value ? { from, to } : null);
+    }
+  } else if (d.datesPart) {
+    const [key, end, unit] = d.datesPart.split(":").length === 4 ? (([a, b, c, e]) => [`${a}:${b}`, c, e])(d.datesPart.split(":")) : d.datesPart.split(":");
+    const cur = getDates(key) ?? { from: "10-01", to: "10-31" };
+    let [m, day] = cur[end].split("-").map(Number);
+    if (unit === "m") m = Number(t.value);
+    else day = Number(t.value);
+    day = Math.min(day, [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]);
+    setDates(key, { ...cur, [end]: `${pad2(m)}-${pad2(day)}` });
+  } else if (d.slot) {
     const [i, k] = d.slot.split(":");
     draft.slots[Number(i)][k] = t.value;
   } else if (d.rh) {

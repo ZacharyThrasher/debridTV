@@ -1,8 +1,9 @@
 // On-screen display: the green channel number, the info banner, and the channel bug.
 
-import { html, raw, fmtTime, fmtDur, now, clamp, pref, onPrefsApplied } from "./util.js";
+import { html, raw, fmtTime, fmtDur, fmtClock, now, clamp, pref, onPrefsApplied } from "./util.js";
 import { logoHtml, hasLogo } from "./channel-editor.js";
 import { isLocked, isRedacted } from "./lock.js";
+import { onDemandItem } from "./ondemand.js";
 
 const hasMark = hasLogo;
 
@@ -78,6 +79,9 @@ export function formatChips(a) {
   return html`<span class="fmt" role="img" aria-label="${label}" title="${label}">${out.map(([t, k]) => html`<i class="${k}">${t}</i>`)}</span>`.html;
 }
 
+/** What the live channel is airing now, unless it's locked (null then). */
+export const liveAiring = () => (bannerState && !isLocked(bannerState.ch) && !isRedacted(bannerState.info.airing ?? {}) ? bannerState.info.airing : null);
+
 export function setBanner(ch, info, route) {
   bannerState = { ch, info, route };
   ratingCard(isLocked(ch) ? null : info);
@@ -85,7 +89,7 @@ export function setBanner(ch, info, route) {
 }
 
 export function showBanner(ms = 5200) {
-  if (!bannerState) return;
+  if (!bannerState && !od) return;
   renderBanner();
   bannerEl.hidden = false;
   document.body.classList.add("banner-open");
@@ -133,7 +137,52 @@ function ratingCard(info) {
 
 const ROUTE_LABEL = { direct: "Direct play", live: "Compatibility mode", demo: "Demo picture", card: "" };
 
+// Watching from On Demand (N-30): the player says when a pick starts and ends. The
+// banner then shows the file's own position instead of the station's, and no LIVE.
+let od = null; // the player's tv.onDemand: { itemId, fromMs, durationMs, title, positionMs (a getter) }
+let odAt = 0;
+addEventListener("debridtv:ondemand", (e) => {
+  od = e.detail ?? null;
+  odAt = Date.now();
+  ratingEl.hidden = true;
+  if (bannerState || od) showBanner();
+});
+/** Where in the file we are: the player's own answer when it has one, else time since the start. */
+function odPosition() {
+  const p = typeof od.positionMs === "function" ? od.positionMs() : od.positionMs;
+  return Number.isFinite(p) ? p : od.fromMs + (Date.now() - odAt);
+}
+
+function renderOnDemand() {
+  const picked = onDemandItem();
+  const it = picked?.id === od.itemId ? picked : {};
+  const dur = od.durationMs ?? it.durationMs ?? 0;
+  const pos = clamp(odPosition(), 0, dur || Infinity);
+  const bits = [it.label && html`<span class="ep">${it.label}</span>`, it.kind === "episode" && it.subtitle && html`<span>“${it.subtitle}”</span>`,
+    it.year && html`<span>${it.year}</span>`, it.rating && html`<span class="rating">${it.rating}</span>`, raw(formatChips(it)),
+    html`<span class="badge od">ON DEMAND</span>`].filter((x) => x && String(x));
+  const art = it.kind === "episode" ? artOf(it, "thumb", "poster") : artOf(it, "poster", "thumb");
+  const wide = !!art && art === artOf(it, "thumb");
+  bannerEl.style.setProperty("--h", 300);
+  bannerEl.innerHTML = html`
+    <div class="chan od-chan"><div class="num od-num">OD</div><div class="cname">On Demand</div></div>
+    <div class="b-main ${art ? "has-art" : ""}" data-art-box>
+      ${raw(artImg(art, `b-art ${wide ? "wide" : "tall"}`))}
+      <div class="b-text">
+      <div class="title">${it.title ?? od.title ?? "On Demand"}</div>
+      <div class="meta">${bits}</div>
+      ${dur ? raw(`<div class="progress od"><i style="width:${((pos / dur) * 100).toFixed(2)}%"></i></div>`) : ""}
+      </div>
+    </div>
+    <div style="display:grid;gap:calc(var(--u)*.5);justify-items:end">
+      <div class="clock">${fmtTime(now())}</div>
+      <div class="times">${dur ? `${fmtClock(pos)} / ${fmtClock(dur)}` : fmtClock(pos)}</div>
+      <div class="next"><span class="kb-only"><kbd>L</kbd> back to live</span><span class="tv-only"><kbd>Back</kbd> back to live</span></div>
+    </div>`;
+}
+
 function renderBanner() {
+  if (od) return renderOnDemand();
   const { ch, info, route } = bannerState;
   const a = info.airing;
   const seg = info.segment;
@@ -149,6 +198,16 @@ function renderBanner() {
     pct = clamp((t - a.start) / (a.end - a.start), 0, 1) * 100;
     times = `${fmtTime(a.start, { short: true })} – ${fmtTime(a.end)}`;
     const bits = [];
+    // Music stations and Coming Attractions (N-23a, N-23c): the song's artist and album, or
+    // the trailer's film (and W to watch it when the film is in the library).
+    if (a.kind === "track") {
+      bits.push(html`<span class="badge kind">♪ Song</span>`);
+      if (a.artist) bits.push(html`<span class="artist">${a.artist}</span>`);
+      if (a.album) bits.push(html`<span>${a.album}</span>`);
+    } else if (a.kind === "trailer" || a.trailerFor) {
+      bits.push(html`<span class="badge kind">Trailer</span>`);
+      if (a.trailerFor?.itemId) bits.push(html`<span class="badge ok">W · Watch the film</span>`);
+    }
     if (a.episode) bits.push(html`<span class="ep">${a.episode}</span>`);
     if (a.subtitle) bits.push(html`<span>“${a.subtitle}”</span>`);
     if (a.year) bits.push(html`<span>${a.year}</span>`);
@@ -161,6 +220,8 @@ function renderBanner() {
     else bits.push(html`<span class="badge live">LIVE</span>`);
     if (a.watched) bits.push(html`<span class="badge ok">✓ Watched</span>`);
     if (a.availability === "policy-blocked") bits.push(html`<span class="badge bad">Refused by provider</span>`);
+    // Another source refused its copy of this title; this copy airs instead (N-01d).
+    if (a.refusedElsewhere?.length) bits.push(html`<span class="badge" title="${a.refusedElsewhere.join(", ")} refused its copy, so this one plays">${a.refusedElsewhere.join(", ")} refused its copy</span>`);
     if (ROUTE_LABEL[route]) bits.push(html`<span class="badge">${ROUTE_LABEL[route]}</span>`);
     if (a.provider && a.provider !== "demo") bits.push(html`<span class="badge">${a.provider === "realdebrid" ? "Real-Debrid" : a.provider === "torbox" ? "TorBox" : "This PC"}</span>`);
     meta = bits.join("");
@@ -169,11 +230,12 @@ function renderBanner() {
   // Episodes show their still (16:9) when there is one; movies their poster.
   const art = isLocked(ch) ? null : a?.episode ? artOf(a, "thumb", "poster") : artOf(a, "poster", "thumb");
   const wide = !!art && art === artOf(a, "thumb");
+  const shape = a?.kind === "track" ? "square" : wide ? "wide" : "tall"; // an album cover is square
   bannerEl.style.setProperty("--h", ch.hue);
   bannerEl.innerHTML = html`
     <div class="chan"><div class="num" style="--h:${ch.hue}">${ch.number}</div><div class="cname">${hasMark(ch) ? raw(logoHtml(ch)) : ch.name}</div></div>
     <div class="b-main ${art ? "has-art" : ""}" data-art-box>
-      ${raw(artImg(art, `b-art ${wide ? "wide" : "tall"}`))}
+      ${raw(artImg(art, `b-art ${shape}`))}
       <div class="b-text">
       <div class="title">${title}</div>
       <div class="meta">${raw(meta)}</div>

@@ -9,6 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { closeQuietly } from "./close.ts";
 
 const require = createRequire(import.meta.url);
 let chromium: any = null;
@@ -78,14 +79,17 @@ async function open(opts: { prefs?: object; at?: number; size?: [number, number]
     requests.push(u.pathname);
     if (!offset || !u.pathname.startsWith("/api/")) return route.continue();
     if (u.pathname === "/api/now" && !u.searchParams.has("at")) u.searchParams.set("at", String(Date.now() + offset));
-    const resp = await route.fetch({ url: u.toString() });
-    let body = await resp.text();
+    // A request still in flight when the test closes its context rejects here; that's not a failure.
     try {
-      const o = JSON.parse(body);
-      if (typeof o.now === "number") o.now += offset;
-      body = JSON.stringify(o);
+      const resp = await route.fetch({ url: u.toString() });
+      let body = await resp.text();
+      try {
+        const o = JSON.parse(body);
+        if (typeof o.now === "number") o.now += offset;
+        body = JSON.stringify(o);
+      } catch {}
+      await route.fulfill({ response: resp, body });
     } catch {}
-    await route.fulfill({ response: resp, body });
   });
   const page = await ctx.newPage();
   const errors: string[] = [];
@@ -123,7 +127,60 @@ describe("guide", { skip }, () => {
     for (let i = 0; i < 6; i++) await page.keyboard.press(i % 2 ? "ArrowRight" : "ArrowDown");
     assert.equal(requests.filter((p) => p.startsWith("/media") || p === "/api/prefetch").length, 0);
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
+  });
+
+  it("N-15: page size and scroll speed are settings; Channel Up/Down turn a page", async () => {
+    const remote = (page: any, key: string) => js(page, `(document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "${key}", bubbles: true, cancelable: true }))`);
+    const focusRow = (page: any) => js(page, `[...document.querySelectorAll(".row")].findIndex((r) => r.querySelector(".cell.focus"))`);
+    const { page, ctx, errors } = await open({ prefs: { guidePage: "3", guideScroll: "instant" } });
+    await page.keyboard.press("g");
+    await page.waitForSelector(".cell.focus");
+    assert.equal(await js(page, `getComputedStyle(document.querySelector(".grid-scroll")).transitionDuration`), "0s");
+    const r0 = await focusRow(page);
+    await page.keyboard.press("PageDown");
+    assert.equal((await focusRow(page)) - r0, 3);
+    await remote(page, "ChannelUp");
+    assert.equal(await focusRow(page), r0);
+    await closeQuietly(ctx);
+
+    const b = await open({ prefs: { guidePage: "screen", guideScroll: "slow" } });
+    await b.page.keyboard.press("g");
+    await b.page.waitForSelector(".cell.focus");
+    assert.equal(await js(b.page, `getComputedStyle(document.querySelector(".grid-scroll")).transitionDuration`), "0.6s");
+    const onScreen = await js(b.page, `Math.round(document.querySelector(".grid-rows").clientHeight / document.querySelector(".row").getBoundingClientRect().height)`);
+    const total = await js(b.page, `document.querySelectorAll(".row").length`);
+    const s0 = await focusRow(b.page);
+    await remote(b.page, "ChannelDown");
+    assert.equal(await focusRow(b.page), Math.min(total - 1, s0 + onScreen - 1), "a full screen, keeping one row for context");
+    assert.deepEqual([...errors, ...b.errors], []);
+    await closeQuietly(b.ctx);
+  });
+
+  it("previews the highlighted channel from the station clock only (N-14), never media", async () => {
+    const { page, ctx, requests } = await open();
+    await page.keyboard.press("g");
+    await page.waitForSelector(".cell.focus");
+    const before = requests.length;
+    const bug = await js(page, `document.getElementById("bug").textContent`);
+    await page.keyboard.press("ArrowDown");
+    await page.waitForSelector(".gp-slate:not([hidden])");
+    const want = await js(page, `document.querySelector(".guide-details .t").textContent`);
+    assert.equal(await js(page, `document.querySelector(".gp-slate .gp-t").textContent`), want);
+    assert.match(await js(page, `document.querySelector(".guide-preview .preview-label").textContent`), /Preview/);
+    // Run past several rows: still no link, media or tune, and the picture stays put.
+    for (const k of ["ArrowDown", "ArrowDown", "ArrowDown", "ArrowRight", "ArrowUp"]) await page.keyboard.press(k);
+    await sleep(400);
+    const after = requests.slice(before);
+    assert.equal(after.filter((p) => p.startsWith("/media") || p === "/api/prefetch" || p === "/api/now").length, 0, after.join(" "));
+    assert.equal(await js(page, `document.getElementById("bug").textContent`), bug);
+    // Back on the channel being watched, the real picture shows again.
+    await page.keyboard.press("Home");
+    for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowUp");
+    await page.waitForFunction(`document.querySelector(".row.current .cell.focus") ? document.querySelector(".gp-slate").hidden : true`);
+    await closeQuietly(ctx);
   });
 
   it("Enter tunes the highlighted channel and closes the guide", async () => {
@@ -136,7 +193,7 @@ describe("guide", { skip }, () => {
     await page.keyboard.press("Enter");
     await page.waitForFunction(`document.getElementById("guide").hidden`);
     await page.waitForFunction(`document.getElementById("bug").textContent.startsWith(${JSON.stringify(want)})`);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("a swipe on a touch screen moves through channels", async () => {
@@ -152,14 +209,14 @@ describe("guide", { skip }, () => {
     await sleep(200);
     const after = Number(await js(page, `document.querySelector(".cell.focus").dataset.row`));
     assert.ok(after >= before + 3, `swipe moved ${after - before} rows`);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("starts on the guide and closes itself when idle, if set to", async () => {
     const { page, ctx } = await open({ prefs: { startup: "guide", guideIdle: "close", guideIdleMin: 0.03 } });
     await page.waitForFunction(`!document.getElementById("guide").hidden`);
     await page.waitForFunction(`document.getElementById("guide").hidden`, null, { timeout: 5000 });
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });
 
@@ -181,7 +238,7 @@ describe("station breaks", { skip }, () => {
     assert.ok([...seen].some((s) => /^Later on/.test(s)));
     assert.equal(requests.filter((p) => p.startsWith("/media") || p === "/api/prefetch").length, 0);
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });
 
@@ -198,7 +255,7 @@ describe("channel editor", { skip }, () => {
     await page.keyboard.press("Escape");
     await page.waitForSelector(".ced", { state: "hidden" });
     assert.equal(await js(page, `document.getElementById("bug").textContent`), bug);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });
 
@@ -224,7 +281,7 @@ describe("themes (N-11b)", { skip }, () => {
     const opts = await js(page, `import("/js/theme.js").then((m) => m.themeOptions().map((o) => o.label))`);
     assert.ok(opts.includes("Late Show") && opts.includes("Midnight"));
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("cancel restores the theme; Escape closes only the editor", async () => {
@@ -238,7 +295,7 @@ describe("themes (N-11b)", { skip }, () => {
     assert.equal(await js(page, `document.documentElement.dataset.tone`), "light");
     assert.equal(await js(page, `document.documentElement.style.getPropertyValue("--bg")`), "");
     assert.equal(await js(page, `document.getElementById("panel").hidden`), false);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("imports only clean colours and rejects other files", async () => {
@@ -256,7 +313,7 @@ describe("themes (N-11b)", { skip }, () => {
     assert.equal(r.ok.name, "bX/b");
     assert.equal(r.ok.cellStrength, 100);
     assert.match(r.bad, /something else/);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });
 
@@ -271,7 +328,7 @@ describe("format chips (N-37)", { skip }, () => {
     assert.match(out[0], /4K.*Dolby Vision.*Atmos.*TrueHD 7\.1/);
     assert.match(out[1], /720p.*Stereo/);
     assert.equal(out[2], "");
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });
 
@@ -293,7 +350,7 @@ describe("artwork (N-01c)", { skip }, () => {
     })`);
     await page.waitForFunction(`!document.querySelector("#artbox img") && !document.getElementById("artbox").classList.contains("has-art")`);
     assert.deepEqual(errors.filter((e: string) => !/404|Failed to load/.test(e)), []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });
 
@@ -321,7 +378,7 @@ describe("channel mix and exclusions (N-09, N-10)", { skip }, () => {
     assert.equal(s.balance, "time");
     assert.equal(s.watched, "unwatched");
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("keeps a show and a genre off every channel", async () => {
@@ -338,7 +395,7 @@ describe("channel mix and exclusions (N-09, N-10)", { skip }, () => {
     assert.deepEqual(ex.genres, [genre]);
     assert.equal(ex.shows.length, 1);
     await fetch(`${BASE}/api/exclusions`, { method: "POST", headers: { "content-type": "application/json" }, body: '{"shows":[],"genres":[]}' });
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });
 
@@ -357,7 +414,7 @@ describe("TV set (N-12)", { skip }, () => {
     await page.waitForTimeout(450);
     assert.equal(await js(page, `getComputedStyle(document.getElementById("stage")).left`), "0px", "the set steps aside for the guide");
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });
 
@@ -374,18 +431,21 @@ describe("locked channels (N-06b)", { skip }, () => {
         unlocks.push(pin);
         return pin === "1984" ? route.fulfill({ json: { ok: true, untilMs: Date.now() + 3600e3 } }) : route.fulfill({ status: 403, json: { error: "wrong pin" } });
       }
-      const resp = await route.fetch();
-      let body = await resp.text();
+      // A request still in flight when the test closes its context rejects here; that's not a failure.
       try {
-        const j = JSON.parse(body);
-        const mark = (c: any) => c && c.number === 7 && (c.locked = true);
-        j.channels?.forEach(mark);
-        j.rows?.forEach((r: any) => mark(r.channel));
-        mark(j.channel);
-        if (u.pathname === "/api/now" && j.channel?.number === 7) j.locked = true;
-        body = JSON.stringify(j);
+        const resp = await route.fetch();
+        let body = await resp.text();
+        try {
+          const j = JSON.parse(body);
+          const mark = (c: any) => c && c.number === 7 && (c.locked = true);
+          j.channels?.forEach(mark);
+          j.rows?.forEach((r: any) => mark(r.channel));
+          mark(j.channel);
+          if (u.pathname === "/api/now" && j.channel?.number === 7) j.locked = true;
+          body = JSON.stringify(j);
+        } catch {}
+        await route.fulfill({ response: resp, body });
       } catch {}
-      await route.fulfill({ response: resp, body });
     });
     await o.page.reload();
     await o.page.waitForFunction("document.getElementById('bug').textContent.length > 0");
@@ -408,7 +468,7 @@ describe("locked channels (N-06b)", { skip }, () => {
     const media = requests.slice(before).filter((p) => p.startsWith("/media") || p === "/api/prefetch");
     assert.deepEqual(media, []);
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("hides a locked channel's listings in the guide and banner", async () => {
@@ -416,7 +476,7 @@ describe("locked channels (N-06b)", { skip }, () => {
     await page.keyboard.press("g");
     await page.waitForSelector(".cell.focus");
     assert.ok(await js(page, `(() => { const r = [...document.querySelectorAll(".row")].find((r) => r.querySelector(".n").textContent === "7"); return [...r.querySelectorAll(".cell .ct")].every((c) => c.textContent === "Locked") && !!r.querySelector(".lk"); })()`));
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });
 
@@ -449,7 +509,7 @@ describe("remote (10-foot)", { skip }, () => {
     await page.keyboard.press("Backspace");
     assert.ok(await js(page, `document.getElementById("panel").hidden`), "Backspace means Back inside a layer");
     assert.deepEqual(errors, []);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("TV Back keys close the top layer only, and digits jump the guide", async () => {
@@ -475,7 +535,7 @@ describe("remote (10-foot)", { skip }, () => {
     const want = await js(page, `[...document.querySelectorAll(".row-label .n")].map((n) => n.textContent).find((n) => n.length === 1 && n !== document.querySelector(".cell.focus").closest(".row").querySelector(".n").textContent)`);
     await page.keyboard.press(want);
     await page.waitForFunction(`document.querySelector(".cell.focus").closest(".row").querySelector(".n").textContent === ${JSON.stringify(want)}`);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 
   it("a remote reaches the meanwhile chips on a dead-end card and tunes with OK", async () => {
@@ -487,6 +547,6 @@ describe("remote (10-foot)", { skip }, () => {
     assert.ok(id, "Right focuses the first chip");
     await page.keyboard.press("Enter");
     await page.waitForFunction(`localStorage.getItem("debridtv.lastChannel") === ${JSON.stringify(id)}`);
-    await ctx.close();
+    await closeQuietly(ctx);
   });
 });

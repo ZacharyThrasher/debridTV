@@ -30,6 +30,19 @@ export interface NfoMeta {
   studios?: string[];
   tags?: string[];
   plot?: string;
+  /** An episode's show summary, from tvshow.nfo (On Demand's show page). */
+  showPlot?: string;
+  /** Database ids the file states (<uniqueid>, or the older <id>/<imdbid>/<tmdbid>), for dedupe (N-01d). */
+  ids?: ExternalIds;
+  /** An episode's show ids, from tvshow.nfo. */
+  showIds?: ExternalIds;
+}
+
+/** TMDB / IMDb / TVDB ids. A film's or show's ids; for an episode, the episode's own. */
+export interface ExternalIds {
+  tmdb?: string;
+  imdb?: string;
+  tvdb?: string;
 }
 
 const ROOTS: Record<string, NfoMeta["kind"]> = { movie: "movie", episodedetails: "episode", tvshow: "show" };
@@ -84,13 +97,42 @@ export function parseNfo(text: string): NfoMeta | null {
   if (tags.length) out.tags = tags;
   const plot = one("plot") ?? one("outline");
   if (plot) out.plot = plot.slice(0, 1000);
+  const ids = nfoIds(doc);
+  if (ids) out.ids = ids;
   return out;
+}
+
+/**
+ * Kodi writes <uniqueid type="tmdb|imdb|tvdb">; older scrapers wrote <id>, <imdbid>,
+ * <tmdbid>. Read from the document itself, not from nested actor or episode-guide blocks.
+ */
+export function nfoIds(doc: string): ExternalIds | undefined {
+  const own = doc.replace(/<(actor|fileinfo|ratings|thumb|fanart|resume|art|namedseason|episodeguide)\b[\s\S]*?<\/\1>/gi, "");
+  const out: ExternalIds = {};
+  for (const m of own.matchAll(/<uniqueid\b([^>]*)>([\s\S]*?)<\/uniqueid>/gi)) {
+    const type = /type\s*=\s*["']?([a-z]+)/i.exec(m[1]!)?.[1]?.toLowerCase();
+    if (type === "tmdb" || type === "imdb" || type === "tvdb") put(out, type, clean(m[2]!));
+  }
+  for (const [tag, kind] of [["tmdbid", "tmdb"], ["imdbid", "imdb"], ["imdb_id", "imdb"], ["tvdbid", "tvdb"]] as const) {
+    const v = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "i").exec(own)?.[1];
+    if (v) put(out, kind, clean(v));
+  }
+  // A bare <id> is IMDb's when it looks like one, else the scraper's (TVDB for shows, TMDB for films): too vague to use.
+  const bare = /<id>([\s\S]*?)<\/id>/i.exec(own)?.[1];
+  if (bare && /^tt\d{5,10}$/.test(clean(bare))) put(out, "imdb", clean(bare));
+  return Object.keys(out).length ? out : undefined;
+}
+
+function put(out: ExternalIds, kind: keyof ExternalIds, v: string): void {
+  if (out[kind]) return;
+  if (kind === "imdb" ? /^tt\d{5,10}$/.test(v) : /^\d{1,10}$/.test(v)) out[kind] = v;
 }
 
 /** Fill gaps in an episode's metadata from its show's tvshow.nfo. */
 export function withShow(ep: NfoMeta | null, show: NfoMeta | null): NfoMeta | null {
   if (!show) return ep;
-  if (!ep) return { kind: "episode", rating: show.rating, ratingText: show.ratingText, genres: show.genres, studios: show.studios, tags: show.tags };
+  const showPlot = { ...(show.plot ? { showPlot: show.plot } : {}), ...(show.ids ? { showIds: show.ids } : {}) };
+  if (!ep) return { kind: "episode", rating: show.rating, ratingText: show.ratingText, genres: show.genres, studios: show.studios, tags: show.tags, ...showPlot };
   return {
     ...ep,
     rating: ep.rating ?? show.rating,
@@ -98,6 +140,7 @@ export function withShow(ep: NfoMeta | null, show: NfoMeta | null): NfoMeta | nu
     genres: ep.genres ?? show.genres,
     studios: ep.studios ?? show.studios,
     tags: ep.tags ?? show.tags,
+    ...showPlot,
   };
 }
 

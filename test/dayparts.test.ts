@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { StationClock } from "../src/clock/schedule.ts";
-import { localFields, windows, zonedMs } from "../src/clock/dayparts.ts";
+import { inDates, localFields, seasonState, windows, zonedMs } from "../src/clock/dayparts.ts";
 import { normalizeRating, allowedUnder } from "../src/clock/ratings.ts";
 import type { Channel, ChannelRevision, MediaItem } from "../src/clock/types.ts";
 
@@ -212,3 +212,51 @@ function* take<T>(it: Iterable<T>, n: number): Generator<T> {
     if (--n <= 0) return;
   }
 }
+
+test("N-32: yearly date ranges are inclusive and wrap the new year", () => {
+  const oct = { from: "10-01", to: "10-31" };
+  assert.ok(inDates({ m: 10, d: 1 }, oct) && inDates({ m: 10, d: 31 }, oct));
+  assert.ok(!inDates({ m: 9, d: 30 }, oct) && !inDates({ m: 11, d: 1 }, oct));
+  const holidays = { from: "12-15", to: "01-05" };
+  assert.ok(inDates({ m: 12, d: 25 }, holidays) && inDates({ m: 1, d: 5 }, holidays));
+  assert.ok(!inDates({ m: 1, d: 6 }, holidays) && !inDates({ m: 12, d: 14 }, holidays));
+  const s = seasonState(oct, zonedMs({ y: 2026, m: 9, d: 20 }, 12 * 60, TZ), TZ);
+  assert.deepEqual(s, { inSeason: false, nextChangeMs: zonedMs({ y: 2026, m: 10, d: 1 }, 0, TZ) });
+  const inside = seasonState(oct, zonedMs({ y: 2026, m: 10, d: 20 }, 12 * 60, TZ), TZ);
+  assert.deepEqual(inside, { inSeason: true, nextChangeMs: zonedMs({ y: 2026, m: 11, d: 1 }, 0, TZ) });
+  assert.equal(seasonState({ from: "01-01", to: "12-31" }, Date.UTC(2026, 5, 1), TZ).nextChangeMs, null);
+});
+
+test("N-32: a seasonal slot airs its program only between its dates, and the usual lineup otherwise", () => {
+  const scary = Array.from({ length: 20 }, (_, i) => item(`scary${i}`, 90));
+  const usual = Array.from({ length: 20 }, (_, i) => item(`usual${i}`, 44));
+  const ch: Channel = { id: "c", number: 5, name: "C", revisions: [{ effectiveFromMs: zonedMs({ y: 2026, m: 9, d: 25 }, 0, TZ), seed: "c",
+    itemIds: usual.map((m) => m.id), ordering: "shuffle", slotMs: 30 * MIN,
+    dayparts: { timeZone: TZ, rules: [{ from: "20:00", to: "00:00", dates: { from: "10-01", to: "10-31" },
+      program: { key: "group:scary", itemIds: scary.map((m) => m.id), ordering: "shuffle" } }] } }] };
+  const clock = new StationClock([...scary, ...usual]);
+  const list = clock.airingsBetween(ch, zonedMs({ y: 2026, m: 9, d: 25 }, 0, TZ), zonedMs({ y: 2026, m: 10, d: 8 }, 0, TZ));
+  for (const a of list) {
+    const f = localFields(a.startMs, TZ);
+    const evening = localMinutes(a.startMs) >= 20 * 60;
+    if (a.itemId.startsWith("scary")) assert.ok(f.m === 10 && evening, `${a.itemId} at ${f.m}/${f.d} ${hhmm(a.startMs)}`);
+    else if (f.m === 10) assert.ok(localMinutes(a.endMs - 1) < 20 * 60 || !evening, `usual in the October evening slot at ${f.d} ${hhmm(a.startMs)}`);
+  }
+  assert.ok(list.filter((a) => a.itemId.startsWith("scary")).length >= 7 * 2, "two or more films a night through the first week of October");
+});
+
+test("N-32: a seasonal channel is off the air out of season, and on all day in it", () => {
+  const lib = Array.from({ length: 10 }, (_, i) => item(`xmas${i}`, 95));
+  const ch: Channel = { id: "c", number: 5, name: "C", revisions: [{ effectiveFromMs: zonedMs({ y: 2026, m: 12, d: 1 }, 0, TZ), seed: "c",
+    itemIds: lib.map((m) => m.id), ordering: "shuffle", slotMs: 30 * MIN,
+    dayparts: { timeZone: TZ, rules: [{ from: "00:00", to: "00:00", dates: { from: "12-15", to: "01-05" }, outside: true, offAir: true }] } }] };
+  const clock = new StationClock(lib);
+  assert.equal(clock.airingAt(ch, zonedMs({ y: 2026, m: 12, d: 10 }, 12 * 60, TZ)), null);
+  assert.ok(clock.airingAt(ch, zonedMs({ y: 2026, m: 12, d: 20 }, 3 * 60, TZ)));
+  assert.ok(clock.airingAt(ch, zonedMs({ y: 2027, m: 1, d: 3 }, 22 * 60, TZ)), "across the new year");
+  assert.equal(clock.airingAt(ch, zonedMs({ y: 2027, m: 1, d: 6 }, 12 * 60, TZ)), null);
+  const list = clock.airingsBetween(ch, zonedMs({ y: 2026, m: 12, d: 14 }, 12 * 60, TZ), zonedMs({ y: 2026, m: 12, d: 15 }, 6 * 60, TZ));
+  assert.equal(hhmm(list[0]!.startMs), "00:00", "the guide skips to the first day of the season");
+  const last = clock.airingsBetween(ch, zonedMs({ y: 2027, m: 1, d: 5 }, 20 * 60, TZ), zonedMs({ y: 2027, m: 1, d: 6 }, 6 * 60, TZ));
+  assert.ok(last.every((a) => a.endMs <= zonedMs({ y: 2027, m: 1, d: 6 }, 0, TZ)), "nothing runs past the season's last midnight");
+});

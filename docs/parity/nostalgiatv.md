@@ -1,6 +1,6 @@
 # NostalgiaTV parity register (versioned, per surface)
 
-Register version: 0.4 | NostalgiaTV sources retrieved: 2026-10-10 | DebridTV column audited: 2026-10-11 (round 3) against the shared release `97666b5` | Handoff basis: DEBRIDTV_RESEARCH_HANDOFF_2026-10-10.md sections 2.1, 3, 12.
+Register version: 0.6 | NostalgiaTV sources retrieved: 2026-10-10 | DebridTV column audited: 2026-10-11 (round 5) against PR #2 head `b62c1d9` plus round-5 polish `af04721` | Handoff basis: DEBRIDTV_RESEARCH_HANDOFF_2026-10-10.md sections 2.1, 3, 12.
 
 NostalgiaTV's Play listing, GitBook user guide and Docker companion README describe different capability sets and different versions. This register is NOT one universal spec. Each cell is evidence about one surface at one version/date. No cell was verified by running the product.
 
@@ -51,16 +51,16 @@ Order follows handoff N-01..N-28; suffix letters are splits; N-29+ are additions
 |---|---|---|---|---|---|---|
 | N-01a | Plex/Jellyfin/Emby servers, multiple at once | D [N01, 2026-09-30; N10 v0.9.12 2026-07-22 says full Jellyfin/Emby] | D [same] | D [N02, 0.10.22] | ? | — not started. Sources are Real-Debrid, TorBox and local folders instead (different source model, by project scope). |
 | N-01b | Local device folders, no server needed | D [N01; N10 v0.9.12] | D [same] | X [N02: local-only libraries stay on Android] / P [N02 "mirror matching"] | ? | **V** local folders become channels after a header scan [A13]. |
-| N-01c | Local folder metadata (Kodi nfo, OMDb, artwork) | D [N10 v0.9.12 OMDb; N01 what's-new Kodi nfo] | D [same] | ? | ? | **P/V** local only, all tested: Kodi `.nfo` for movies, episodes and shows (`metadata.test` N-01c ×3); local stills, posters, fanart and show logos, served without exposing paths (`art.test` N-01c ×3, `test/ui` artwork). No OMDb or online art (waits on Zachary). |
-| N-01d | Cross-server dedup (TMDB/IMDb/TVDB, preference rank) | ? | ? | D [N02, N14; 0.10.22] | ? | **P/V** same file in two places airs once [A15]; keyed on parsed name + runtime, not TMDB/IMDb ids; rank local > playable > TorBox > RD (`app/lineup.ts` dedupe). |
-| N-02a | Pre-built presets | D [N01: "85+" ; N11: "70+ Standard Channels", Pro] | D [same] | ? | ? | **P/V** 7 automatic channel rules (Half Hour, Prime Hour, Marathon, Feature, Quarter Hour, decade cinema, one per show) [A01 demo, A14 local]; NTV claims 70-85+ presets. |
+| N-01c | Local folder metadata (Kodi nfo, OMDb, artwork) | D [N10 v0.9.12 OMDb; N01 what's-new Kodi nfo] | D [same] | ? | ? | **V** local Kodi `.nfo` and art (`metadata.test`, `art.test` N-01c); online TMDB posters and descriptions with your own key, off without one, only titles/years/seasons leave, local `.nfo` wins, 429 handled, key never exported (`tmdb.test` N-01c online ×5). No OMDb (TMDB instead). |
+| N-01d | Cross-server dedup (TMDB/IMDb/TVDB, preference rank) | ? | ? | D [N02, N14; 0.10.22] | ? | **V** one copy per title: matched on `.nfo` database ids (`<uniqueid>` and older tags, episode show ids from `tvshow.nfo`) and TMDB-cache ids across different names, never joining copies whose ids disagree, then name + runtime as fallback [A15]; a refused copy keeps its title off the air (`N-01d` tests ×4, `c51255c`). Rank local > playable > TorBox > RD. |
+| N-02a | Pre-built presets | D [N01: "85+" ; N11: "70+ Standard Channels", Pro] | D [same] | ? | ? | **V** automatic channels from what you have (per show, Half Hour, Prime Hour, Marathon, Feature, Quarter Hour, decade cinema [A01, A14]; network, genre, collection, music, Coming Attractions), plus presets matched by genre, tag or holiday word, offered only when the library has enough, e.g. October Horror and Holidays as seasonal channels (`N-02a` tests ×2). Not a fixed 70-85 catalogue. |
 | N-02b | Custom channels | D [N04; N01] | D [N04 steps use mobile app] | D [N02 Channels tab] | ? | **V** builder with show/movie picks, 8 orderings, slot choice; goes on air at #50+ [A09, A18]. |
 | N-03 | Channel number, name, logo | D [N04; N01 renumber/hide/favorite] | D [N04] | P [N02 lists Channels tab, no detail] | ? | **V** number + name on bug and OSD [A02]; numbers stable across restart, hiding and a channel returning [A11, A19, `library.test` N-03]; rename, renumber (a taken number swaps), favorite and logo stored and editable (`server.test` N-03/N-16, `test/ui` channel editor). |
 | N-04 | Selection by collection/playlist/genre/decade/title | D [N04: Collection, Genre, Decade, Plex Playlist, search] | D [N04] | D [N02: also studios, labels, hand-picked] | ? | **V** network, genre and collection channels from metadata with thresholds (`metadata.test` N-04); decade channels [A01]; pick by title [A18]. No Plex playlists (no Plex source). |
-| N-05 | Specials, watched-only, duplicate controls | D [N04; watched-only worded as Plex watched] | D [N04] | ? | ? | **P/V** duplicates removed [A15, D3]; season-0 specials per channel (`bc06cbc`); watched rule all / unwatched only / resume after last watched (Mix tab, `test/ui` "Mix tab saves…"; no unit test of the rule itself yet). |
+| N-05 | Specials, watched-only, duplicate controls | D [N04; watched-only worded as Plex watched] | D [N04] | ? | ? | **V** duplicates removed [A15, D3]; season-0 specials per channel; watched rules all / unwatched (never empties a channel) / resume after last watched, applied after exclusions (`ondemand.test.ts` N-05 ×4, `metadata.test` N-05). |
 | N-06a | Kid channel flag; R-rated after-hours restriction | D [N04] | D [N04] | D [N02 mature/kid filtering] | ? | **V** kid channels air only ≤PG, unrated stays off; restricted hours keep higher ratings out and nothing straddles the edge (`dayparts.test` N-06a ×2, `server.test` N-06a). |
 | N-06b | PIN-locked restricted channels with scrambling visuals | D [N10 v0.9.12; Pro? ] | D [same] | D [N10 "Docker/web support"] | ? | **V** scrypt-hashed PIN, slowed guesses, 4 h unlock; locked channels cost 0 bytes and 0 calls until unlocked, guide/banner/breaks redacted, picture scrambled (`pinlock.test`, `server.test` N-06b ×6, `test/ui` locked channels ×2, `test/ui/player` N-06b). |
-| N-07 | Content groups, order/shuffle, EPG description | D [N06; web remote on desktop browser] | P [N06 silent on mobile/TV creation] | D [N02 Groups tab; N10 Groups browse] | ? | — not started. |
+| N-07 | Content groups, order/shuffle, EPG description | D [N06; web remote on desktop browser] | P [N06 silent on mobile/TV creation] | D [N02 Groups tab; N10 Groups browse] | ? | **V** content groups: ordered sets saved, aired as a channel, used in custom channels and slots, named in the guide (`server.test` N-07; `test/ui/groups` ×3). |
 | N-08 | Ordering modes | D 8 modes [N03] | D 8 modes [N03] | D 4 modes only [N02] | ? | **V** all 8 modes unit-tested (F2 in `test/clock.test.ts`) and offered in the builder [A09]. Same intent as NTV, not verified identical. |
 | N-09a | Weights (0-100 sliders), time slots w/ weekday recurrence, restricted hours | D [N13, web UI advanced tab] | P [N13 is web UI] | D [N02 weights, time slots, restricted hours] | ? | **V** weights (0 never airs) (`mix.test` N-09a), weekday time slots and restricted hours (`dayparts.test` N-09a, N-06a), set in the channel editor and Mix tab. |
 | N-09b | Exclusions | P [N02 lists exclusions for Docker] | ? | D [N02] | ? | **V** per-file exclude, reversible (`server.test`); genre exclusions and "keep off the air" in the Mix tab (`test/ui` channel mix and exclusions); excluded files never air (`library.test` B5/E6). |
@@ -72,40 +72,40 @@ Order follows handoff N-01..N-28; suffix letters are splits; N-29+ are additions
 | N-11b | Custom colors/fonts, theme import/export | D [N09 clone, edit, import/export] | D [N09] | D [N02 browser-editable] | ? | **V** theme editor: build, apply live, save, cancel restores; import/export (`test/ui` themes N-11b ×2, `93b9d1d`). |
 | N-12 | CRT effects, bezels, tuning sounds/screens | D [N01; N05 Classic CRT bezel option] | D [N10 v0.9.12 CRT/4:3 on mobile] | D CRT/bezel [N02]; tuning sounds ? | ? | **V** CRT, static, tuner sounds [A08]; optional TV set (plastic or wood console with a VHF dial) (`test/ui` TV set N-12). |
 | N-13 | Number-key tuning, guide navigation | D [N01 "type the channel number"] | P [no number-key claim; N10 D-pad/controller] | ? (web /watch) | ? | **V** number entry [A02], up/down, last channel [A03], guide arrows [A05, A06]; fast surfing requests media only where it lands [A25] (cost measured in EXP-002/006). |
-| N-14 | Hover tuning, startup choices, D-pad mapping | D [N05: auto-change channel, start on On Demand, swap D-pad] | D [N05; N10 mobile D-pad] | ? | ? | **P/V** start on last channel [A10] or the guide, guide idle action (`test/ui`); full remote/D-pad navigation in TV mode (`test/ui` remote 10-foot). No hover-tune. |
-| N-15 | Guide display options (scroll, time indicator, dim ended, 24h clock, idle action) | D [N05] | D [N05] | ? | ? | **P/V** 12 h grid, now line, 24-hour clock [A05, A06, A08]; aired-part shading, picture-in-guide, padding tails, idle action (`test/ui` guide). No scroll-speed option. |
+| N-14 | Hover tuning, startup choices, D-pad mapping | D [N05: auto-change channel, start on On Demand, swap D-pad] | D [N05; N10 mobile D-pad] | ? | ? | **V** start on last channel [A10] or the guide, guide idle action, remote/D-pad navigation (`test/ui`). Hover-tune declined by design: the guide previews the highlighted channel from the station clock only, 0 calls / 0 bytes (`test/ui` N-14, `c8e67c9`); can be turned off. |
+| N-15 | Guide display options (scroll, time indicator, dim ended, 24h clock, idle action) | D [N05] | D [N05] | ? | ? | **V** 12 h grid, now line, 24-hour clock [A05, A06, A08]; aired shading, picture-in-guide, padding tails, idle action, clock-only preview (`test/ui` guide); page size and scroll speed settings, Channel Up/Down turn a page (`N-15` test). |
 | N-16 | Logo overlay mode/position/opacity, rating at start | D [N05] | D [N05] | ? | ? | **V** channel bug with corner and opacity settings, logos, rating card at program start (`fc8f20b`, `7e3bc92`; `server.test` N-03/N-16) [A02]. |
 | N-17a | Force 4:3 / widescreen zoom | D [N05; N01 what's-new 16:9/4:3] | D [N10 mobile 4:3] | ? | ? | **V** Z cycles auto, fill, 4:3 and zoom [A28]. |
 | N-17b | Auto sign-off (up to 8 h), guide idle | D [N05] | D [N05] | ? | ? | **V** "Still watching?" after the idle limit, then streaming stops and a key returns to live (`test/ui/player` N-17b ×2). |
-| N-18a | Subtitle and audio-track / language options | D [N05] | D [N05] | D [N02 watch UI track selection] | ? | **P/V** compatibility stream plays the chosen audio track and sends text subtitles beside it, image subtitles burned in (`compat.test` N-18a); A/C keys choose audio and captions (`4543139`). Track choice isn't driven in a browser test yet. |
+| N-18a | Subtitle and audio-track / language options | D [N05] | D [N05] | D [N02 watch UI track selection] | ? | **V** audio language and captions chosen with A/C, in step with the picture, carried across channels (`test/ui/player` N-18a); compat stream track choice, text subs, image subs burned in, Opus where AAC can't play (`compat.test` N-18a ×2). |
 | N-18b | ExoPlayer vs libmpv, live switch | D [N05; N10 v0.9.12 live switching] | D [same] | X [engine is client-side; ? not stated] | ? | **P (different design)** browser player with one direct → compatibility fallback, never a loop [A20, A24]; no engine choice. |
-| N-19 | Direct play / transcode cap, DTS transcode, passthrough, delivery badges | D [N05; N10 v0.9.12; N01 4K/HDR/DV] | D [same] | ? | ? | **P/V** direct play [A20]; compatibility mode for undecodable audio [A24] with track choice and subtitle burn-in (`compat.test`). No transcode cap or passthrough. |
+| N-19 | Direct play / transcode cap, DTS transcode, passthrough, delivery badges | D [N05; N10 v0.9.12; N01 4K/HDR/DV] | D [same] | ? | ? | **V** direct play [A20]; compatibility mode [A24]; height cap for converted video (`compat.test` N-19). Passthrough: **won't do (platform)**, browsers can't bitstream AC-3/DTS (ADR-0004). |
 | N-20 | Playback reporting; 90% watched threshold | D [N05] | D [N05] | ? | ? | **V** seen file time is reported [A22]; watched flips between 85% and 92% [A23]; D8; mark/forget/export history (`server.test` history). |
 | N-21 | Commercials between/inside programs, bumpers, idents | D [N01; Pro per N11] | D [same] | D [N02, N14] | ? | **P/V (by design)** no commercials or bumpers (they'd fetch media nobody asked for). Long breaks rotate up next / later / on now elsewhere plus a station ident slide, 0 media requests (`test/ui` station breaks). |
 | N-22a | Break groups/sequences, padding, per-channel pools | D [N01; N02] | D [N01] | D [N02] | ? | **P/V** slot padding becomes a station break [A16]; no break groups or per-channel pools. |
 | N-22b | Mid-break: halfway / chapters | D [N01 "chapter"; N10] | D [same] | D [N02 HALFWAY, CHAPTERS] | ? | **V** chapters become mid-program breaks where they fit the slot [A17; `server.test` N-22b; MKV and MP4 chapters]. No halfway mode for files without chapters (by design: breaks aren't guessed). |
-| N-22c | Mid-break: silence detection | X [N14: server-side only] | X [same] | D [N02 ffmpeg, Docker only] | ? | — not started. |
-| N-23a | Music/radio ("Tune Choice") | D [N01; N10 new stations] | D [same] | D [N02 + visualizer] | ? | — not started. |
+| N-22c | Mid-break: silence detection | X [N14: server-side only] | X [same] | D [N02 ffmpeg, Docker only] | ? | **V (local only)** ffmpeg silence detection finds break points for local files without chapters, same edge/spacing rules as chapters (`silence.test` N-22c ×4). Never for debrid files: it would read unwatched media (EXP-010). |
+| N-23a | Music/radio ("Tune Choice") | D [N01; N10 new stations] | D [same] | D [N02 + visualizer] | ? | **V** Jukebox channel from local MP3/FLAC/Ogg/Opus/WAV, songs back to back on station time, sleeve, details and spectrum analyser; sound-only compat stream (`audio.test` N-23a ×5, `compat.test` N-23a, `test/ui` music ×2). No internet radio. |
 | N-23b | Weather channels (WeatherStar 4000, Storm) | D [N01 Storm; N10 EAS crawls] | D [same] | D [N02; Storm falls back to offline simulation] | ? | — not started. |
-| N-23c | Trailers channel ("What's On") | D [N01; N10] | D | D [N02] | ? | — not started. |
+| N-23c | Trailers channel ("What's On") | D [N01; N10] | D | D [N02] | ? | **V** Coming Attractions: local trailers (beside the film or in `Trailers/`) back to back, offering the film when it's in the library (`trailers.test` N-23c ×2, `test/ui/stations`). No online trailers. |
 | N-24a | Plex / Jellyfin / Emby Live TV imports | D [N01; N02] | D [N01] | D [N02 EPG] | ? | — not started. |
 | N-24b | M3U / XMLTV / HDHomeRun imports | D [N01; N10 editable sources] | D [same] | D [N02 External Sources, browser refresh] | ? | — not started. |
 | N-24c | Live stream channels from URL (.m3u8) | D [N04] | D [N04] | D [N02] | ? | — not started. |
 | N-25 | Cloud schedule/config sync via user-owned Firebase | D schedule only [N08]; config sync Pro [N10 v0.5.x, N11] | D [same] | ? | ? | — not started. Any cloud path sits behind the closed `cloud-relay` gate. |
 | N-26a | Full-snapshot vs lineup-only config export/import | D [N07] | D [N07] | D [N02 per-profile or whole server; tokens excluded] | ? | **V** export of settings or channels only, never keys or the PIN hash; lineup round-trips without stealing numbers (`server.test` F4, N-06b; `library.test` F4; `64a0382`). |
-| N-26b | Local pairing by 4-digit PIN (same Wi-Fi) | D [N07] | D [N07] | ? | ? | — not started (needs the `sharing` gate). |
-| N-26c | Primary/follower (cloud sync) | D [N07] | D [N07] | ? | ? | — not started. |
+| N-26b | Local pairing by 4-digit PIN (same Wi-Fi) | D [N07] | D [N07] | ? | ? | **V** home-network pairing: PC-only switch (off by default), private addresses only, short-lived code typed on the TV/phone, revocable; setup stays on the PC (`lan.test` ×8, `test/ui/player` revoked device, `test/ui/stations` 401 → pair). This is the opened `sharing` gate. |
+| N-26c | Primary/follower (cloud sync) | D [N07] | D [N07] | ? | ? | **N/A (by design)** one PC is the server; paired TVs and phones watch its lineup directly, so there is nothing to keep in sync (`lan.test` "pair a TV, watch, and keep setup on the PC"). Cloud sync is N-25. |
 | N-26d | Docker pairing code onboarding | D [N10 v0.9.12] | D [same] | D [same] | ? | — not applicable yet (no companion server). |
-| N-27a | Browser UI (watch + configure) | X (TV app itself) / D web remote [N06, N07] | D [N01 web interface] | D [N02 ports 19850 /watch /configure] | ? | **V** watch and configure in one browser page on 127.0.0.1 [A01-A27]. |
+| N-27a | Browser UI (watch + configure) | X (TV app itself) / D web remote [N06, N07] | D [N01 web interface] | D [N02 ports 19850 /watch /configure] | ? | **V** watch and configure in a browser on the PC [A01-A28]; paired TVs and phones on the home network can watch but not change setup (`lan.test` "keep setup on the PC"). |
 | N-27b | Long-horizon schedule | P 8h default, up to ~1 week "Extended" [N12]; Play says nothing | P [same] | D 30 d default, 24-2160 h [N02] | ? | **V** schedule is computed, so any horizon is free: 12 h guide costs 0 calls [A05], the airing 3 h ahead is identical across restarts [A12], 100 ch × 30 d = 0 calls (EXP-001). |
 | N-27c | Scheduled automatic backups | ? | ? | D [N02 weekly, one-click restore] | ? | **V** daily settings backups, listed, trimmed, restorable, no keys inside (`server.test` N-27c). |
 | N-28 | HDHomeRun/IPTV tuner export | P [N01 "Acts as a tuner" via companion] | P | D [N02; unauthenticated by default, disable with HDHR_ENABLED=false] | ? | **G** `tuner-export` gate exists, closed by default (test "gates default closed"); nothing built behind it. |
 | N-29 | Multi-profile (up to 6, kid/adult, PIN, Plex Home link) | D Pro [N11, N01] | D Pro [same] | D [N02] | ? | — not started. |
-| N-30 | On Demand browse, search, voice search, Continue Watching, rent-mode channels | D [N10 v0.9.12; N01] | D [same] | D [N02 On Demand, Continue Watching; rent/voice ?] | ? | — not started. |
+| N-30 | On Demand browse, search, voice search, Continue Watching, rent-mode channels | D [N10 v0.9.12; N01] | D [same] | D [N02 On Demand, Continue Watching; rent/voice ?] | ? | **V** On Demand: browse, search, season tabs, resume or start over, seek, own history, back to live at the end; Continue Watching with next-up episodes; reads local facts only (`ondemand.test` N-30 ×4, `server.test` N-30, `test/ui/ondemand` ×5, demo test). No voice search or rent-mode channels. |
 | N-31 | Chromecast | ? | D [N01; N10 v0.5.16] | ? | Chromecast: D [N01 "from compatible mobile devices"] | — not started. |
-| N-32 | Seasonal lineups (Oct-Dec holiday) | D [N01 marketing claim] -> mark P | P | ? | ? | — not started. |
+| N-32 | Seasonal lineups (Oct-Dec holiday) | D [N01 marketing claim] -> mark P | P | ? | ? | **V** seasonal channels (off air out of season, says when they're back) and dated slots, ranges inclusive and wrapping the new year (`dayparts.test` N-32 ×3, `server.test` N-32, `test/ui/groups` seasonal ×2). No built-in holiday presets. |
 | N-33 | Fire TV support | ? | ? | ? | Fire TV: P [N10 mentions Fire TV stability fixes only; no listing] | — not started. |
-| N-34 | iOS / Apple TV / Roku / web-only client | ? | ? | P [browser /watch] | iOS: ? | **P/V** any desktop browser; phone-width guide fits [A26]; TV mode for a big screen with a remote (`test/ui` remote 10-foot). Other devices can't reach it: the server binds 127.0.0.1 and LAN access is the `sharing` gate. |
+| N-34 | iOS / Apple TV / Roku / web-only client | ? | ? | P [browser /watch] | iOS: ? | **P/V** any desktop browser; phone-width guide [A26]; TV mode with a remote; paired phones and TVs on the home network (`lan.test`). No native apps; not reachable outside the home network. |
 | N-35 | Join programs in progress | D [N01 marketing claim] -> P | P | ? | ? | **V** tuning lands at station time, 0.1-0.15 s drift [A20]; pause 5 s then resume returns to live [A21]; C2/C3 tests. |
 | N-36 | Weather EAS alert crawls | D [N10 v0.9.12] | D | ? | ? | — not started. |
 | N-37 | Stream/delivery status badges, HDR/audio badges | D [N10; N01] | D | ? | ? | **V** banner badges for live, break, watched, refused, route, provider, rating [A04, A24], plus resolution, HDR and sound chips (`test/ui` format chips N-37, `probe.test` N-37). |
@@ -113,13 +113,13 @@ Order follows handoff N-01..N-28; suffix letters are splits; N-29+ are additions
 
 Reading notes: a cell like "D x / P y" means sources disagree on that surface; see Discrepancies. N-32 and N-35 are advertising claims without GitBook mechanics, so downgraded to P. "?" in the Docker column often just means the README is silent; the server may share the feature.
 
-## Scoreboard (2026-10-11, round 3: release `97666b5`)
+## Scoreboard (2026-10-11, round 5: PR #2 + polish `af04721`)
 
-61 rows. **V 28 · P/V 11 · P 1 · G 1 · not started 18 · N/A 2.**
+61 rows. **V 43 · P/V 3 · P 1 · G 1 · not started 10 · N/A 3.**
 
-39 rows now have tested behaviour in the app (round 2: 32, round 1: 22), 28 of them fully. The round-2 gaps all landed with tests: auto sign-off, audio/subtitle choice in compatibility mode, PIN-locked channels, weights/premieres/marathons/balance/reshuffle, theme editor, TV set bezel, rating card, format chips, daily backups and channels-only export. The playback checks A20/A21/A25 now also run in `npm test` (`test/ui/player.test.ts`).
+Round 5 polish moved N-01d (id-based dedupe), N-02a (seasonal presets) and N-15 (guide paging) to V. Round 4: 46 rows had tested behaviour in the app, 40 of them fully (round 3: 39 and 28; round 1: 22 and 9). Round 4 closed every routed gap: On Demand and Continue Watching, content groups, seasonal lineups, watched rules with tests, the Jukebox and Coming Attractions channels, silence-detected breaks for local files, audio/caption choice in a browser test, the transcode cap, online posters from TMDB, and home-network pairing for TVs and phones.
 
-What's left is mostly whole product areas rather than missing switches: content groups, On Demand and Continue Watching, profiles, seasonal lineups, and the non-library channel types (music, trailers, weather, live/M3U), several of which depend on Zachary's decisions about outside traffic and LAN access.
+All 10 rows still not started need an outside source or a product decision: Plex/Jellyfin/Emby and live TV/M3U sources, weather and EAS, cloud sync, profiles, and native Chromecast/Fire TV apps. The remaining partial rows are partial by design (no commercials, no break pools, browser player instead of an engine choice) or need native apps (N-34).
 
 ## App audit
 
@@ -135,7 +135,9 @@ NO_PROXY=127.0.0.1 node docs/parity/audit/app-audit.mjs
 | Round 1 | trial merge with C `y7lgyq` + B `uy3380` | 25/27, then 26/27 once C added the Library tab (A27) |
 | Round 2 | trial merge with C `446sg8` `6ed75dd` + B `uy3380` `f5aca03` | 27/27 audit, but `npm test` 165/166: the channel editor crashed on `logo: null` (reported; fixed by B's `2b17a5c`) |
 | Round 2 | shared `cffbc0d` + C `446sg8` `4a73787` (local merge `68985ad`) | 28/28 ([app-audit-merged.json](evidence/app-audit-merged.json)); `npm test` 169/169 |
-| **Round 3** | **shared release `97666b5`** | **28/28** ([app-audit.json](evidence/app-audit.json)); `npm test` **214/214** |
+| Round 3 | shared release `97666b5` | 28/28; `npm test` 214/214 |
+| Round 4 | PR #2 head `4c24574` (`project-thread-claayu`) | 28/28 ([app-audit.json](evidence/app-audit.json)); `npm test` 283/283 |
+| **Round 5** | **PR #2 `b62c1d9` + polish `8sv8fc` `af04721`** (local merge) | rows N-01d, N-02a, N-15 re-scored from tests; `npm test` **290/291**, the 1 failure a flaky guide-test teardown (file passes 3/3 alone) |
 
 | Check | What it proves | Rows | Latest |
 |---|---|---|---|
@@ -170,24 +172,19 @@ NO_PROXY=127.0.0.1 node docs/parity/audit/app-audit.mjs
 
 Limits: local files only (C's `createApp` tests in `test/server.test.ts` cover the provider paths against the mock providers), Chromium without H.264, and A25 may land on a channel in a break, so it shows no stray streams rather than the cost of the final tune (EXP-002/006 measure that). Rows also cite unit and browser tests by name (`test/ui/guide.test.ts`, `test/dayparts.test.ts`, `test/metadata.test.ts`, `test/server.test.ts`, `test/library.test.ts`).
 
-## Gaps, ranked (2026-10-11, round 3)
+## Gaps, ranked (2026-10-11, round 4)
 
-Owner = workstream from `docs/HANDOFF.md` §7. Items that need Zachary are listed separately.
+Owner = workstream from `docs/HANDOFF.md` §7. Every round-3 gap shipped; what's left is small or needs Zachary.
 
 | # | Gap | Rows | Owner | Why it matters |
 |---|---|---|---|---|
-| 1 | Content groups: named sets of shows/films with their own order and guide description, usable to build channels | N-07 | C (+ B UI) | NTV's main way to organise big libraries; today only channel-by-channel picks. |
-| 2 | Seasonal lineups: channels or slots active only between dates (October horror, December holidays) | N-32 | C (dayparts by date) + B | Small extension of the existing slot/window clock; very on-theme. |
-| 3 | Trailers channel from local `-trailer` files (Kodi naming) | N-23c | C | Free with local files; no outside traffic. |
-| 4 | Continue Watching / On Demand browse and search | N-30 | B + C | History and resume data exist; nothing lets you pick a program outside the live lineup. Costs media only when picked. |
-| 5 | Unit test for watched rules (unwatched only, resume) | N-05 | C | Rule ships and is in the UI but has no direct test. |
-| 6 | Browser test for audio/caption choice | N-18a | A | Server side is tested; the A/C keys aren't driven in a browser test. |
-| 7 | Music channel from local audio files, with a visualiser | N-23a | C + A | Library-first fit; bytes only while listening. |
-| 8 | Silence-detected breaks for local files only | N-22c | C | Free for local files (no provider bytes); never for debrid files, which would mean reading unwatched media. |
-| 9 | Hover-tune in the guide: decide and record | N-14 | B | Real hover-tune opens media while browsing and breaks the zero-cost guide (A05). Recommend: decline, or preview from the clock only. |
-| 10 | Transcode cap / audio passthrough | N-19 | A | Low: compatibility mode already covers what the browser can't play. |
+| 1 | Try the app on real TV hardware over the home network: Fire TV (Silk), Android TV browser, Chrome tab-cast to a Chromecast | N-31, N-33, N-34 | A (PC runbook step; Zachary runs it) | Pairing is tested in Chromium only. If a TV browser plays it, these rows move without building native apps. |
+| 2 | ~~Dedupe by id~~ · ~~seasonal presets~~ · ~~guide paging~~ | N-01d, N-02a, N-15 | C, B | Done in round 5 (`c51255c`, `af04721`). |
+| 3 | Flaky teardown in `test/ui/guide.test.ts`: a `page.route` fetch still in flight when the context closes raises an unhandledRejection (1 failure in a full run, 0 in 3 runs of the file alone) | — | B | Intermittent red `npm test`. Fix: `await page.unrouteAll({ behavior: "ignoreErrors" })` before closing. |
 
-Needs Zachary: profiles with separate history (N-29, low effort but a product choice), LAN/phone/Chromecast/Fire TV access (`sharing` gate: N-34, N-26b/c, N-31, N-33), Plex/Jellyfin/Emby sources (N-01a, N-24a), live streams and M3U/XMLTV (N-24b/c), weather and EAS (N-23b, N-36), online metadata (N-01c), cloud sync (N-25), tuner export (N-28).
+Needs Zachary (product or outside-traffic decisions): profiles with separate history and kid/adult split (N-29), Plex/Jellyfin/Emby sources (N-01a, N-24a), live streams and M3U/XMLTV/HDHomeRun (N-24b/c), weather and EAS crawls (N-23b, N-36; need an online weather source), cloud sync (N-25, `cloud-relay` gate), tuner export (N-28, `tuner-export` gate).
+
+Recorded as by design (not gaps): no commercials or bumpers and no break pools (N-21, N-22a: would fetch unwatched media), no audio passthrough (N-19, ADR-0004), no hover-tune media (N-14: clock-only preview), silence detection never on debrid files (N-22c, EXP-010), no player-engine choice (N-18b).
 
 ## Discrepancies
 

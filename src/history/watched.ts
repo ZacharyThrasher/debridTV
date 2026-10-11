@@ -25,6 +25,12 @@ export class WatchLedger {
     return (this.spans.get(itemId) ?? []).reduce((n, [a, b]) => n + (b - a), 0);
   }
 
+  /** The furthest file time seen (end of the last span), 0 if none: where "resume" picks up. */
+  furthestMs(itemId: string): number {
+    const list = this.spans.get(itemId);
+    return list?.length ? list[list.length - 1]![1] : 0;
+  }
+
   /** Plain data for persistence. */
   export(): Record<string, Array<[number, number]>> {
     return Object.fromEntries(this.spans);

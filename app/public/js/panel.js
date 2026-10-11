@@ -8,6 +8,7 @@ import { api } from "./api.js";
 import { html, raw, esc, fmtBytes, fmtDur, ago, pref, setPref, toast, fmtTime } from "./util.js";
 import { tv, applyVolume } from "./player.js";
 import { keepFocus } from "./spatial.js";
+import { onlineCard, onlinePrivacyLine } from "./online.js";
 
 const panel = document.getElementById("panel");
 const body = document.getElementById("panel-body");
@@ -41,6 +42,7 @@ let tabTimer = 0;
 
 /** `section` picks a part of a tab: openPanel("library", "ratings") opens the age ratings and focuses its search. */
 export function openPanel(which = tab, section) {
+  if (which === "sources" && document.documentElement.dataset.where === "device") which = "look"; // Sources is PC only
   if (which === "library" && (section === "ratings" || section === "files")) lib = { ...lib, view: section };
   panel.hidden = false;
   document.body.classList.add("panel-open");
@@ -143,6 +145,7 @@ async function sources() {
       <div class="row-actions"><button class="btn" data-local>Save folders</button></div>
     </div>
 
+    ${raw(await onlineCard(render))}
     <h3>Program lengths</h3>
     <p class="lead">A channel can only schedule a program once its exact running time is known. DebridTV learns it by reading a few kilobytes from the start of each file. It never downloads whole files, and it only runs when you start it.</p>
     <div class="src">
@@ -162,7 +165,29 @@ async function sources() {
             </div>
             <div class="muted">A scan asks for one playback link per file and reads its header. Files a provider refused or hasn't finished are skipped.</div>`}
     </div>
+    ${s.local.connected ? raw(await silenceCard()) : ""}
     <p class="muted">Your keys and library facts are stored in <code>${s.dataDir}</code>.</p>`;
+}
+
+/** N-22c: break points from silences, for episodes on this PC without chapters. Off until started. */
+async function silenceCard() {
+  const v = await api.get("/api/silence").catch(() => null);
+  if (!v || !v.eligible) return "";
+  const pct = v.total ? Math.round((v.done / v.total) * 100) : 0;
+  return html`<h3>Breaks in your own files</h3>
+    <p class="lead">Episodes on this PC that have no chapters can still get station breaks where the sound drops out, like the fade before an ad. DebridTV listens to each file's soundtrack once, on this PC. Files from Real-Debrid or TorBox are never checked: that would mean downloading them.</p>
+    <div class="src">
+      ${v.running
+        ? html`<div class="src-head"><b>Listening${v.current ? html`: ${v.current}` : ""}</b><span class="muted">${v.done} / ${v.total}</span></div>
+            <div class="progressbar"><i style="width:${pct}%"></i></div>
+            <div class="row-actions"><button class="btn" data-silence-stop>Stop</button></div>`
+        : html`<div class="src-head"><b>${v.withBreaks} of ${v.eligible} episodes have break points from silences</b></div>
+            ${!v.ffmpeg ? html`<div class="muted" style="color:var(--warn)">This needs ffmpeg on this PC.</div>` : ""}
+            <div class="row-actions">
+              <button class="btn primary" data-silence-start ${v.pending && v.ffmpeg ? "" : "disabled"}>${v.pending ? `Check ${v.pending} episode${v.pending === 1 ? "" : "s"}` : "All checked"}</button>
+              <span class="muted">Uses this PC's processor for a moment per episode. Breaks change once the program on now ends.</span>
+            </div>`}
+    </div>`;
 }
 
 function accountLine(id, a) {
@@ -226,6 +251,14 @@ body.addEventListener("click", async (e) => {
       onChange();
     } else if ("scanStart" in b.dataset) {
       await api.post("/api/scan/start", { perMinute: Number(document.getElementById("pace")?.value ?? 30) });
+    } else if ("silenceStart" in b.dataset) {
+      busy("Starting…");
+      const r = await api.post("/api/silence/start");
+      toast(`Listening to ${r.total} episode${r.total === 1 ? "" : "s"} for quiet moments.`);
+      render();
+    } else if ("silenceStop" in b.dataset) {
+      await api.post("/api/silence/stop");
+      render();
     } else if ("scanStop" in b.dataset) {
       await api.post("/api/scan/stop");
     } else if ("scanRetry" in b.dataset) {
@@ -238,6 +271,17 @@ body.addEventListener("click", async (e) => {
     } else if ("gotoLibrary" in b.dataset) {
       lib = { ...lib, status: b.dataset.gotoLibrary, provider: b.dataset.provider === "local" ? "local" : b.dataset.provider ?? "", q: "", limit: 50 };
       return showTab("library");
+    } else if (b.dataset.preset) {
+      busy("Adding…");
+      const r = await api.post("/api/presets", { id: b.dataset.preset });
+      const c = r.preset?.channel;
+      toast(c ? `${r.preset.name} is channel ${c.number}. It airs ${r.preset.season.inSeason ? "now through" : "from"} ${monthDay(r.preset.season.inSeason ? r.preset.season.to : r.preset.season.from)}.` : "Added.");
+      onChange();
+      return void render();
+    } else if ("contentGroups" in b.dataset) {
+      // N-07: groups.js (B) owns the dialog; a change can add or drop a group channel.
+      const { openGroups } = await import("./groups.js");
+      return void openGroups({ onChanged: () => (onChange(), render()) });
     } else if ("exclusions" in b.dataset) {
       const mod = await import("./channel-editor.js").catch(() => null);
       if (mod?.openExclusions) return void mod.openExclusions({ onSaved: () => (onChange(), render()) });
@@ -304,9 +348,10 @@ body.addEventListener("click", async (e) => {
       const name = document.getElementById("cname").value.trim();
       const showKeys = [...body.querySelectorAll("[data-show]:checked")].map((i) => i.dataset.show);
       const movieIds = [...body.querySelectorAll("[data-movie]:checked")].map((i) => i.dataset.movie);
+      const groupIds = [...body.querySelectorAll("[data-group]:checked")].map((i) => i.dataset.group);
       if (!name) return toast("Give the channel a name.");
-      if (!showKeys.length && !movieIds.length) return toast("Pick at least one show or movie.");
-      await api.post("/api/channels/custom", { name, showKeys, movieIds, ordering: document.getElementById("cord").value, slotMinutes: Number(document.getElementById("cslot").value) });
+      if (!showKeys.length && !movieIds.length && !groupIds.length) return toast("Pick at least one group, show or movie.");
+      await api.post("/api/channels/custom", { name, showKeys, movieIds, groupIds, ordering: document.getElementById("cord").value, slotMinutes: Number(document.getElementById("cslot").value) });
       toast(`${name} is on the air.`);
       onChange();
     } else if ("pinSet" in b.dataset) {
@@ -395,7 +440,7 @@ const ORDERINGS = {
 };
 
 async function channels() {
-  const [r, lk] = await Promise.all([api.get("/api/channels"), api.get("/api/lock").catch(() => null)]);
+  const [r, lk, pre] = await Promise.all([api.get("/api/channels"), api.get("/api/lock").catch(() => null), api.get("/api/presets").catch(() => ({ presets: [] }))]);
   const lockBtn = (c) => !lk?.pinSet ? "" : html`<button class="btn" data-lock-channel="${c.id}" data-on="${c.locked ? "1" : "0"}" aria-pressed="${String(!!c.locked)}"
     aria-label="${c.locked ? "Unlock" : "Lock"} ${c.name}" style="${c.locked ? "color:var(--amber);border-color:var(--amber)" : "opacity:.5"}" title="${c.locked ? "Locked: needs the PIN to watch" : "Lock with the PIN"}">${c.locked ? "🔒" : "🔓"}</button>`;
   const items = r.channels.map((c) => {
@@ -415,17 +460,40 @@ async function channels() {
     <p class="lead">Channels build themselves from your library and keep their numbers when it changes. Hide the ones you don't want, or make your own.</p>
     ${lk?.pinSet && !lk.unlocked && lk.lockedChannels ? raw(pinRow("Some channels are locked, so changing channels needs the parental PIN.")) : ""}
     <div class="row-actions" style="margin-bottom:1em"><button class="btn primary" data-new-channel>+ New channel</button>
+      <button class="btn" data-content-groups>Content groups…</button>
       <button class="btn" data-exclusions>Keep shows or genres off every channel…</button></div>
+    ${pre.presets.length ? raw(seasonalPresets(pre.presets)) : ""}
     <div class="list">${raw(items.join(""))}</div>`;
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const monthDay = (md) => `${MONTHS[Number(md.slice(0, 2)) - 1]} ${Number(md.slice(3))}`;
+
+/** Ready-made seasonal channels the library has enough for (N-02a). */
+function seasonalPresets(list) {
+  const rows = list.map((p) => {
+    const what = [p.shows && `${p.shows} show${p.shows === 1 ? "" : "s"}`, p.films && `${p.films} film${p.films === 1 ? "" : "s"}`].filter(Boolean).join(" and ") || "nothing yet";
+    const when = `${monthDay(p.season.from)} to ${monthDay(p.season.to)}`;
+    const state = p.channel ? `On channel ${p.channel.number}${p.season.inSeason ? ", on the air now" : ", waiting for its dates"}` : "";
+    return html`<div class="li x-preset" style="grid-template-columns:1fr auto">
+      <div><div class="t">${p.name} <small class="muted">${when}</small></div>
+        <div class="d">${p.description}</div>
+        <div class="d">${what} from your library, ${p.hours} h${state ? html` · <b>${state}</b>` : ""}</div></div>
+      <div class="inline"><button class="btn ${p.added ? "" : "primary"}" data-preset="${p.id}" title="${p.added ? "Picks up anything new that fits" : "Adds a channel that airs only between these dates"}">${p.added ? "Update" : "Add"}</button></div></div>`;
+  });
+  return html`<div class="field"><label>Seasonal channels</label>
+    <p class="muted" style="margin:.2em 0 .6em">Ready-made from the genres in your files. Each is a content group with its own channel, on the air only between its dates; remove one in Content groups.</p>
+    <div class="list">${raw(rows.join(""))}</div></div>`;
+}
+
 async function builder() {
-  const lib = await api.get("/api/library");
+  const [lib, grp] = await Promise.all([api.get("/api/library"), api.get("/api/groups").catch(() => ({ groups: [] }))]);
   return html`<h3>New channel</h3>
     <div class="field"><label for="cname">Name</label><input class="input" id="cname" maxlength="40" placeholder="Saturday Morning"></div>
     <div class="field"><label for="cord">Order</label><select class="input" id="cord">${raw(Object.entries(ORDERINGS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join(""))}</select></div>
     <div class="field"><label for="cslot">Start programs on the</label><select class="input" id="cslot">
       <option value="0">Next minute (no gaps)</option><option value="15">Quarter hour</option><option value="30" selected>Half hour</option><option value="60">Hour</option></select></div>
+    ${grp.groups.length ? html`<div class="field"><label>Content groups</label><div class="pickgrid">${raw(grp.groups.map((g) => html`<label class="pick"><input type="checkbox" data-group="${g.id}">${g.name}<small>${g.entries.length} pick${g.entries.length === 1 ? "" : "s"}, aired in its own order</small></label>`).join(""))}</div></div>` : ""}
     <div class="field"><label>Shows</label><div class="pickgrid">${raw(lib.shows.map((s) => html`<label class="pick"><input type="checkbox" data-show="${s.key}">${s.name}<small>${s.timed}/${s.episodes} ready</small></label>`).join("") || '<span class="muted">No shows yet.</span>')}</div></div>
     <div class="field"><label>Movies</label><div class="pickgrid">${raw(lib.movies.map((m) => html`<label class="pick"><input type="checkbox" data-movie="${m.id}">${m.title}${m.year ? ` (${m.year})` : ""}<small>${m.timed ? "ready" : "needs scan"}</small></label>`).join("") || '<span class="muted">No movies yet.</span>')}</div></div>
     <div class="row-actions"><button class="btn primary" data-save-channel>Put it on the air</button><button class="btn" data-cancel>Cancel</button></div>`;
@@ -538,6 +606,8 @@ function bugOpts() {
       <select class="input" style="width:auto" data-pref-select="bugOpacity" data-num="1" aria-label="Bug opacity">${raw(levels.map(([v, l]) => `<option value="${v}" ${Math.abs(v - op) < 0.01 ? "selected" : ""}>${l}</option>`).join(""))}</select></span></div>
     <div class="opt"><div><div class="ol">TV set</div><div class="od">Frame the picture in an old set. The wood console's dial turns to the channel. Not on phones.</div></div>
       <select class="input" style="width:auto" data-pref-select="bezel" aria-label="TV set">${raw([["off", "None"], ["classic", "Classic"], ["wood", "Wood console"]].map(([v, l]) => `<option value="${v}" ${v === (pref("bezel") ?? "off") ? "selected" : ""}>${l}</option>`).join(""))}</select></div>
+    <div class="opt"><div><div class="ol">Guide preview</div><div class="od">The guide's corner shows what's on the highlighted channel, from the schedule. It never tunes or loads video while you browse.</div></div>
+      <label class="switch"><input type="checkbox" data-pref="guidePreview" aria-label="Guide preview" ${pref("guidePreview") !== false ? "checked" : ""}><i></i></label></div>
     <div class="opt"><div><div class="ol">Rating card</div><div class="od">Show "Rated PG-13" and the like for a few seconds when a program starts.</div></div>
       <label class="switch"><input type="checkbox" data-pref="ratingCard" aria-label="Rating card" ${pref("ratingCard") !== false ? "checked" : ""}><i></i></label></div>`;
 }
@@ -547,10 +617,31 @@ function signOffOpt() {
   const cur = Number(pref("signOffHours") ?? 4);
   const opts = [[0, "Never"], [2, "2 hours"], [3, "3 hours"], [4, "4 hours"], [6, "6 hours"], [8, "8 hours"]];
   return html`<div class="opt"><div><div class="ol">Sign off after</div><div class="od">With nobody pressing anything, ask "Still watching?" and then stop playing, so a sleeping viewer doesn't stream all night.</div></div>
-    <select class="input" style="width:auto" data-pref-select="signOffHours" data-num="1" aria-label="Sign off after">${raw(opts.map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`).join(""))}</select></div>`;
+    <select class="input" style="width:auto" data-pref-select="signOffHours" data-num="1" aria-label="Sign off after">${raw(opts.map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`).join(""))}</select></div>
+    ${raw(compatQualityOpt())}`;
+}
+
+/** N-19: when a file has to be converted for this browser, how big the picture may be (0 = as the file is, up to 1080p). */
+function compatQualityOpt() {
+  const cur = Number(pref("compatMaxHeight") ?? 0);
+  const opts = [[0, "Original"], [1080, "1080p"], [720, "720p"]];
+  return html`<div class="opt"><div><div class="ol">Max quality when converting</div><div class="od">Some files have to be converted on this PC before the browser can play them. A lower size is easier on an older PC.</div></div>
+    <select class="input" style="width:auto" data-pref-select="compatMaxHeight" data-num="1" aria-label="Max quality when converting">${raw(opts.map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`).join(""))}</select></div>`;
 }
 
 const IDLE_FALLBACK = { stay: "Stay open", close: "Close the guide", tune: "Tune to the highlighted channel" };
+
+/** N-15: how fast the guide glides between rows, and how far Page Up/Down (Channel Up/Down on a remote) goes. */
+function guideScrollOpts(guide, opt) {
+  const speeds = guide.GUIDE_SCROLL ?? { smooth: { label: "Smooth" }, slow: { label: "Slow" }, instant: { label: "Instant" } };
+  const pages = guide.GUIDE_PAGE ?? { 3: "3 channels", 6: "6 channels", screen: "A full screen" };
+  const speed = pref("guideScroll") ?? "smooth";
+  const page = String(pref("guidePage") ?? "6");
+  return html`<div class="opt"><div><div class="ol">Guide scrolling</div><div class="od">How the guide moves between channels, and how far Page Up and Page Down (Channel Up and Down on a remote) jump.</div></div>
+      <span style="display:flex;gap:.4em;flex-wrap:wrap">
+      <select class="input" style="width:auto" data-pref-select="guideScroll" aria-label="Guide scroll speed">${raw(Object.entries(speeds).map(([k, v]) => opt(k, v.label, speed)).join(""))}</select>
+      <select class="input" style="width:auto" data-pref-select="guidePage" aria-label="Guide page size">${raw(Object.entries(pages).map(([k, v]) => opt(k, `Page: ${v}`, page)).join(""))}</select></span></div>`;
+}
 
 async function startupOpts() {
   const [{ channels }, guide] = await Promise.all([api.get("/api/bootstrap"), import("./guide.js").catch(() => ({}))]);
@@ -566,6 +657,7 @@ async function startupOpts() {
           ...channels.map((c) => opt(`ch:${c.id}`, `Channel ${c.number} · ${c.name}`, start))].join(""))}</select></div>
     <div class="opt"><div><div class="ol">When the guide sits idle</div><div class="od">If nobody touches the guide for a while.</div></div>
       <select class="input" style="width:auto" data-pref-select="guideIdle" aria-label="When the guide sits idle">${raw(Object.entries(idle).map(([k, v]) => opt(k, label(v), idleNow)).join(""))}</select></div>
+    ${raw(guideScrollOpts(guide, opt))}
     ${idleNow !== "stay" ? html`<div class="opt"><div><div class="ol">Idle after</div></div>
       <select class="input" style="width:auto" data-pref-select="guideIdleMin" data-num="1" aria-label="Idle minutes">${raw([1, 2, 5, 10].map((n) => `<option value="${n}" ${n === mins ? "selected" : ""}>${n} minute${n === 1 ? "" : "s"}</option>`).join(""))}</select></div>` : ""}`;
 }
@@ -629,6 +721,17 @@ function backupsBlock(bk) {
     <div class="row-actions"><button class="btn" data-backup-now>Back up now</button></div>`;
 }
 
+/** Home network (sharing gate): set up on its own page, and only from this PC itself. */
+async function homeNetworkRow() {
+  const hello = await api.get("/api/lan/hello").catch(() => null);
+  if (hello?.where !== "pc") return "";
+  const lan = await api.get("/api/lan").catch(() => null);
+  const on = !!(lan?.enabled ?? hello.enabled);
+  return html`<div class="opt"><div><div class="ol">Home network · ${on ? "on" : "off"}</div>
+      <div class="od">Watch on a TV, phone or tablet in your home. Each device has to be approved here on this PC, and turning it on is your yes to sharing.</div></div>
+    <a class="btn" href="/lan" target="_blank" rel="noopener">${on ? "Manage devices" : "Set up…"}</a></div>`;
+}
+
 async function privacy() {
   const [b, bk] = await Promise.all([api.get("/api/bootstrap"), api.get("/api/backups").catch(() => null)]);
   const gate = (on, title, desc) => html`<div class="gate"><span class="lock">${on ? "🔓" : "🔒"}</span><div><b>${title} · ${on ? "on" : "off"}</b><span>${desc}</span></div></div>`;
@@ -637,9 +740,11 @@ async function privacy() {
     ${raw(gate(b.gates.sharing, "Sharing", "Letting other people or devices watch your channels. Not built yet, and off until you say so."))}
     ${raw(gate(b.gates.cloudRelay, "Cloud relay", "Streaming through a server instead of your own PC. Off: Real-Debrid treats server traffic differently, so this needs your explicit choice."))}
     ${raw(gate(b.gates.tunerExport, "Tuner export", "Showing your channels to Plex, Jellyfin or other TV apps as a tuner. Off until you say so."))}
+    ${raw(await homeNetworkRow())}
     ${raw(await pinBlock())}
     <h3>What leaves this PC</h3>
     <p class="lead">Only requests to the providers you connected: your account status and library list when you connect or refresh, one link request per program you watch (reused for an hour), the few KB a scan reads, and the video you actually watch. The Meters tab counts all of it.</p>
+    ${raw(await onlinePrivacyLine())}
     <h3>Your data</h3>
     <p class="lead">Everything lives in one folder on this PC. Exports never include your API keys.</p>
     <div class="row-actions">
@@ -756,6 +861,15 @@ async function libList() {
   const chips = Object.entries(STATUS)
     .filter(([k]) => k === "" || r.counts[k] || k === lib.status)
     .map(([k, [label, cls]]) => html`<button class="x-chip ${cls}" data-lib-filter="${k}" aria-pressed="${String(lib.status === k)}">${label} <b>${k ? r.counts[k] ?? 0 : all}</b></button>`);
+  const where = (p) => (p === "local" ? "This PC" : PROVIDERS[p]?.name ?? p);
+  // The same program from several sources (N-01d): one copy airs; say which.
+  const copiesLine = (f) => {
+    const others = [...new Set(f.copies.filter((c) => c.id !== f.id).map((c) => where(c.provider)))].join(", ");
+    const airing = f.copies.find((c) => c.airs);
+    const refused = [...new Set(f.copies.filter((c) => c.refused && c.id !== f.id).map((c) => where(c.provider)))];
+    const note = refused.length ? ` ${refused.join(", ")} refused its copy.` : "";
+    return (airing?.id === f.id ? `Also in ${others}. This copy airs.` : airing ? `Also in ${others}. The ${where(airing.provider)} copy airs instead.` : `Also in ${others}.`) + note;
+  };
   const rows = r.files.map((f) => {
     const [label, cls] = STATUS[f.status] ?? [f.status, ""];
     const facts = [
@@ -773,6 +887,7 @@ async function libList() {
       <div><div class="t">${f.title}</div>
         <div class="d">${facts}</div>
         ${f.status === "ready" ? "" : html`<div class="d x-why ${cls}">${f.message}</div>`}
+        ${f.copies ? html`<div class="d x-copies">${copiesLine(f)}</div>` : ""}
         <div class="d x-name" title="${f.name}">${f.name}</div>
         <div class="x-acts">
           ${canCheck ? html`<button class="linkish" data-check="${f.id}" title="Asks for one playback link">Check now</button>` : ""}

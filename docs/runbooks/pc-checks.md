@@ -18,6 +18,9 @@ don't have time for.
 | 5 | Chrome plays MKV with H.264/HEVC | no | none |
 | 6 | Real-provider surfing numbers (optional) | RD or TorBox | streams what you watch |
 | 7 | Which keys your TV remote sends | no | none |
+| 8 | Online posters (TMDB) | your free TMDB key | titles and years to TMDB only |
+| 9 | Watch on your TV and phone (home Wi-Fi) | no | none (demo channels are fine) |
+| 9b | Real TV boxes: Fire TV, Android TV, Chromecast | no | none (demo channels are fine) |
 
 ## 0. Get the latest code (once)
 
@@ -147,7 +150,65 @@ It only draws on screen and sends nothing. It is not the app: your library stays
 **Send:** a phone photo of the TV screen (the table and the blue line at the top), plus
 the TV's brand and model.
 
-## 8. Clean up
+## 8. Online posters and descriptions (TMDB)
+
+Needs branch `claude/project-thread-jmyyxx` (or the release branch once it's merged in).
+Get a free key at themoviedb.org → Settings → API (the "API Key" or the "API Read Access Token" both work).
+
+1. Start the app with the throwaway folder (skip if it's still running):
+   ```powershell
+   $env:DEBRIDTV_HOME = "C:\Sandbox\debridtv-pctest"; npm start
+   ```
+2. Settings, Sources, **Online artwork**: paste the TMDB key **on that page** and press
+   Turn on. A wrong key is refused and not saved.
+3. Wait for the card to say "Up to date", then open the guide (G) and move over a few shows
+   and films. Note: do posters show beside the description? Are any posters the wrong show?
+4. Save the numbers only:
+   ```powershell
+   Invoke-RestMethod http://127.0.0.1:7337/api/metadata |
+     Select-Object state, titles, withPictures, requests, bytes, lastError | ConvertTo-Json | Set-Content C:\Sandbox\tmdb-numbers.json
+   ```
+
+**Send:** `C:\Sandbox\tmdb-numbers.json`, and the names of any shows with a wrong or missing poster.
+
+## 9. Watch on your TV and phone (home Wi-Fi)
+
+Needs branch `claude/project-thread-av90vu` (or the release branch once it's merged in).
+Nothing leaves your home network; no port forwarding.
+
+1. Start the app (skip if it's still running):
+   ```powershell
+   $env:DEBRIDTV_HOME = "C:\Sandbox\debridtv-pctest"; npm start
+   ```
+2. On the PC open **http://127.0.0.1:7337/lan** and turn on **Let devices on my Wi-Fi watch**.
+   If Windows asks about the firewall, allow **Private networks only** (leave Public unticked).
+3. On the TV's web browser, type the address the page shows (like `192.168.1.20:7337`).
+   You should see **Pair this device**. On the PC press **Pair a device** and type the code
+   on the TV with the remote's number keys (or the on-screen keypad and OK).
+4. Do the same on your phone. Then on the PC, press **Remove** on the phone while it plays:
+   it should stop at once, and reloading the page should show the pairing screen.
+5. On the phone with mobile data on and Wi-Fi off, try the same address: it must not open.
+
+**Send:** yes/no for: TV paired, TV plays, phone paired, Remove stopped the phone, mobile data
+refused. Plus the TV's brand/model if pairing or playback failed.
+
+## 9b. Real TV boxes (home Wi-Fi)
+
+Do step 9 first (Home network access on, the PC's address noted). Demo channels are fine.
+For each box you have, open the address in its browser, pair with the code, then tune a few
+channels and open the guide (G or the menu key) with the **remote only**.
+
+- **Fire TV, Silk browser:** type the address. If a mouse pointer appears instead of a
+  highlight, note it, then try the arrows anyway.
+- **Android TV / Google TV, a browser app** (TV Bro or similar from the Play Store): the same.
+- **Chromecast:** on the PC, Chrome, menu ⋮ → **Cast…** → **Cast tab** → your Chromecast,
+  while the app is open. The PC does the work; use the PC's keyboard, not a remote.
+
+**Record for each:** box and browser name; does the picture play (yes/no, any stutter);
+do arrows, OK and Back work, or only a pointer; do Channel Up/Down change channel and page
+the guide; is any text cut off at the screen edges; sound in step with the picture.
+
+## 10. Clean up
 
 Stop the app (Ctrl+C), then:
 

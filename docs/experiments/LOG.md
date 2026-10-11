@@ -401,3 +401,69 @@ Shared release `97666b5`: audit **28/28**, `npm test` **214/214**. A20/A21/A25 n
 V 28, P/V 11, P 1, G 1, not started 18, N/A 2 (round 2: V 14, P/V 18). Every round-2 gap
 shipped with tests. Remaining gaps are product areas (content groups, seasonal lineups,
 trailers, On Demand) and items that need Zachary (LAN access, outside sources, profiles).
+
+### B4-001 — Hover-tune in the guide: declined, preview from the clock instead (2026-10-11)
+
+**Question.** NostalgiaTV can change channel as the highlight moves through the guide
+(N-14, "auto-change channel"). Should DebridTV?
+
+**Decision.** No. A real hover-tune opens media (a link and the first bytes) for every row
+the highlight passes, which breaks the guide's promise of 0 provider calls and 0 bytes
+(audit A05) and makes browsing cost what surfing costs (EXP-002: 3.6 GB before cancel and
+debounce). Instead, after the highlight rests for 250 ms on another channel, the
+picture-in-guide window shows a slate built from data the guide already has: the channel's
+number and mark, what's on now, the episode, how far in, minutes left, and the program's own
+local art when there is some. The live picture stays on the channel being watched until OK.
+Pref `guidePreview: false` turns the slate off.
+
+**Evidence.** `test/ui/guide.test.ts` "previews the highlighted channel from the station clock
+only (N-14), never media": six moves across rows make 0 `/media`, 0 `/api/prefetch` and 0
+`/api/now` requests, and the bug (channel being watched) never changes. Screens:
+/mnt/project-files/debridTV/screens/guide-look/27-guide-preview*.png.
+
+### EXP-010 — What silence-detected breaks cost, local files only (2026-10-11, C4)
+
+**Question.** N-22c finds break points by decoding a file's whole soundtrack. What does that
+cost on this PC, and does it find a planted silence?
+
+**Method.** ffmpeg `silencedetect=noise=-45dB:duration=0.5`, audio only (`-vn -sn -dn`), on
+(a) the test's 8-minute file with a 2 s gap at 4:00 (16 kb/s mono AAC) and (b) a 44-minute
+720p episode stand-in, stereo AAC 160 kb/s, with 1.5 s and 2 s gaps at 10:00 and 25:00. Cloud
+container CPU, not Zachary's PC.
+
+**Result.** (a) about 0.34 s per file, break at 4:00.5 as planted (`test/silence.test.ts`).
+(b) 10.7 s wall (6.3 s user) for the 44-minute file; both gaps found (600.0–601.5 s and
+1500.0–1502.0 s), so break points at 10:00.8 and 25:01. Provider calls 0, provider bytes 0.
+
+**Decision.** Ship it as a viewer-started job over local episodes without chapters, one file
+at a time, stoppable. Never for Real-Debrid or TorBox files: the same check would download
+every episode in full (about 1 GB per hour of HD) for media nobody is watching.
+`breakpoints()` ignores silence data on anything that isn't local, so a stray value can't
+place a break in a debrid file either.
+
+### PARITY-004 — Audit round 4 on PR #2 (2026-10-11)
+
+PR #2 head `4c24574`: audit **28/28**, `npm test` **283/283**. Register v0.5: V 40, P/V 6, P 1,
+G 1, not started 10, N/A 3 (round 3: V 28, P/V 11). Newly verified: On Demand and Continue
+Watching (N-30), content groups (N-07), seasonal lineups (N-32), watched rules (N-05), Jukebox
+(N-23a) and Coming Attractions (N-23c), silence breaks for local files (N-22c), audio/caption
+choice (N-18a), transcode cap (N-19; passthrough won't-do per ADR-0004), TMDB posters (N-01c),
+home-network pairing (N-26b, N-27a). Every remaining not-started row needs an outside source
+or a product decision from Zachary.
+
+### PARITY-005 — Round 5 polish (2026-10-11)
+
+PR #2 `b62c1d9` merged locally with `project-thread-8sv8fc` `af04721`: N-01d (dedupe by `.nfo`
+and TMDB ids), N-02a (seasonal presets such as October Horror and Holidays, offered only when the
+library has enough) and N-15 (guide page size and scroll speed) move to V. Register v0.6: V 43,
+P/V 3, P 1, G 1, not started 10, N/A 3. `npm test` 290/291: the one failure is a teardown race
+in `test/ui/guide.test.ts` (a routed fetch outliving its context); the file passes 3/3 alone.
+
+### DECISION-001 — A refused copy no longer keeps its title off the air (2026-10-11)
+
+Zachary chose "Play other copy" on the decision card. When one provider refuses
+a title (for example Real-Debrid `infringing_file`), another source's copy that
+is already in the library airs instead, with a small banner note ("Real-Debrid
+refused its copy"). The refused copy itself is never retried, and 409/451/403 stay
+final for it. This reverses the round-5 behaviour (PARITY-005). See ADR-0005.
+Test: `library.test` N-01d/E6.

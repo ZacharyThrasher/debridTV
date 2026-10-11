@@ -275,6 +275,8 @@ test("F4: settings export carries choices, never keys", async () => {
 });
 
 test("N-03/N-16: rename, renumber (a taken number swaps), favorite, logo, kid and schedule settings stored", async () => {
+  // The previous test's exclusion rebuilds the lineup after a short pause; wait for it under load.
+  await until(async () => (await get("/api/bootstrap")).body.channels.length >= 2);
   const chans = (await get("/api/bootstrap")).body.channels;
   const ch = chans.find((c: any) => c.name === "Test Show") ?? chans[0];
   const other = chans.find((c: any) => c.id !== ch.id);
@@ -326,6 +328,109 @@ test("N-06a: the kid flag is enforced; unrated shows stay off until someone rate
   assert.equal(exported.ratings.shows[testShow.key], "G", "hand-set ratings travel with the settings export");
   await post("/api/ratings", { showKey: testShow.key, rating: null });
   assert.equal((await get("/api/ratings")).body.shows.find((x: any) => x.key === testShow.key).rating, null);
+});
+
+test("N-07: content groups: saved, aired as a channel, included in custom channels and slots, described in the guide", async () => {
+  const opts = (await get("/api/groups")).body.options;
+  const show = opts.shows.find((x: any) => x.name === "Test Show");
+  const film = opts.movies.find((x: any) => x.title === "Fine Movie");
+  assert.ok(show && film, JSON.stringify(opts));
+  assert.equal((await post("/api/groups", { name: "", entries: [] })).status, 400);
+  assert.equal((await post("/api/groups", { name: "X", entries: [{ kind: "song", id: "a" }] })).status, 400);
+  const made = await post("/api/groups", { id: "late", name: "Late Night", description: "Comedy after dark. Then a film.", ordering: "cyclic",
+    entries: [{ kind: "movie", id: film.id }, { kind: "show", key: show.key }, { kind: "show", key: show.key }], channel: true });
+  assert.equal(made.status, 200, JSON.stringify(made.body));
+  const g = made.body.group;
+  assert.deepEqual([g.id, g.entries.length, g.ruleKey], ["late", 2, "group:late"], "duplicate entries kept once");
+  assert.ok(g.programs >= 2 && g.programs <= show.episodes + 1);
+  await sleep(400);
+  const own = (await get("/api/bootstrap")).body.channels.find((c: any) => c.ruleKey === "group:late");
+  assert.ok(own, "a group with channel:true is a channel");
+  assert.equal(own.kind, "group");
+  assert.ok(own.number >= 60);
+  const from = Date.now() + 3 * 3600_000;
+  const row = (await get(`/api/guide?from=${from}&to=${from + 6 * 3600_000}`)).body.rows.find((r: any) => r.channel.id === own.id);
+  assert.ok(row.airings.length > 0);
+  assert.deepEqual(row.airings[0].group, { id: "late", name: "Late Night", description: "Comedy after dark. Then a film." });
+  // Cyclic: the film, then the show's episodes in order, round again.
+  const seq = row.airings.map((a: any) => (a.itemId === film.id ? "F" : a.episode));
+  const fi = seq.indexOf("F");
+  if (fi >= 0 && fi + 2 < seq.length) assert.deepEqual(seq.slice(fi, fi + 3), ["F", "S1 · E1", "S1 · E2"]);
+
+  // A custom channel built from the group alone.
+  assert.equal((await post("/api/channels/custom", { name: "Nope", groupIds: ["missing"] })).status, 400);
+  assert.equal((await post("/api/channels/custom", { id: "fromgroup", name: "From Group", groupIds: ["late"], ordering: "shuffle" })).status, 200);
+  const custom = (await get("/api/bootstrap")).body.channels.find((c: any) => c.ruleKey === "custom:fromgroup");
+  assert.ok(custom);
+  assert.equal((await get("/api/channels")).body.channels.find((c: any) => c.id === custom.id).items, g.programs);
+
+  // As a slot source while not its own channel.
+  assert.equal((await post("/api/groups", { id: "late", name: "Late Night", entries: [{ kind: "show", key: show.key }], channel: false })).status, 200);
+  await sleep(400);
+  assert.equal((await get("/api/bootstrap")).body.channels.some((c: any) => c.ruleKey === "group:late"), false, "channel:false takes it off the air");
+  const host = (await get("/api/channels")).body.channels.find((c: any) => c.ruleKey === "custom:fromgroup");
+  assert.ok(host, JSON.stringify((await get("/api/channels")).body.channels.map((c: any) => [c.ruleKey, c.items, c.hidden])));
+  const put = (b: unknown) => fetch(`${base}/api/channels/${host.id}/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
+  assert.equal((await put({ slots: [{ days: [1, 2, 3, 4, 5, 6, 7], from: "00:00", to: "00:00", source: "group:late" }] })).status, 200);
+  const listed = (await get("/api/groups")).body.groups.find((x: any) => x.id === "late");
+  assert.deepEqual(listed.usedBy.map((u: any) => u.how).sort(), ["custom", "slot"]);
+  assert.ok(listed.programs >= 1);
+
+  // Deleting drops the slot and the custom channel's reference.
+  assert.equal((await post("/api/groups/delete", { id: "late" })).status, 200);
+  assert.equal((await post("/api/groups/delete", { id: "late" })).status, 404);
+  const exp = JSON.parse(await (await fetch(`${base}/api/export`)).text());
+  assert.deepEqual(exp.lineup.groups, []);
+  assert.equal(exp.lineup.settings["custom:fromgroup"].slots, undefined, "the slot went with the group");
+  assert.deepEqual(exp.lineup.custom.find((c: any) => c.id === "fromgroup").groupIds, undefined);
+  await post("/api/channels/custom/delete", { id: "fromgroup" });
+});
+
+test("N-32: a channel's season and seasonal slots are stored, checked and shown", async () => {
+  const ch = (await get("/api/bootstrap")).body.channels[0];
+  const put = (b: unknown) => fetch(`${base}/api/channels/${ch.id}/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
+  assert.equal((await put({ season: { from: "13-01", to: "10-31" } })).status, 400);
+  assert.equal((await put({ slots: [{ days: [6], from: "08:00", to: "10:00", source: ch.ruleKey, dates: { from: "10-01" } }] })).status, 400);
+  assert.equal((await put({ slots: [{ days: [6], from: "08:00", to: "10:00", source: ch.ruleKey, dates: { from: "12-15", to: "01-05" } }] })).status, 200);
+  const today = new Date();
+  const md = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const away = new Date(today.getTime() + 60 * 86_400_000);
+  assert.equal((await put({ season: { from: md(away), to: md(away) } })).status, 200);
+  const s = (await get(`/api/channels/${ch.id}/settings`)).body;
+  assert.deepEqual(s.slots[0].dates, { from: "12-15", to: "01-05" });
+  assert.equal(s.season.inSeason, false);
+  assert.ok(s.season.nextChangeMs > Date.now());
+  await sleep(400);
+  const view = (await get("/api/bootstrap")).body.channels.find((c: any) => c.id === ch.id);
+  assert.equal(view.season.from, md(away));
+  const from = Date.now() + 3 * 3600_000;
+  const row = (await get(`/api/guide?from=${from}&to=${from + 6 * 3600_000}`)).body.rows.find((r: any) => r.channel.id === ch.id);
+  assert.equal(row.airings.length, 0, "out of season: off the air");
+  assert.equal((await put({ season: null, slots: [] })).status, 200);
+  assert.equal((await get(`/api/channels/${ch.id}/settings`)).body.season, null);
+});
+
+test("N-30: On Demand and Continue Watching read local facts only", async () => {
+  const before = (await get("/api/meters")).body;
+  const od = (await get("/api/ondemand")).body;
+  const show = od.shows.find((x: any) => x.name === "Test Show");
+  assert.ok(show, JSON.stringify(od.shows.map((x: any) => x.name)));
+  assert.equal(show.episodes, 7, "one of the eight left the provider earlier");
+  assert.ok(!od.movies.some((x: any) => x.title === "Refused Movie"), "refused files aren't offered");
+  const page = (await get(`/api/ondemand/show?key=${encodeURIComponent(show.key)}`)).body;
+  assert.equal(page.seasons[0].episodes.length, show.episodes);
+  const ep = page.seasons[0].episodes[2];
+  for (const k of ["id", "kind", "title", "showKey", "season", "episode", "label", "durationMs", "seenMs", "resumeMs", "watched", "availability"]) assert.ok(k in ep, k);
+  assert.equal((await get("/api/ondemand/show?key=nope")).status, 404);
+  // The fixture runs 7.5 s, too short to leave part way (a minute counts), so finish it: the next episode is up.
+  assert.equal((await post("/api/watch", { itemId: ep.id, fromMs: 0, toMs: ep.durationMs, channel: "ondemand" })).status, 200);
+  const c = (await get("/api/continue?limit=5")).body.items;
+  assert.equal(c[0].id, page.seasons[0].episodes[3].id);
+  assert.deepEqual([c[0].reason, c[0].resumeMs, c[0].channel], ["next", null, "ondemand"]);
+  const after = (await get("/api/meters")).body;
+  assert.equal(after.apiTotal, before.apiTotal, "no provider calls");
+  assert.deepEqual(after.bytes, before.bytes, "no media bytes");
+  await post("/api/history/forget", { itemId: ep.id });
 });
 
 test("A4: disconnecting deletes the key from disk and takes its channels off the air", async () => {

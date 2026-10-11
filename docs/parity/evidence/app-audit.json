@@ -1,6 +1,6 @@
 {
-  "ranAt": "2026-10-11T15:14:17.496Z",
-  "commit": "97666b5",
+  "ranAt": "2026-10-11T16:28:18.035Z",
+  "commit": "4c24574",
   "node": "v22.22.0",
   "pass": 28,
   "total": 28,
@@ -69,7 +69,7 @@
       ],
       "name": "info banner shows title, times and what's next",
       "pass": true,
-      "detail": " 4Marathon Harbor Lights S2 · E5“Late Visitor”SitcomPG23 minLIVEDemo picture 3:11 PM 3:00 – 3:30 PM Next at 3:30 PMHarbor Lights "
+      "detail": " 4Marathon Harbor Lights S2 · E5“Late Visitor”SitcomPG23 minStation break 4:25 PM 4:00 – 4:30 PM Next at 4:30 PMHarbor Lights "
     },
     {
       "id": "A05",
@@ -163,7 +163,7 @@
       "pass": true,
       "detail": {
         "item": "Harbor Lights",
-        "offset": 732789
+        "offset": null
       }
     },
     {
@@ -254,10 +254,10 @@
       "name": "tuning in joins the program at station time (direct play)",
       "pass": true,
       "detail": {
-        "videoMs": 71608,
-        "stationMs": 71744,
-        "item": "Audit Show S1 · E7",
-        "driftMs": -136
+        "videoMs": 81027,
+        "stationMs": 81127,
+        "item": "Audit Show S1 · E4",
+        "driftMs": -100
       }
     },
     {
@@ -269,11 +269,11 @@
       "pass": true,
       "detail": {
         "pausedShown": true,
-        "pausedAtMs": 4974,
-        "videoMs": 12497,
-        "stationMs": 12587,
-        "item": "Audit Show S1 · E8",
-        "driftMs": -90
+        "pausedAtMs": 5344,
+        "videoMs": 12878,
+        "stationMs": 12965,
+        "item": "Audit Show S1 · E5",
+        "driftMs": -87
       }
     },
     {
@@ -285,13 +285,13 @@
       "pass": true,
       "detail": [
         {
-          "title": "Audit Show · S01E08",
-          "seenMs": 18684,
+          "title": "Audit Show · S01E05",
+          "seenMs": 13159,
           "watched": false
         },
         {
-          "title": "Audit Show · S01E07",
-          "seenMs": 19684,
+          "title": "Audit Show · S01E04",
+          "seenMs": 10369,
           "watched": false
         }
       ]
@@ -304,7 +304,7 @@
       "name": "watched flag flips between 85% and 92% seen and shows in the guide",
       "pass": true,
       "detail": {
-        "seenAt85": 76507,
+        "seenAt85": 408007,
         "watchedAt85": false,
         "watchedAt92": true
       }

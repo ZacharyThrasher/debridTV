@@ -5,10 +5,11 @@
 import { api } from "./api.js";
 import { html, raw, fmtTime, fmtDur, now, clamp, toast, pref } from "./util.js";
 import { tv, tune } from "./player.js";
-import { logoHtml, hasLogo } from "./channel-editor.js";
+import { logoHtml, hasLogo, datesLabel } from "./channel-editor.js";
 import { formatChips, artOf, artImg } from "./ui.js";
 import { isLocked, isRedacted } from "./lock.js";
 import { openPanel } from "./panel.js";
+import { openOnDemand, watchFilm } from "./ondemand.js";
 
 const wordmark = (c) => (hasLogo(c) ? raw(logoHtml(c, "sm")) : null);
 
@@ -47,6 +48,7 @@ export async function openGuide() {
 }
 
 export function closeGuide() {
+  clearPreview();
   if (root.contains(document.activeElement)) document.activeElement.blur();
   root.classList.remove("in-tools");
   root.hidden = true;
@@ -72,6 +74,19 @@ function poke() {
 }
 for (const t of ["keydown", "pointerdown", "wheel", "touchstart"]) addEventListener(t, () => guideOpen() && poke(), { passive: true, capture: true });
 
+// Scroll speed and page size (N-15). Page Up/Down (Channel Up/Down on a remote) turn this many rows.
+export const GUIDE_SCROLL = {
+  smooth: { label: "Smooth", seconds: 0.22 },
+  slow: { label: "Slow, like a cable guide channel", seconds: 0.6 },
+  instant: { label: "Instant", seconds: 0 },
+};
+export const GUIDE_PAGE = { 3: "3 channels", 6: "6 channels", screen: "A full screen" };
+const rowsOnScreen = () => Math.max(1, Math.round((grid.querySelector(".grid-rows")?.clientHeight || grid.clientHeight) / rowPx()) || 6);
+function pageRows() {
+  const p = pref("guidePage") ?? "6";
+  return p === "screen" ? Math.max(1, rowsOnScreen() - 1) : Number(p) || 6;
+}
+
 async function load() {
   const from = floor30(now()) - 30 * MIN;
   try {
@@ -88,6 +103,49 @@ async function load() {
   render();
 }
 
+// Coming Attractions (N-23c) and the music stations (N-23a) air 2 to 4 minute pieces back
+// to back. As slivers they'd be unreadable, so the row is one long block that names what's
+// on now; ticks mark where each piece starts, and the details still follow each one.
+const isStream = (ch) => ch?.kind === "trailers" || ch?.kind === "music";
+const trailerName = (a) => [a.trailerFor?.title ?? a.title, (a.trailerFor?.year ?? a.year) && `(${a.trailerFor?.year ?? a.year})`].filter(Boolean).join(" ");
+
+function streamCell(r, ri, pct, t, focus, viewTo) {
+  const ch = r.channel;
+  const shown = r.airings.filter((a) => a.end > viewFrom && a.start < viewTo);
+  if (!shown.length) return "";
+  const start = shown[0].start;
+  const end = shown.at(-1).end;
+  const left = Math.max(0, pct(start));
+  const right = Math.min(100, pct(end));
+  const music = ch.kind === "music";
+  const cls = ["cell", "stream", music ? "music" : "trailers"];
+  if (end <= t) cls.push("past");
+  else if (start <= t) cls.push("now");
+  if (start < viewFrom) cls.push("cut-left");
+  const mine = ri === row && focus && shown.includes(focus);
+  if (mine) cls.push("focus");
+  const onNow = shown.find((a) => a.start <= t && t < a.end);
+  const locked = isLocked(ch) || shown.some(isRedacted);
+  let head, sub;
+  if (locked) (cls.push("locked"), (head = "Locked"), (sub = ""));
+  else if (music) {
+    head = onNow ? `Now playing: ${onNow.title}` : `${ch.name}, nonstop`;
+    sub = onNow ? [onNow.artist, onNow.album].filter(Boolean).join(" · ") : `${shown.length} songs`;
+  } else {
+    head = "Trailers, back to back";
+    sub = onNow ? `Now: ${trailerName(onNow)}` : `${shown.length} trailers`;
+  }
+  const from = Math.max(start, viewFrom);
+  const to = Math.min(end, viewTo);
+  const p = start <= t && t < end ? `;--p:${(((t - from) / (to - from)) * 100).toFixed(1)}%` : "";
+  // A tick where each piece starts, as a share of the block's visible width.
+  const ticks = shown.slice(1).map((a) => `<i style="left:${(((a.start - from) / (to - from)) * 100).toFixed(2)}%"></i>`).join("");
+  return html`<div class="${cls.join(" ")}" style="left:calc(${left}% + 2px);width:calc(${right - left}% - 4px)${p}" data-row="${ri}" data-start="${(mine ? focus : onNow ?? shown[0]).start}" role="gridcell"
+    aria-label="${locked ? "Locked program" : `${head}${sub ? `, ${sub}` : ""}`}">
+    ${start < viewFrom ? raw('<span class="cont">◂</span>') : ""}<span class="ticks" aria-hidden="true">${raw(ticks)}</span>
+    <div class="ct">${music && !locked ? raw('<b class="glyph" aria-hidden="true">♪</b>') : !locked ? raw('<b class="glyph" aria-hidden="true">▶</b>') : ""}${head}</div>${sub ? html`<div class="cs">${sub}</div>` : ""}</div>`.html;
+}
+
 function airingAt(r, t) {
   const list = data?.rows[r]?.airings ?? [];
   return list.find((a) => a.start <= t && t < a.end) ?? list.find((a) => a.start >= t) ?? list[list.length - 1];
@@ -98,7 +156,8 @@ function render() {
   const s = span();
   const viewTo = viewFrom + s;
   const t = now();
-  const rowsVisible = Math.max(1, Math.round((grid.querySelector(".grid-rows")?.clientHeight || grid.clientHeight) / rowPx()) || 6);
+  const rowsVisible = rowsOnScreen();
+  grid.style.setProperty("--guide-scroll", `${(GUIDE_SCROLL[pref("guideScroll")] ?? GUIDE_SCROLL.smooth).seconds}s`);
   if (row < scrollRow) scrollRow = row;
   if (row >= scrollRow + rowsVisible) scrollRow = row - rowsVisible + 1;
   scrollRow = clamp(scrollRow, 0, Math.max(0, data.rows.length - rowsVisible));
@@ -111,7 +170,7 @@ function render() {
 
   const rows = data.rows.map((r, ri) => {
     const ch = r.channel;
-    const cells = r.airings
+    const cells = isStream(ch) ? [streamCell(r, ri, pct, t, focus, viewTo)] : r.airings
       .filter((a) => a.end > viewFrom && a.start < viewTo)
       .map((a, i, shown) => {
         const left = Math.max(0, pct(a.start));
@@ -139,9 +198,14 @@ function render() {
           ${raw(breakTail(a))}<div class="ct">${head}</div>${sub ? html`<div class="cs">${sub}</div>` : ""}</div>`;
       });
     const nowLine = t >= viewFrom && t < viewTo ? raw(`<div class="now-line" style="left:${pct(t)}%"></div>`) : "";
+    // A seasonal channel out of season (N-32) has no listings: say when it's back.
+    // The program on now finishes first, so the gap starts where the last listing ends.
+    const lastEnd = Math.max(viewFrom, ...r.airings.map((a) => a.end));
+    const off = offSeason(ch) && lastEnd < viewTo ? html`<div class="cell offseason ${ri === row && !focus ? "focus" : ""}" style="left:calc(${Math.max(0, pct(lastEnd))}% + 2px);right:2px" data-row="${ri}" data-start="0" role="gridcell" aria-label="${ch.name} is off season">
+      <div class="ct">Off season</div><div class="cs">${backOn(ch) ? `Back ${backOn(ch)}` : datesLabel(ch.season)}</div></div>` : "";
     return html`<div class="row ${tv.current?.id === ch.id ? "current" : ""}" style="--h:${ch.hue}" role="row">
-      <div class="row-label" data-tune="${ri}"><span class="n">${ch.number}</span><span class="nm">${ch.favorite ? raw('<b class="fav" title="Favorite">★</b>') : ""}${isLocked(ch) ? raw('<b class="lk" title="Locked">🔒</b>') : ""}${wordmark(ch) ?? ch.name}<span class="tg">${ch.tagline}</span></span></div>
-      <div class="row-track">${raw(cells.join(""))}${nowLine}</div></div>`;
+      <div class="row-label" data-tune="${ri}"><span class="n">${ch.number}</span><span class="nm">${ch.favorite ? raw('<b class="fav" title="Favorite">★</b>') : ""}${isLocked(ch) ? raw('<b class="lk" title="Locked">🔒</b>') : ""}${wordmark(ch) ?? ch.name}<span class="tg">${ch.season ? html`<b class="season-tag" title="On the air ${datesLabel(ch.season)}">◷ ${datesLabel(ch.season)}</b>` : ch.tagline}</span></span></div>
+      <div class="row-track">${raw(cells.join(""))}${off}${nowLine}</div></div>`;
   });
 
   grid.innerHTML = html`<div class="grid-times">${raw(times.join(""))}</div>
@@ -150,6 +214,7 @@ function render() {
   dateEl.textContent = new Date(viewFrom).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   clockEl.textContent = fmtTime(t);
   renderDetails(data.rows[row]?.channel, focus);
+  schedulePreview(data.rows[row]?.channel, focus);
   if (fitRows()) render();
 }
 
@@ -179,7 +244,17 @@ function rowPx() {
   return probe ? probe.getBoundingClientRect().height : 50;
 }
 
+const offSeason = (ch) => !!ch?.season && ch.season.inSeason === false;
+const backOn = (ch) => (ch.season?.nextChangeMs ? new Date(ch.season.nextChangeMs).toLocaleDateString(undefined, { month: "long", day: "numeric" }) : "");
+
 function renderDetails(ch, a) {
+  if (ch && !a && offSeason(ch)) {
+    details.style.setProperty("--h", ch.hue);
+    details.innerHTML = html`<div class="when">Off season<span class="on-ch"><b>${ch.number}</b>${ch.name}</span></div>
+      <div class="t">${ch.name}</div>
+      <div class="desc">A seasonal channel: on the air ${datesLabel(ch.season) === "All year" ? "all year" : `${datesLabel(ch.season)} each year`}.${backOn(ch) ? ` Back on ${backOn(ch)}.` : ""} Nothing airs until then, so there's nothing to fetch.</div>`.html;
+    return;
+  }
   if (!ch || !a) return void (details.innerHTML = "");
   if (isLocked(ch) || isRedacted(a)) {
     details.style.setProperty("--h", ch.hue);
@@ -190,7 +265,11 @@ function renderDetails(ch, a) {
   }
   const t = now();
   const state = a.end <= t ? "Ended" : a.start <= t ? `On now · ${Math.round((a.end - t) / MIN)} min left` : `Starts in ${fmtDur(a.start - t)}`;
-  const bits = [a.episode && html`<span>${a.episode}</span>`, a.year && html`<span>${a.year}</span>`, a.genre && html`<span>${a.genre}</span>`,
+  const track = a.kind === "track";
+  const trailer = a.kind === "trailer" || !!a.trailerFor;
+  const bits = [track && raw('<span class="badge kind">♪ Song</span>'), trailer && raw('<span class="badge kind">Trailer</span>'),
+    track && a.artist && html`<span>${a.artist}</span>`, track && a.album && html`<span>${a.album}${a.trackNo ? ` · track ${a.trackNo}` : ""}</span>`,
+    a.episode && html`<span>${a.episode}</span>`, a.year && html`<span>${a.year}</span>`, a.genre && html`<span>${a.genre}</span>`,
     a.rating && html`<span class="rating">${a.rating}</span>`,
     a.durationMs && html`<span>${fmtDur(a.durationMs)}</span>`, formatChips(a), a.watched && raw('<span class="badge ok">✓ Watched</span>'),
     a.availability === "policy-blocked" && raw('<span class="badge bad">Refused by provider</span>'),
@@ -208,16 +287,83 @@ function renderDetails(ch, a) {
     <div class="t">${a.title}</div>
     <div class="s">${raw(bits.join(""))}</div>
     ${a.description ? html`<div class="plot">${a.description}</div>` : ""}
+    ${a.group ? html`<div class="gd-group"><b>${a.group.name}</b>${a.group.description ? html` · ${a.group.description}` : ""}</div>` : ""}
     <div class="desc">${a.subtitle ? html`“${a.subtitle}”. ` : ""}${state}.${pad ? ` Ends at ${fmtTime(pad.start)}, then a station break until ${fmtTime(pad.end)}.` : ""}</div>
     ${onNow ? raw(`<div class="prog"><i style="width:${pct.toFixed(1)}%"></i></div>`) : ""}
-    <div class="act"><kbd>OK</kbd> ${onNow ? "watch now" : "tune to this channel"}</div>`;
+    <div class="act"><kbd>OK</kbd> ${onNow ? (track ? "listen now" : "watch now") : "tune to this channel"}${a.trailerFor?.itemId ? raw(' <kbd>W</kbd> watch the film, it\'s in your library') : ""}</div>`;
+}
+
+// ------------------------------------------------------------------ preview (N-14)
+// NostalgiaTV can change channel as you move through the guide ("hover tuning"). Here
+// that would open media for every row the highlight passes, and the guide's promise is
+// zero provider calls and zero bytes (audit A05). So the preview window shows what the
+// station clock already knows about the highlighted channel: its mark, what's on, how far
+// in, and the program's own art when the file has some. The picture stays on the channel
+// you're watching until you press OK. Pref guidePreview: false turns it off.
+
+const previewEl = root.querySelector(".guide-preview");
+const slate = Object.assign(document.createElement("div"), { className: "gp-slate", hidden: true });
+slate.setAttribute("aria-hidden", "true");
+previewEl.append(slate);
+let previewTimer = 0;
+let previewKey = "";
+
+function clearPreview() {
+  clearTimeout(previewTimer);
+  previewKey = "";
+  slate.hidden = true;
+  previewEl.classList.remove("previewing");
+  label.textContent = "Now watching";
+}
+const label = previewEl.querySelector(".preview-label");
+
+/** Waits for the highlight to rest (250 ms) so scrolling past rows doesn't flicker. */
+function schedulePreview(ch, a) {
+  const t = now();
+  const live = a && a.start <= t && t < a.end;
+  const want = pref("guidePreview") !== false && ch && ch.id !== tv.current?.id;
+  const key = want ? `${ch.id}:${live ? a.start : "x"}` : "";
+  if (key === previewKey) return void (key && paintPreview(ch, live ? a : null, false));
+  clearTimeout(previewTimer);
+  previewKey = key;
+  if (!key) return clearPreview();
+  previewTimer = setTimeout(() => paintPreview(ch, live ? a : null, true), slate.hidden ? 250 : 120);
+}
+
+function paintPreview(ch, a, fresh) {
+  const t = now();
+  const locked = isLocked(ch) || (a && isRedacted(a));
+  const art = locked ? null : artOf(a, "fanart", "thumb");
+  const pct = a ? clamp((t - a.start) / (a.end - a.start), 0, 1) * 100 : 0;
+  const left = a ? Math.max(1, Math.round((a.end - t) / MIN)) : 0;
+  const sub = a && !locked ? [a.episode, a.subtitle && `“${a.subtitle}”`, a.year].filter(Boolean).join(" · ") : "";
+  slate.style.setProperty("--h", ch.hue);
+  slate.classList.toggle("has-art", !!art);
+  slate.innerHTML = html`${raw(artImg(art, "gp-art"))}
+    <div class="gp-top"><span class="gp-num">${ch.number}</span><span class="gp-name">${wordmark(ch) ?? ch.name}</span></div>
+    <div class="gp-mid">
+      ${locked ? html`<div class="gp-t">🔒 Locked</div><div class="gp-s">Tune in and type the PIN to watch.</div>`
+        : a ? html`<div class="gp-k">On now</div><div class="gp-t">${a.title}</div>${sub ? html`<div class="gp-s">${sub}</div>` : ""}`
+        : offSeason(ch) ? html`<div class="gp-k">Off season</div><div class="gp-t">${ch.name}</div>${backOn(ch) ? html`<div class="gp-s">Back ${backOn(ch)}</div>` : ""}`
+        : html`<div class="gp-k">Coming up</div><div class="gp-t">${ch.name}</div>`}
+    </div>
+    ${a && !locked ? html`<div class="gp-bar"><i style="width:${pct.toFixed(1)}%"></i></div><div class="gp-left">${left} min left · <kbd>OK</kbd> ${a.kind === "track" ? "listen" : "watch"}</div>` : ""}`.html;
+  if (fresh) {
+    slate.hidden = false;
+    slate.style.animation = "none";
+    void slate.offsetWidth;
+    slate.style.animation = "";
+    previewEl.classList.add("previewing");
+    label.textContent = "Preview · from the schedule";
+  }
 }
 
 // ------------------------------------------------------------------ input
 
 export function guideKey(e) {
   if (!data) return false;
-  const k = e.key;
+  // A remote's Channel Up/Down turns the guide a page, as on a cable box.
+  const k = e.key === "ChannelUp" ? "PageUp" : e.key === "ChannelDown" ? "PageDown" : e.key;
   // The toolbar (Now, Settings): a remote reaches it with Up from the top row.
   const tl = tools();
   const ti = tl.indexOf(document.activeElement);
@@ -234,12 +380,21 @@ export function guideKey(e) {
     return true;
   }
   if (/^[0-9]$/.test(k)) return jumpKey(k), true;
+  if ((k === "w" || k === "W") && !isLocked(data.rows[row]?.channel)) {
+    const a = airingAt(row, at);
+    if (!a?.trailerFor?.itemId || isRedacted(a)) return false;
+    closeGuide();
+    return watchFilm(a), true;
+  }
   const list = data.rows[row]?.airings ?? [];
   const cur = airingAt(row, at);
   const idx = list.indexOf(cur);
   if (k === "ArrowDown" || k === "ArrowUp" || k === "PageDown" || k === "PageUp") {
-    const step = k === "PageDown" ? 6 : k === "PageUp" ? -6 : k === "ArrowDown" ? 1 : -1;
+    const page = k === "PageDown" || k === "PageUp";
+    const step = page ? (k === "PageDown" ? 1 : -1) * pageRows() : k === "ArrowDown" ? 1 : -1;
     row = clamp(row + step, 0, data.rows.length - 1);
+    // A page turns the whole view, so the highlight keeps its place on screen.
+    if (page) scrollRow = clamp(scrollRow + step, 0, Math.max(0, data.rows.length - rowsOnScreen()));
   } else if (k === "ArrowRight") {
     const nx = list[idx + 1];
     if (nx && nx.start < data.to) {
@@ -274,6 +429,9 @@ root.querySelector(".guide-tools").addEventListener("click", (e) => {
   if (act === "settings") {
     closeGuide();
     openPanel();
+  } else if (act === "ondemand") {
+    closeGuide();
+    openOnDemand();
   } else if (act === "now") {
     leaveTools();
     guideKey({ key: "Home" });
