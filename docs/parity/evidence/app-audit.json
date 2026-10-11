@@ -1,9 +1,9 @@
 {
-  "ranAt": "2026-10-11T07:42:38.443Z",
-  "commit": "d68292c",
+  "ranAt": "2026-10-11T15:14:17.496Z",
+  "commit": "97666b5",
   "node": "v22.22.0",
-  "pass": 26,
-  "total": 27,
+  "pass": 28,
+  "total": 28,
   "results": [
     {
       "id": "A01",
@@ -29,7 +29,13 @@
           "14 Kitchen Table",
           "15 Star Courier",
           "16 Weathervane Mysteries",
-          "17 Pocket Planet"
+          "17 Pocket Planet",
+          "20 Northstar",
+          "30 Comedy",
+          "31 Drama",
+          "32 Sci-Fi",
+          "33 Crime",
+          "34 Family"
         ]
       }
     },
@@ -63,7 +69,7 @@
       ],
       "name": "info banner shows title, times and what's next",
       "pass": true,
-      "detail": " 4Marathon Harbor Lights S2 · E5“Late Visitor”Sitcom23 minLIVEDemo picture 7:40 AM 7:30 – 8:00 AM Next at 8:00 AMHarbor Lights "
+      "detail": " 4Marathon Harbor Lights S2 · E5“Late Visitor”SitcomPG23 minLIVEDemo picture 3:11 PM 3:00 – 3:30 PM Next at 3:30 PMHarbor Lights "
     },
     {
       "id": "A05",
@@ -87,8 +93,8 @@
       "name": "guide grid has a row per channel and a now line",
       "pass": true,
       "detail": {
-        "rowsShown": 15,
-        "nowLine": 15
+        "rowsShown": 21,
+        "nowLine": 21
       }
     },
     {
@@ -157,7 +163,7 @@
       "pass": true,
       "detail": {
         "item": "Harbor Lights",
-        "offset": 681451
+        "offset": 732789
       }
     },
     {
@@ -214,9 +220,9 @@
       "rows": [
         "N-22b"
       ],
-      "name": "mid-program breaks appear on some channel",
-      "pass": false,
-      "detail": "no auto or custom rule sets midBreakMs and probe reads no chapters"
+      "name": "files with chapters get mid-program breaks on a slotted channel",
+      "pass": true,
+      "detail": "Quarter Hour: S1 · E8 program,break:mid,program,break:padding"
     },
     {
       "id": "A18",
@@ -248,10 +254,10 @@
       "name": "tuning in joins the program at station time (direct play)",
       "pass": true,
       "detail": {
-        "videoMs": 38043,
-        "stationMs": 38143,
-        "item": "Audit Show S1 · E8",
-        "driftMs": -100
+        "videoMs": 71608,
+        "stationMs": 71744,
+        "item": "Audit Show S1 · E7",
+        "driftMs": -136
       }
     },
     {
@@ -263,11 +269,11 @@
       "pass": true,
       "detail": {
         "pausedShown": true,
-        "pausedAtMs": 38220,
-        "videoMs": 45746,
-        "stationMs": 45840,
+        "pausedAtMs": 4974,
+        "videoMs": 12497,
+        "stationMs": 12587,
         "item": "Audit Show S1 · E8",
-        "driftMs": -94
+        "driftMs": -90
       }
     },
     {
@@ -280,12 +286,12 @@
       "detail": [
         {
           "title": "Audit Show · S01E08",
-          "seenMs": 8765,
+          "seenMs": 18684,
           "watched": false
         },
         {
-          "title": "Harbor Lights · S02E05",
-          "seenMs": 39619,
+          "title": "Audit Show · S01E07",
+          "seenMs": 19684,
           "watched": false
         }
       ]
@@ -339,6 +345,22 @@
       "pass": true,
       "detail": {
         "overflow": 0
+      }
+    },
+    {
+      "id": "A28",
+      "rows": [
+        "N-17a"
+      ],
+      "name": "Z cycles the picture shape, including 4:3",
+      "pass": true,
+      "detail": {
+        "shapes": [
+          "fill",
+          "4:3",
+          "zoom",
+          "auto"
+        ]
       }
     },
     {

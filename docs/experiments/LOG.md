@@ -393,3 +393,11 @@ for any channel without a logo. Reported, and B fixed it in `2b17a5c`.
 **Register v0.3.** 61 rows: V 14, P/V 18, P 2, C 1, G 1, not started 23, N/A 2 (round 1:
 V 9, P/V 13). Top remaining gaps: auto sign-off, audio/subtitle track choice, and playback
 checks in `npm test` (A); weights/premieres, random marathons, watched-only (C).
+
+### PARITY-003 — Audit round 3 on the release (2026-10-11)
+
+Shared release `97666b5`: audit **28/28**, `npm test` **214/214**. A20/A21/A25 now also live in
+`test/ui/player.test.ts`, so the playback parity checks run on every `npm test`. Register v0.4:
+V 28, P/V 11, P 1, G 1, not started 18, N/A 2 (round 2: V 14, P/V 18). Every round-2 gap
+shipped with tests. Remaining gaps are product areas (content groups, seasonal lineups,
+trailers, On Demand) and items that need Zachary (LAN access, outside sources, profiles).
