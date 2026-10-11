@@ -59,6 +59,8 @@ Mock providers: `src/providers/mock-server.ts` starts a local fake RD/TorBox tha
 - `pkill -f "node app/server.ts"` in the same shell command as a restart kills the shell itself; kill in a separate call.
 - Lineup numbers persist in `lineup*.json`; delete the file in a test data dir to re-number.
 - Browsers re-request media URLs; per-stream state on the server must be keyed (see `liveStarts` keyed by `tok`).
+- Parser limits: a bare "Blade Runner 2049" keeps 2049 in the title; "Wonder Woman 1984" without a release year reads 1984 as the year; "Show - 101" numbering is unsupported.
+- Probe limits: MKV needs Info and Tracks before the first Cluster, else no duration; MP4 moov beyond the 3 MiB budget may lose codecs; fragmented MP4 uses `mehd`.
 - Demo items have `provider: "demo"` and ids `demo-…`; the server never proxies them.
 
 ## 7. Suggested split (independent workstreams)
