@@ -25,7 +25,7 @@ Others: A = `player.js`/`static.js`, C = server, library and `panel.js`, D = par
 1. **On a real TV**: check which key codes its remote sends (Back, OK, colour keys) and whether `auto` turns TV mode on; adjust `TV_UA` and `isBackKey` in spatial.js. Break slides' channel lists are still click-only (digits cover them).
 2. The A/C key hints stay hidden until `player.cycleAudio`/`cycleCaptions` exist.
 3. A's `test/ui/player.test.ts` "a locked channel asks for no link" fails after merging C3. The stub sets `o.locked`, but C3 now sends `channel.locked:false`, which wins through `??`. A has to fix this; it was reported to the coordinator.
-4. Prefs that still need panel.js controls (C): `startup`, `guideIdle`, `guideIdleMin`, `ratingCard`, `bugPos`, `bugOpacity`.
+4. Done: Look & feel has controls for `startup`, `guideIdle`, `guideIdleMin`, `ratingCard`, `bugPos`, `bugOpacity`, `bezel` and `tv`.
 
 ## How to check visuals
 - The screenshot harness is `/mnt/project-files/debridTV/tools/shots.mjs`. Run `BASE=http://127.0.0.1:7340 node shots.mjs <out> [w h] [scenario…]`. It adds `?at=` to `/api/now` and offsets JSON `now` to land inside a break. `DECOR=1` stubs logos and favorites, and `PREFS='{"theme":"cable92"}'` sets a theme. To step through break slides, use `page.clock.install()` plus `runFor`.
