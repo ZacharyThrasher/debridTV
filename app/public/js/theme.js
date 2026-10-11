@@ -122,8 +122,8 @@ export function themeVars(t) {
   return {
     "--bg": c.bg,
     "--ink": c.ink,
-    "--dim": mix(c.ink, 68, c.panel),
-    "--faint": mix(c.ink, 42, c.panel),
+    "--dim": mix(c.ink, 74, c.panel),
+    "--faint": mix(c.ink, 58, c.panel),
     "--panel": mix(c.panel, 95, "transparent"),
     "--panel-solid": c.panel,
     "--panel-2": mix(c.ink, light ? 7 : 9, c.panel),

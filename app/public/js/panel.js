@@ -436,14 +436,14 @@ async function meters() {
 
 async function look() {
   const sw = (k, label, desc) => html`<div class="opt"><div><div class="ol">${label}</div><div class="od">${desc}</div></div>
-    <label class="switch"><input type="checkbox" data-pref="${k}" ${pref(k) ? "checked" : ""}><i></i></label></div>`;
+    <label class="switch"><input type="checkbox" data-pref="${k}" aria-label="${label}" ${pref(k) ? "checked" : ""}><i></i></label></div>`;
   // theme.js (B) lists built-in and custom themes and owns the editor; fall back to the built-ins.
   const themeMod = await import("./theme.js").catch(() => null);
   const themes = themeMod?.themeOptions?.().map((o) => [o.value, o.label]) ?? [["midnight", "Midnight"], ["cable92", "Cable '92"], ["daylight", "Daylight"]];
   return html`<h3>Look &amp; feel</h3>
     <div class="opt"><div><div class="ol">Theme</div><div class="od">Colors for the guide and menus.</div></div>
       <span style="display:flex;gap:.4em;flex-wrap:wrap">
-      <select class="input" style="width:auto" data-pref-select="theme">${raw(themes.map(([k, v]) => `<option value="${esc(k)}" ${pref("theme") === k ? "selected" : ""}>${esc(v)}</option>`).join(""))}</select>
+      <select class="input" style="width:auto" data-pref-select="theme" aria-label="Theme">${raw(themes.map(([k, v]) => `<option value="${esc(k)}" ${pref("theme") === k ? "selected" : ""}>${esc(v)}</option>`).join(""))}</select>
       ${themeMod?.openThemeEditor ? html`<button class="btn" data-theme-edit>Customize…</button>` : ""}</span></div>
     ${raw(sw("crt", "CRT screen", "Scanlines and a soft vignette, like an old set."))}
     ${raw(sw("static", "Static between channels", "Snow while the next channel tunes in."))}
@@ -476,7 +476,7 @@ function bugOpts() {
       <select class="input" style="width:auto" data-pref-select="bugPos" aria-label="Bug corner">${raw(corners.map(([v, l]) => `<option value="${v}" ${v === pos ? "selected" : ""}>${l}</option>`).join(""))}</select>
       <select class="input" style="width:auto" data-pref-select="bugOpacity" data-num="1" aria-label="Bug opacity">${raw(levels.map(([v, l]) => `<option value="${v}" ${Math.abs(v - op) < 0.01 ? "selected" : ""}>${l}</option>`).join(""))}</select></span></div>
     <div class="opt"><div><div class="ol">Rating card</div><div class="od">Show "Rated PG-13" and the like for a few seconds when a program starts.</div></div>
-      <label class="switch"><input type="checkbox" data-pref="ratingCard" ${pref("ratingCard") !== false ? "checked" : ""}><i></i></label></div>`;
+      <label class="switch"><input type="checkbox" data-pref="ratingCard" aria-label="Rating card" ${pref("ratingCard") !== false ? "checked" : ""}><i></i></label></div>`;
 }
 
 /** N-17b: after this long with no key, tap or click, the set asks if you're still watching, then signs off. */
@@ -484,7 +484,7 @@ function signOffOpt() {
   const cur = Number(pref("signOffHours") ?? 4);
   const opts = [[0, "Never"], [2, "2 hours"], [3, "3 hours"], [4, "4 hours"], [6, "6 hours"], [8, "8 hours"]];
   return html`<div class="opt"><div><div class="ol">Sign off after</div><div class="od">With nobody pressing anything, ask "Still watching?" and then stop playing, so a sleeping viewer doesn't stream all night.</div></div>
-    <select class="input" style="width:auto" data-pref-select="signOffHours" data-num="1">${raw(opts.map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`).join(""))}</select></div>`;
+    <select class="input" style="width:auto" data-pref-select="signOffHours" data-num="1" aria-label="Sign off after">${raw(opts.map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`).join(""))}</select></div>`;
 }
 
 const IDLE_FALLBACK = { stay: "Stay open", close: "Close the guide", tune: "Tune to the highlighted channel" };
@@ -498,13 +498,13 @@ async function startupOpts() {
   const idleNow = pref("guideIdle") ?? "stay";
   const mins = pref("guideIdleMin") ?? 2;
   return html`<div class="opt"><div><div class="ol">Start on</div><div class="od">What the TV shows when you open it.</div></div>
-      <select class="input" style="width:auto;max-width:14em" data-pref-select="startup">${raw(
+      <select class="input" style="width:auto;max-width:14em" data-pref-select="startup" aria-label="Start on">${raw(
         [opt("last", "Last channel", start), opt("guide", "The guide", start),
           ...channels.map((c) => opt(`ch:${c.id}`, `Channel ${c.number} · ${c.name}`, start))].join(""))}</select></div>
     <div class="opt"><div><div class="ol">When the guide sits idle</div><div class="od">If nobody touches the guide for a while.</div></div>
-      <select class="input" style="width:auto" data-pref-select="guideIdle">${raw(Object.entries(idle).map(([k, v]) => opt(k, label(v), idleNow)).join(""))}</select></div>
+      <select class="input" style="width:auto" data-pref-select="guideIdle" aria-label="When the guide sits idle">${raw(Object.entries(idle).map(([k, v]) => opt(k, label(v), idleNow)).join(""))}</select></div>
     ${idleNow !== "stay" ? html`<div class="opt"><div><div class="ol">Idle after</div></div>
-      <select class="input" style="width:auto" data-pref-select="guideIdleMin" data-num="1">${raw([1, 2, 5, 10].map((n) => `<option value="${n}" ${n === mins ? "selected" : ""}>${n} minute${n === 1 ? "" : "s"}</option>`).join(""))}</select></div>` : ""}`;
+      <select class="input" style="width:auto" data-pref-select="guideIdleMin" data-num="1" aria-label="Idle minutes">${raw([1, 2, 5, 10].map((n) => `<option value="${n}" ${n === mins ? "selected" : ""}>${n} minute${n === 1 ? "" : "s"}</option>`).join(""))}</select></div>` : ""}`;
 }
 body.addEventListener("input", (e) => {
   if ("volume" in e.target.dataset) {
