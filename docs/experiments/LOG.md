@@ -450,3 +450,11 @@ Watching (N-30), content groups (N-07), seasonal lineups (N-32), watched rules (
 choice (N-18a), transcode cap (N-19; passthrough won't-do per ADR-0004), TMDB posters (N-01c),
 home-network pairing (N-26b, N-27a). Every remaining not-started row needs an outside source
 or a product decision from Zachary.
+
+### PARITY-005 — Round 5 polish (2026-10-11)
+
+PR #2 `b62c1d9` merged locally with `project-thread-8sv8fc` `af04721`: N-01d (dedupe by `.nfo`
+and TMDB ids), N-02a (seasonal presets such as October Horror and Holidays, offered only when the
+library has enough) and N-15 (guide page size and scroll speed) move to V. Register v0.6: V 43,
+P/V 3, P 1, G 1, not started 10, N/A 3. `npm test` 290/291: the one failure is a teardown race
+in `test/ui/guide.test.ts` (a routed fetch outliving its context); the file passes 3/3 alone.
