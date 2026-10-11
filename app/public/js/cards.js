@@ -96,6 +96,16 @@ function heroSlide() {
 /** The other slides; each returns null when it would be empty. */
 const SLIDES = [
   () => heroSlide(),
+  // Station ident (N-21): the channel's own mark, like a network bumper between shows.
+  function ident() {
+    const { ch } = brk;
+    const mark = ch.logo?.kind === "text" && ch.logo.text ? raw(logoHtml(ch, "xl")) : html`<span class="id-num">${ch.number}</span>`;
+    return html`<div class="brk-slide brk-ident"><div class="id-rays" aria-hidden="true"></div>
+      <div class="brk-label">You're watching</div>
+      <div class="id-mark">${mark}</div>
+      <div class="id-name"><b>${ch.number}</b>${ch.name}</div>
+      ${ch.tagline ? html`<div class="id-tag">${ch.tagline}</div>` : ""}</div>`.html;
+  },
   function laterHere() {
     const row = brk.guide?.rows.find((r) => r.channel.id === brk.ch.id);
     const list = (row?.airings ?? []).filter((a) => a.start >= brk.seg.end).slice(0, 5);
@@ -134,7 +144,7 @@ const SLIDES = [
 ];
 
 function slides() {
-  return SLIDES.map((f) => (brk.guide || f === SLIDES[0] ? f() : null));
+  return SLIDES.map((f, i) => (brk.guide || i < 2 ? f() : null));
 }
 
 function renderPips() {
