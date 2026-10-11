@@ -9,7 +9,7 @@
 // against the mock providers on a spare port.
 
 import http from "node:http";
-import { readFileSync, existsSync, statSync, createReadStream } from "node:fs";
+import { readFileSync, existsSync, statSync, createReadStream, rmSync } from "node:fs";
 import { join, extname, dirname, resolve } from "node:path";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
@@ -25,10 +25,11 @@ import { validTimeZone } from "../src/clock/dayparts.ts";
 import { parseVttBlock } from "../src/library/vtt.ts";
 import { RATINGS, normalizeRating, ratingRank } from "../src/clock/ratings.ts";
 import { Library, displayTitle, effectiveRating, mediaBadges, fileStatus, plainError, PROVIDER_NAMES, STATUS_ORDER, type Config, type LibItem, type ProviderBases, type RemoteProvider } from "./library.ts";
-import { Lineup, autoRules, cleanLogo, cleanRestricted, cleanSlots, type StationChannel, type CustomChannel } from "./lineup.ts";
+import { Lineup, autoRules, cleanExclusions, cleanLogo, cleanRestricted, cleanSlots, cleanWeights, type ItemInfo, type StationChannel, type CustomChannel } from "./lineup.ts";
 import { Meters } from "./meters.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
 import { demoItems } from "./demo.ts";
+import { backupIfDue, listBackups, readBackup } from "./backups.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(HERE, "public");
@@ -123,11 +124,53 @@ function rebuild() {
   const ids = new Set(liveItems.map((i) => i.id));
   const liveClock = new StationClock(library.mediaItems().filter((m) => ids.has(m.id)));
   const timeZone = stationTimeZone();
-  liveLineup.sync(liveClock, autoRules(liveItems, liveLineup.custom()), now, { timeZone });
+  liveLineup.sync(liveClock, autoRules(liveItems, liveLineup.custom()), now, { timeZone, info: itemInfo(liveItems, now) });
   const demoClock = new StationClock(demoMedia());
-  demoLineup.sync(demoClock, autoRules(demo, demoLineup.custom()), now, { timeZone });
+  demoLineup.sync(demoClock, autoRules(demo, demoLineup.custom()), now, { timeZone, info: itemInfo(demo, now) });
   clock = isDemo() ? demoClock : liveClock;
 }
+const PREMIERE_DAYS = 14;
+/** Show, genres, watched and "new" per item, for exclusions, watched rules and premieres. */
+function itemInfo(items: LibItem[], now: number): (id: string) => ItemInfo | undefined {
+  const map = new Map(items.map((i) => [i.id, {
+    showKey: i.parsed.kind === "episode" ? i.parsed.showKey : undefined,
+    genres: i.meta?.genres ?? (i.genre ? [i.genre] : undefined),
+    watched: isWatched(i.id, i.durationMs),
+    recent: i.addedAt != null && now - i.addedAt < PREMIERE_DAYS * 24 * 60 * MIN,
+  }]));
+  return (id) => map.get(id);
+}
+
+/** What "Export settings" and the daily backup contain: choices, never keys (gate F4). */
+function settingsExport() {
+  const c = config.get();
+  return {
+    exportedAt: new Date().toISOString(), app: "DebridTV", version: VERSION,
+    note: "Settings only. API keys are never exported.",
+    sources: { torbox: !!c.torboxKey, realdebrid: !!c.rdToken, localDirs: c.localDirs ?? [] },
+    scanPerMinute: c.scanPerMinute ?? 30,
+    lineup: liveLineup.exportSettings(),
+    ratings: library.manualRatings(),
+  };
+}
+function importSettings(res: http.ServerResponse, body: Record<string, unknown>) {
+  const l = (body as { lineup?: unknown }).lineup;
+  if (!l || typeof l !== "object") return json(res, 400, { error: "That isn't a DebridTV settings file." });
+  const n = liveLineup.importSettings(l as never);
+  const ratings = library.importRatings((body as { ratings?: unknown }).ratings);
+  rebuild();
+  return json(res, 200, { ok: true, ...n, ratings });
+}
+const backupDir = () => join(dataDir(), "backups");
+function dailyBackup() {
+  try {
+    const made = backupIfDue(backupDir(), settingsExport(), Date.now(), config.get().backupKeep ?? 14);
+    if (made) meters.log("backup", `Settings backed up (${made.name})`);
+  } catch (e) {
+    meters.log("error", `backup: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
 /** Restricted hours and time slots follow this zone: $DEBRIDTV_TZ, else this computer's. */
 function stationTimeZone(): string {
   const env = process.env.DEBRIDTV_TZ;
@@ -201,6 +244,22 @@ function ratingCoverage(c: StationChannel) {
   }
   const kidOk = ids.filter((id) => { const it = itemById(id); return it && ratingRank(effectiveRating(it, manual)?.rating) <= RATINGS.indexOf("PG"); }).length;
   return { total: ids.length, byRating: counts, unrated: counts.unrated!, kidSafe: kidOk };
+}
+
+/** The shows (and films) a channel draws from, for weight sliders and exclusions. */
+function channelGroups(c: StationChannel) {
+  const rule = autoRules(allItems(), lineup().custom()).find((r) => r.key === c.meta.ruleKey);
+  const out = new Map<string, { key: string; name: string; count: number; genres: string[] }>();
+  for (const id of rule?.itemIds ?? []) {
+    const it = itemById(id);
+    if (!it) continue;
+    const key = it.parsed.kind === "episode" ? it.parsed.showKey : "films";
+    const g = out.get(key) ?? { key, name: it.parsed.kind === "episode" ? it.parsed.show : "Films", count: 0, genres: [] };
+    g.count++;
+    for (const x of it.meta?.genres ?? (it.genre ? [it.genre] : [])) if (!g.genres.includes(x)) g.genres.push(x);
+    out.set(key, g);
+  }
+  return [...out.values()].sort((a, b) => b.count - a.count);
 }
 
 /** How many season-0 specials this channel's rule could air (shown or not). */
@@ -793,26 +852,25 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       return json(res, 200, { ok: false, message: `${plainError(e)}.` });
     }
   }
-  if (p === "/api/export") {
-    // Settings round trip without credentials (gate F4).
-    const c = config.get();
-    return download(res, "debridtv-settings.json", {
-      exportedAt: new Date().toISOString(), app: "DebridTV", version: VERSION,
-      note: "Settings only. API keys are never exported.",
-      sources: { torbox: !!c.torboxKey, realdebrid: !!c.rdToken, localDirs: c.localDirs ?? [] },
-      scanPerMinute: c.scanPerMinute ?? 30,
-      lineup: liveLineup.exportSettings(),
-      ratings: library.manualRatings(),
-    });
+  if (p === "/api/export") return download(res, "debridtv-settings.json", settingsExport());
+  if (p === "/api/backups" && m === "GET") {
+    const keep = config.get().backupKeep ?? 14;
+    return json(res, 200, { keep, folder: backupDir(), backups: listBackups(backupDir()) });
   }
-  if (p === "/api/import" && m === "POST") {
-    const l = (body as { lineup?: unknown }).lineup;
-    if (!l || typeof l !== "object") return json(res, 400, { error: "That isn't a DebridTV settings file." });
-    const n = liveLineup.importSettings(l as never);
-    const ratings = library.importRatings((body as { ratings?: unknown }).ratings);
-    rebuild();
-    return json(res, 200, { ok: true, ...n, ratings });
+  if (p === "/api/backups" && m === "POST") {
+    // { keep } changes how many daily backups are kept (0 = no automatic backups); { now: true } writes one now.
+    if (typeof body.keep === "number") config.update((c) => {
+      c.backupKeep = Math.max(0, Math.min(90, Math.round(body.keep as number)));
+    }, { secret: true });
+    const made = body.now === true ? backupIfDue(backupDir(), settingsExport(), Date.now(), config.get().backupKeep ?? 14, true) : null;
+    return json(res, 200, { keep: config.get().backupKeep ?? 14, made, backups: listBackups(backupDir()) });
   }
+  if (p === "/api/backups/restore" && m === "POST") {
+    const data = readBackup(backupDir(), String(body.name ?? ""));
+    if (!data) return json(res, 404, { error: "No such backup." });
+    return importSettings(res, data as Record<string, unknown>);
+  }
+  if (p === "/api/import" && m === "POST") return importSettings(res, body);
   if (p === "/api/forget" && m === "POST") {
     // Everything DebridTV knows, gone: keys, library facts, history, channels.
     if (body.confirm !== "forget everything") return json(res, 400, { error: "confirmation missing" });
@@ -823,6 +881,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     ledger = new WatchLedger();
     liveLineup.reset();
     demoLineup.reset();
+    rmSync(backupDir(), { recursive: true, force: true });
     rebuild();
     return json(res, 200, { ok: true });
   }
@@ -894,6 +953,10 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       if (restrictedHours === null) return json(res, 400, { error: "Restricted hours need from/to as HH:MM and a rating G, PG, PG-13, R or NC-17." });
       const slots = b.slots === undefined ? undefined : cleanSlots(b.slots);
       if (slots === null) return json(res, 400, { error: "Each time slot needs days 1-7, from/to as HH:MM and a source." });
+      const weights = b.weights === undefined ? undefined : cleanWeights(b.weights);
+      if (weights === null) return json(res, 400, { error: "Weights are 0 to 100 per show." });
+      const exclude = b.exclude === undefined ? undefined : cleanExclusions(b.exclude);
+      if (exclude === null) return json(res, 400, { error: "Exclusions are lists of show keys and genre names." });
       const r = l.updateSettings(ch.meta.ruleKey, {
         name: typeof b.name === "string" || b.name === null ? (b.name as string | null) : undefined,
         number: typeof b.number === "number" ? b.number : undefined,
@@ -903,6 +966,12 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
         restrictedHours,
         slots,
         specials: typeof b.specials === "boolean" ? b.specials : undefined,
+        weights: weights ?? undefined,
+        balance: b.balance === "time" || b.balance === "episodes" ? b.balance : undefined,
+        marathons: typeof b.marathons === "boolean" ? b.marathons : undefined,
+        premieres: typeof b.premieres === "boolean" ? b.premieres : undefined,
+        watched: b.watched === "all" || b.watched === "unwatched" || b.watched === "resume" ? b.watched : undefined,
+        exclude: exclude ?? undefined,
       });
       if (!r.ok) return json(res, 409, { error: r.error });
       scheduleRebuild();
@@ -913,9 +982,32 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return json(res, 200, { name: c.name, number: c.number, favorite: !!st.favorite, logo: st.logo ?? null,
       kid: !!st.kid, restrictedHours: st.restrictedHours ?? [], slots: st.slots ?? [],
       specials: !!st.specials, specialsAvailable: specialsOf(c),
+      weights: st.weights ?? {}, balance: st.balance ?? "episodes", marathons: !!st.marathons, premieres: !!st.premieres,
+      watched: st.watched ?? "all", exclude: st.exclude ?? {}, groups: channelGroups(c),
       // The clock enforces all three; changes start once the program on now ends (C7).
       enforced: true, timeZone: stationTimeZone(), ratings: ratingCoverage(c),
       ...(settingsNote ? { note: settingsNote } : {}) });
+  }
+  const refresh = /^\/api\/channels\/([\w-]+)\/refresh$/.exec(p);
+  if (refresh && m === "POST") {
+    // N-10: a fresh shuffle, starting when the program on now ends.
+    const l = lineup();
+    const ch = l.allChannels().find((c) => c.id === refresh[1]);
+    if (!ch) return json(res, 404, { error: "no such channel" });
+    l.updateSettings(ch.meta.ruleKey, { reshuffle: true });
+    rebuild();
+    const cur = l.allChannels().find((c) => c.id === ch.id)!;
+    return json(res, 200, { ok: true, fromMs: cur.revisions[cur.revisions.length - 1]!.effectiveFromMs });
+  }
+  if (p === "/api/exclusions") {
+    // N-09b: shows and genres kept off every channel.
+    if (m === "POST" || m === "PUT") {
+      const ex = cleanExclusions(body);
+      if (!ex) return json(res, 400, { error: "Exclusions are lists of show keys and genre names." });
+      lineup().setExclusions(ex);
+      scheduleRebuild();
+    }
+    return json(res, 200, lineup().exclusions());
   }
   if (p === "/api/channels/hide" && m === "POST") {
     lineup().setHidden(String(body.ruleKey), !!body.hidden);
@@ -953,7 +1045,8 @@ function historyRow(r: HistoryState["recent"][number], h: HistoryState) {
 }
 
 // Keep channels in step as time passes (rules may add items as scans finish).
-const tick = opts.timers === false ? null : setInterval(scheduleRebuild, 5 * MIN);
+const tick = opts.timers === false ? null : setInterval(() => (scheduleRebuild(), dailyBackup()), 5 * MIN);
+if (opts.timers !== false) setTimeout(dailyBackup, 10_000).unref();
 tick?.unref();
 
 return {

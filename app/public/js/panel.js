@@ -225,6 +225,14 @@ body.addEventListener("click", async (e) => {
     } else if ("gotoLibrary" in b.dataset) {
       lib = { ...lib, status: b.dataset.gotoLibrary, provider: b.dataset.provider === "local" ? "local" : b.dataset.provider ?? "", q: "", limit: 50 };
       return showTab("library");
+    } else if ("backupNow" in b.dataset) {
+      await api.post("/api/backups", { now: true });
+      toast("Settings backed up.");
+    } else if (b.dataset.restoreBackup) {
+      if (!confirm("Restore this backup? Its channels and choices are merged into what you have now.")) return;
+      await api.post("/api/backups/restore", { name: b.dataset.restoreBackup });
+      toast("Backup restored.");
+      onChange();
     } else if ("themeEdit" in b.dataset) {
       const { openThemeEditor } = await import("./theme.js");
       return void openThemeEditor({ onSaved: () => render() });
@@ -500,8 +508,21 @@ body.addEventListener("input", (e) => {
 
 // ------------------------------------------------------------------ privacy
 
+/** N-27c: daily settings backups in the data folder. */
+function backupsBlock(bk) {
+  const keeps = [[0, "Off"], [7, "Keep 7 days"], [14, "Keep 14 days"], [30, "Keep 30 days"]];
+  const rows = bk.backups.slice(0, 5).map((x) => html`<div class="li" style="grid-template-columns:1fr auto">
+    <div><div class="t">${new Date(x.at).toLocaleString()}</div><div class="d">${x.name} · ${fmtBytes(x.bytes)}</div></div>
+    <button class="btn" data-restore-backup="${x.name}">Restore</button></div>`);
+  return html`<div class="opt" style="margin-top:1em"><div><div class="ol">Daily settings backup</div>
+      <div class="od">Once a day your channels, numbers and choices are saved in the data folder (never keys). Restoring merges them back in.</div></div>
+    <select class="input" style="width:auto" data-backup-keep aria-label="Backups to keep">${raw(keeps.map(([v, l]) => `<option value="${v}" ${v === bk.keep ? "selected" : ""}>${l}</option>`).join(""))}</select></div>
+    ${rows.length ? html`<div class="list">${rows}</div>` : html`<p class="muted">No backups yet.</p>`}
+    <div class="row-actions"><button class="btn" data-backup-now>Back up now</button></div>`;
+}
+
 async function privacy() {
-  const b = await api.get("/api/bootstrap");
+  const [b, bk] = await Promise.all([api.get("/api/bootstrap"), api.get("/api/backups").catch(() => null)]);
   const gate = (on, title, desc) => html`<div class="gate"><span class="lock">${on ? "🔓" : "🔒"}</span><div><b>${title} · ${on ? "on" : "off"}</b><span>${desc}</span></div></div>`;
   return html`<h3>Privacy &amp; permissions</h3>
     <p class="lead">DebridTV runs on this PC and listens only to this PC (127.0.0.1). Nothing is shared unless you turn it on, and each of these needs its own separate yes.</p>
@@ -518,6 +539,7 @@ async function privacy() {
       <input type="file" id="import-file" accept="application/json,.json" hidden>
       <a class="btn" href="/api/history/export" download>Export history</a>
     </div>
+    ${bk ? raw(backupsBlock(bk)) : ""}
     <div class="row-actions" style="margin-top:1.2em">
       <button class="btn danger" data-forget-all>Forget everything…</button>
       <span class="muted">Deletes keys, library facts, history and channels from this PC. Your provider accounts aren't touched.</span>
@@ -656,6 +678,10 @@ body.addEventListener("input", (e) => {
   }
 });
 body.addEventListener("change", async (e) => {
+  if (e.target.dataset?.backupKeep !== undefined) {
+    await api.post("/api/backups", { keep: Number(e.target.value) }).catch((err) => toast(err.message));
+    return;
+  }
   const rate = e.target.dataset?.rate;
   if (rate) {
     const [kind, id] = [rate.slice(0, rate.indexOf(":")), rate.slice(rate.indexOf(":") + 1)];

@@ -307,6 +307,22 @@ test("A4: disconnecting deletes the key from disk and takes its channels off the
   assert.equal(b.channels.some((c: any) => c.name === "Test Show"), false);
 });
 
+test("N-27c: settings backups are written on request, listed, trimmed and restorable; keys never inside", async () => {
+  let r = await post("/api/backups", { keep: 2, now: true });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.keep, 2);
+  assert.match(r.body.made.name, /^settings-\d{4}-\d{2}-\d{2}\.json$/);
+  await post("/api/backups", { now: true });
+  r = await post("/api/backups", { now: true });
+  assert.equal(r.body.backups.length, 2, "only the newest two are kept");
+  const list = (await get("/api/backups")).body;
+  assert.equal(list.backups.length, 2);
+  const text = readFileSync(join(list.folder, list.backups[0].name), "utf8");
+  assert.doesNotMatch(text, new RegExp(`${TB_KEY}|${RD_KEY}`));
+  assert.equal((await post("/api/backups/restore", { name: list.backups[0].name })).status, 200);
+  assert.equal((await post("/api/backups/restore", { name: "../config.json" })).status, 404);
+});
+
 test("forget everything wipes keys, library, history and channels", async () => {
   assert.equal((await post("/api/forget", {})).status, 400, "needs the confirmation phrase");
   const r = await post("/api/forget", { confirm: "forget everything" });
@@ -314,4 +330,5 @@ test("forget everything wipes keys, library, history and channels", async () => 
   assert.equal(configOnDisk().trim(), "{}");
   assert.equal((await get("/api/bootstrap")).body.demo, true);
   assert.equal((await get("/api/history")).body.recent.length, 0);
+  assert.equal((await get("/api/backups")).body.backups.length, 0, "backups go too");
 });

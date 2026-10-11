@@ -8,7 +8,7 @@ export type ByteKind = "playback" | "probe";
 
 export interface MeterEvent {
   at: number;
-  kind: "tune" | "stream-open" | "stream-close" | "cancel" | "api" | "error" | "probe";
+  kind: "tune" | "stream-open" | "stream-close" | "cancel" | "api" | "error" | "probe" | "backup" | "cache";
   detail: string;
 }
 
