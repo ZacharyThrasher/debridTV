@@ -19,7 +19,7 @@ Branch: `claude/project-thread-vyi2fe` (fast-forwardable onto `claude/debridtv-r
 ## Open
 - Chrome/Edge MKV direct play with H.264/HEVC on Zachary's Windows PC (Playwright Chromium has no H.264).
 - Peek and edge-cache numbers on a real provider (needs a run on Zachary's PC).
-- Fill the edge-cache head at library-probe time so first visits also skip two round trips (C).
+- Declined: filling the edge-cache head at probe time (~1 GB of unwatched media across 938 files breaks the core rule). The cache stays viewer-filled.
 - Bitmap-subtitle burn-in has no fixture yet.
 
 ## Bench
