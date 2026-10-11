@@ -48,6 +48,7 @@ export async function openGuide() {
 }
 
 export function closeGuide() {
+  clearPreview();
   if (root.contains(document.activeElement)) document.activeElement.blur();
   root.classList.remove("in-tools");
   root.hidden = true;
@@ -156,6 +157,7 @@ function render() {
   dateEl.textContent = new Date(viewFrom).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   clockEl.textContent = fmtTime(t);
   renderDetails(data.rows[row]?.channel, focus);
+  schedulePreview(data.rows[row]?.channel, focus);
   if (fitRows()) render();
 }
 
@@ -228,6 +230,71 @@ function renderDetails(ch, a) {
     <div class="desc">${a.subtitle ? html`“${a.subtitle}”. ` : ""}${state}.${pad ? ` Ends at ${fmtTime(pad.start)}, then a station break until ${fmtTime(pad.end)}.` : ""}</div>
     ${onNow ? raw(`<div class="prog"><i style="width:${pct.toFixed(1)}%"></i></div>`) : ""}
     <div class="act"><kbd>OK</kbd> ${onNow ? "watch now" : "tune to this channel"}</div>`;
+}
+
+// ------------------------------------------------------------------ preview (N-14)
+// NostalgiaTV can change channel as you move through the guide ("hover tuning"). Here
+// that would open media for every row the highlight passes, and the guide's promise is
+// zero provider calls and zero bytes (audit A05). So the preview window shows what the
+// station clock already knows about the highlighted channel: its mark, what's on, how far
+// in, and the program's own art when the file has some. The picture stays on the channel
+// you're watching until you press OK. Pref guidePreview: false turns it off.
+
+const previewEl = root.querySelector(".guide-preview");
+const slate = Object.assign(document.createElement("div"), { className: "gp-slate", hidden: true });
+slate.setAttribute("aria-hidden", "true");
+previewEl.append(slate);
+let previewTimer = 0;
+let previewKey = "";
+
+function clearPreview() {
+  clearTimeout(previewTimer);
+  previewKey = "";
+  slate.hidden = true;
+  previewEl.classList.remove("previewing");
+  label.textContent = "Now watching";
+}
+const label = previewEl.querySelector(".preview-label");
+
+/** Waits for the highlight to rest (250 ms) so scrolling past rows doesn't flicker. */
+function schedulePreview(ch, a) {
+  const t = now();
+  const live = a && a.start <= t && t < a.end;
+  const want = pref("guidePreview") !== false && ch && ch.id !== tv.current?.id;
+  const key = want ? `${ch.id}:${live ? a.start : "x"}` : "";
+  if (key === previewKey) return void (key && paintPreview(ch, live ? a : null, false));
+  clearTimeout(previewTimer);
+  previewKey = key;
+  if (!key) return clearPreview();
+  previewTimer = setTimeout(() => paintPreview(ch, live ? a : null, true), slate.hidden ? 250 : 120);
+}
+
+function paintPreview(ch, a, fresh) {
+  const t = now();
+  const locked = isLocked(ch) || (a && isRedacted(a));
+  const art = locked ? null : artOf(a, "fanart", "thumb");
+  const pct = a ? clamp((t - a.start) / (a.end - a.start), 0, 1) * 100 : 0;
+  const left = a ? Math.max(1, Math.round((a.end - t) / MIN)) : 0;
+  const sub = a && !locked ? [a.episode, a.subtitle && `“${a.subtitle}”`, a.year].filter(Boolean).join(" · ") : "";
+  slate.style.setProperty("--h", ch.hue);
+  slate.classList.toggle("has-art", !!art);
+  slate.innerHTML = html`${raw(artImg(art, "gp-art"))}
+    <div class="gp-top"><span class="gp-num">${ch.number}</span><span class="gp-name">${wordmark(ch) ?? ch.name}</span></div>
+    <div class="gp-mid">
+      ${locked ? html`<div class="gp-t">🔒 Locked</div><div class="gp-s">Tune in and type the PIN to watch.</div>`
+        : a ? html`<div class="gp-k">On now</div><div class="gp-t">${a.title}</div>${sub ? html`<div class="gp-s">${sub}</div>` : ""}`
+        : offSeason(ch) ? html`<div class="gp-k">Off season</div><div class="gp-t">${ch.name}</div>${backOn(ch) ? html`<div class="gp-s">Back ${backOn(ch)}</div>` : ""}`
+        : html`<div class="gp-k">Coming up</div><div class="gp-t">${ch.name}</div>`}
+    </div>
+    ${a && !locked ? html`<div class="gp-bar"><i style="width:${pct.toFixed(1)}%"></i></div><div class="gp-left">${left} min left · <kbd>OK</kbd> watch</div>` : ""}`.html;
+  if (fresh) {
+    slate.hidden = false;
+    slate.style.animation = "none";
+    void slate.offsetWidth;
+    slate.style.animation = "";
+    previewEl.classList.add("previewing");
+    label.textContent = "Preview · from the schedule";
+  }
 }
 
 // ------------------------------------------------------------------ input

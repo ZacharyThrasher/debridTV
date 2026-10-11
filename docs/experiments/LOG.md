@@ -401,3 +401,22 @@ Shared release `97666b5`: audit **28/28**, `npm test` **214/214**. A20/A21/A25 n
 V 28, P/V 11, P 1, G 1, not started 18, N/A 2 (round 2: V 14, P/V 18). Every round-2 gap
 shipped with tests. Remaining gaps are product areas (content groups, seasonal lineups,
 trailers, On Demand) and items that need Zachary (LAN access, outside sources, profiles).
+
+### B4-001 — Hover-tune in the guide: declined, preview from the clock instead (2026-10-11)
+
+**Question.** NostalgiaTV can change channel as the highlight moves through the guide
+(N-14, "auto-change channel"). Should DebridTV?
+
+**Decision.** No. A real hover-tune opens media (a link and the first bytes) for every row
+the highlight passes, which breaks the guide's promise of 0 provider calls and 0 bytes
+(audit A05) and makes browsing cost what surfing costs (EXP-002: 3.6 GB before cancel and
+debounce). Instead, after the highlight rests for 250 ms on another channel, the
+picture-in-guide window shows a slate built from data the guide already has: the channel's
+number and mark, what's on now, the episode, how far in, minutes left, and the program's own
+local art when there is some. The live picture stays on the channel being watched until OK.
+Pref `guidePreview: false` turns the slate off.
+
+**Evidence.** `test/ui/guide.test.ts` "previews the highlighted channel from the station clock
+only (N-14), never media": six moves across rows make 0 `/media`, 0 `/api/prefetch` and 0
+`/api/now` requests, and the bug (channel being watched) never changes. Screens:
+/mnt/project-files/debridTV/screens/guide-look/27-guide-preview*.png.
