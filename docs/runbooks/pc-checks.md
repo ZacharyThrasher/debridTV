@@ -1,6 +1,6 @@
 # PC checks (Zachary's PC only)
 
-Five checks the cloud can't do. Each one is short. Do them in any order; skip any you
+Six checks the cloud can't do. Each one is short. Do them in any order; skip any you
 don't have time for.
 
 **Rules for every step**
@@ -17,6 +17,7 @@ don't have time for.
 | 4 | Picture subtitles burned in | no | none |
 | 5 | Chrome plays MKV with H.264/HEVC | no | none |
 | 6 | Real-provider surfing numbers (optional) | RD or TorBox | streams what you watch |
+| 7 | Which keys your TV remote sends | no | none |
 
 ## 0. Get the latest code (once)
 
@@ -125,7 +126,28 @@ provider. It connects your key to a **throwaway** app data folder, which you del
 
 **Send:** `C:\Sandbox\surf-numbers.json` and your two impressions.
 
-## 7. Clean up
+## 7. Which keys your TV remote sends (no provider traffic)
+
+TV mode guesses what Back, OK and the colour keys send. This page shows the real codes.
+It only draws on screen and sends nothing. It is not the app: your library stays private.
+
+1. On the PC, serve just this one test page to your home network:
+   ```powershell
+   cd C:\Sandbox\debridTV-probe\docs\runbooks\keytest
+   python -m http.server 7399
+   ```
+   Windows may ask to allow Python on private networks. Allow private only.
+2. Find the PC's address: in another window run `ipconfig` and note the IPv4 Address
+   (like `192.168.1.20`).
+3. On the TV's web browser, open `http://192.168.1.20:7399` (your address).
+4. Press each button once: arrows, OK, Back, the four colour keys, Info, Guide, CH+ and
+   CH−, Play/Pause.
+5. Stop the server with Ctrl+C.
+
+**Send:** a phone photo of the TV screen (the table and the blue line at the top), plus
+the TV's brand and model.
+
+## 8. Clean up
 
 Stop the app (Ctrl+C), then:
 
@@ -134,4 +156,5 @@ Remove-Item Env:RD_TOKEN, Env:TORBOX_TOKEN, Env:RD_PICK, Env:RD_PICK2, Env:TB_PI
 Remove-Item -Recurse -Force C:\Sandbox\debridtv-pctest
 ```
 
-Deleting that folder removes the key the app saved in step 6.
+Deleting that folder removes the key the app saved in step 6. If you did step 7, check the
+key test server is stopped (Ctrl+C in its window).
