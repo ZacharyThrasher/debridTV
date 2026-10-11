@@ -1,6 +1,7 @@
-// DebridTV local server. Runs on the viewer's own PC and listens on 127.0.0.1 only:
-// nothing here is reachable from other devices (sharing and tuner export stay
-// behind their gates). Provider keys live in the local data folder and never reach
+// DebridTV local server. Runs on the viewer's own PC and listens on 127.0.0.1.
+// Other devices can reach it only when the owner turns on Home network access on
+// the PC (app/lan/access.ts: private addresses, paired devices); tuner export and
+// cloud relay stay behind their gates. Provider keys live in the local data folder and never reach
 // the browser. Media is proxied so every byte and every cancellation is measured.
 //
 //   node app/server.ts            then open http://127.0.0.1:7337
@@ -33,6 +34,7 @@ import { backupIfDue, listBackups, readBackup } from "./backups.ts";
 import { EdgeCache } from "./edgecache.ts";
 import { PinLock } from "./pinlock.ts";
 import { allowedUnder } from "../src/clock/ratings.ts";
+import { LanAccess, type LanOptions } from "./lan/access.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(HERE, "public");
@@ -49,6 +51,8 @@ export interface AppOptions {
   ffmpeg?: boolean;
   /** Background timers (periodic lineup refresh). */
   timers?: boolean;
+  /** Home network access options (tests simulate a TV's address with `peer`). */
+  lan?: Pick<LanOptions, "peer" | "addresses" | "listen" | "now">;
 }
 
 interface HistoryState {
@@ -66,7 +70,8 @@ let port = opts.port ?? Number(process.env.PORT ?? 7337);
 const config = new JsonFile<Config>("config.json", () => ({}));
 const historyFile = new JsonFile<HistoryState>("history.json", () => ({ spans: {}, recent: [], manual: {} }));
 const meters = new Meters();
-const gates = new Gates(); // Nothing is granted; no code path here asks for a gate.
+const gates = new Gates(); // Only Home network access (lan) can grant "sharing", from the PC.
+const lan = new LanAccess({ gates, ...opts.lan });
 const library = new Library(() => config.get(), meters, () => scheduleRebuild(), opts.bases);
 const liveLineup = new Lineup("lineup.json");
 const demoLineup = new Lineup("lineup-demo.json");
@@ -699,13 +704,9 @@ const liveStarts = new Map<string, number>();
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://${HOST}`);
   const p = url.pathname;
-  // Same-origin only: refuse cross-site requests so a web page can't drive the TV.
-  // Host check blocks DNS-rebinding pages from reading this server as if it were theirs.
-  const host = req.headers.host ?? "";
-  if (host !== `${HOST}:${port}` && host !== `localhost:${port}`) return json(res, 403, { error: "unexpected host" });
-  const origin = req.headers.origin;
-  if (origin && origin !== `http://${HOST}:${port}` && origin !== `http://localhost:${port}`) return json(res, 403, { error: "cross-origin" });
   try {
+    // Host, Origin, home network address and pairing checks; also serves /pair and /api/lan/*.
+    if (await lan.intercept(req, res, url, port)) return;
     if (p.startsWith("/api/")) return await api(req, res, url);
     const live = /^\/media\/([\w-]+)\/live$/.exec(p);
     if (live) return serveLive(req, res, live[1]!, url);
@@ -1312,7 +1313,7 @@ return {
       server.once("error", reject);
       server.listen(port, HOST, () => {
         port = (server.address() as AddressInfo).port;
-        resolveListen(port);
+        lan.start(server, port).then(() => resolveListen(port), reject);
       });
     });
   },
@@ -1320,12 +1321,13 @@ return {
     if (tick) clearInterval(tick);
     if (rebuildTimer) clearTimeout(rebuildTimer);
     library.stopScan("Shutting down");
-    return new Promise((r) => {
+    return lan.stop().then(() => new Promise((r) => {
       server.closeAllConnections();
       server.close(() => r());
-    });
+    }));
   },
   isDemo,
+  lan,
   ffmpeg: !!ffmpeg,
 };
 }
@@ -1384,5 +1386,6 @@ if (isMain) {
   console.log(`\n  📺  DebridTV is on the air:  http://${HOST}:${port}\n`);
   console.log(`  Mode: ${app.isDemo() ? "demo (connect a source in Settings)" : "your library"}`);
   console.log(`  Compatibility mode (ffmpeg): ${app.ffmpeg ? "available" : "not found — some files may not play in the browser"}`);
+  console.log(`  Home network: ${app.lan.enabled ? "on (paired TVs and phones can open it)" : "off (turn on at http://" + HOST + ":" + port + "/lan)"}`);
   console.log(`  Data folder: ${dataDir()}\n`);
 }
