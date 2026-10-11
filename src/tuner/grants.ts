@@ -5,7 +5,11 @@
 import type { PlaybackGrant, ProviderClient } from "../providers/types.ts";
 
 export interface GrantCacheOptions {
-  /** Used when the provider states no expiry. Short on purpose; see handoff §5.2. */
+  /**
+   * Used when the provider states no expiry. LIVE-001 saw a TorBox link still
+   * working after 120 min; 60 min keeps a 2× margin, and a refused link is
+   * re-resolved once anyway (ADR-0002).
+   */
   fallbackTtlMs?: number;
   now?: () => number;
 }
@@ -19,7 +23,7 @@ export class GrantCache {
   misses = 0;
 
   constructor(opts: GrantCacheOptions = {}) {
-    this.ttl = opts.fallbackTtlMs ?? 10 * 60_000;
+    this.ttl = opts.fallbackTtlMs ?? 60 * 60_000;
     this.now = opts.now ?? Date.now;
   }
 

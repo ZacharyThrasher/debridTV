@@ -266,3 +266,14 @@ For normal-speed surfing (300 ms), adaptive-prefetch is **as fast as the snappy
 option (594 vs 574 ms) with the least media**. Slow surfers (1 s presses) still wait
 ~0.8 s longer than with cancel-only, which itself costs ~2.8× the media. Keep
 adaptive-prefetch as the default; the slow-surfer case is the remaining gap.
+
+### LIVE-001 run 3 — TorBox link lifetime (2026-10-11, reported by Zachary)
+
+1-byte reads on the same link every 15 min: **206 at every check from 15 to 120 min**
+(TTFB 86–406 ms, no trend). The link was still valid at 2 h, which contradicts the
+SDK's "1 hour" wording; the 3 h claim is still unconfirmed past 120 min.
+
+**Change:** the `GrantCache` fallback TTL went from 10 → 60 min (2× margin under what
+was observed). Expiry is still handled by invalidate-and-re-resolve-once, so a wrong
+guess costs one API call, not a failure. For a 1-hour program that's 1 link request
+instead of 6.
