@@ -97,3 +97,51 @@ test("N-18a: ac=opus gives Opus audio for browsers without AAC; other codecs are
   assert.equal(stdout.trim(), "opus");
   assert.equal((await fetch(`${base}/media/${id}/live?ac=mp3`)).status, 400);
 });
+
+test("N-23a: a song in compatibility mode is a sound-only stream", { skip: !hasFfmpeg }, async () => {
+  mkdirSync(join(media, "Band", "Album"), { recursive: true });
+  copyFileSync(new URL("./fixtures/audio.flac", import.meta.url), join(media, "Band", "Album", "01 - Song.flac"));
+  await post("/api/sources/refresh", { provider: "local" });
+  await post("/api/scan/start", {});
+  let song = "";
+  for (let i = 0; i < 100 && !song; i++) {
+    const f = (await (await fetch(`${base}/api/library/files?q=Song`)).json()).files.find((x: any) => x.name.endsWith(".flac"));
+    if (f?.durationMs) song = f.id;
+    else await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.ok(song, "song scanned");
+  const res = await fetch(`${base}/media/${song}/live?start=0.5`);
+  assert.equal(res.status, 200);
+  const out = join(home, "song.mp4");
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(out, new Uint8Array(await res.arrayBuffer()));
+  const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,codec_name", "-of", "csv=p=0", out]);
+  assert.equal(stdout.trim(), "aac,audio");
+});
+
+test("N-19: maxh caps the converted picture's height; copied video is left as it is", { skip: !hasFfmpeg }, async () => {
+  const file = join(media, "Big.Picture.S01E01.mkv");
+  await run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=1920x1080:r=5:d=2", "-f", "lavfi", "-i", "sine=duration=2",
+    "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", file]);
+  await post("/api/sources/refresh", { provider: "local" });
+  await post("/api/scan/start", {});
+  let big = "";
+  for (let i = 0; i < 100 && !big; i++) {
+    const f = (await (await fetch(`${base}/api/library/files?q=Big`)).json()).files.find((x: any) => x.name.startsWith("Big.Picture"));
+    if (f?.durationMs) big = f.id;
+    else await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.ok(big);
+  const { writeFileSync } = await import("node:fs");
+  const height = async (q: string) => {
+    const res = await fetch(`${base}/media/${big}/live?start=0${q}`);
+    assert.equal(res.status, 200);
+    const out = join(home, `big${q.replace(/\W/g, "")}.mp4`);
+    writeFileSync(out, new Uint8Array(await res.arrayBuffer()));
+    return (await run("ffprobe", ["-v", "error", "-select_streams", "v", "-show_entries", "stream=height", "-of", "csv=p=0", out])).stdout.trim();
+  };
+  assert.equal(await height("&v=vp9&maxh=720"), "720", "converted, capped at 720");
+  assert.equal(await height("&v=vp9"), "1080", "converted, as big as the file up to 1080p");
+  assert.equal(await height("&maxh=720"), "1080", "copied video is untouched");
+  assert.equal((await fetch(`${base}/media/${big}/live?maxh=480`)).status, 400);
+});

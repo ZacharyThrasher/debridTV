@@ -56,3 +56,14 @@ ffmpeg -y $V $A -t 1 -c:v libx265 -preset ultrafast -crf 40 -x265-params log-lev
   -color_primaries bt2020 -color_trc smpte2084 -colorspace bt2020nc -c:a aac -ac 6 -b:a 64k fixture-hdr10-51.mkv
 ffmpeg -y -i fixture-hdr10-51.mkv -c copy -tag:v hvc1 -movflags +faststart fixture-hdr10-51.mp4
 ```
+
+## Audio (music channel, N-23a)
+
+Made with ffmpeg from a 3 s 440 Hz sine, mono:
+
+- `audio-cbr.mp3`: libmp3lame 32k CBR, ID3v2.3 title "Night Drive", artist "The Tapes", album "Cassette", track 3, year 1987, genre Synthpop. 3.056 s.
+- `audio-vbr.mp3`: libmp3lame -q:a 6 (Xing header), ID3v2.4 title "Ünïcode Song". 3.056 s.
+- `audio.flac`: 22.05 kHz, Vorbis comments as above (no genre). 3.000 s.
+- `audio.ogg`: Vorbis q0, title and artist. 3.000 s.
+- `audio.opus`: Opus 16k at 48 kHz, title and artist. 3.0065 s per ffprobe (3.000 s after pre-skip).
+- `audio.wav`: 8 kHz unsigned 8-bit PCM, no tags. 3.000 s.

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseMatroska, parseMp4, probe } from "../src/library/probe.ts";
+import { mkvCodecName, parseMatroska, parseMp4, probe } from "../src/library/probe.ts";
 import type { RangeReader } from "../src/library/probe.ts";
 
 const fx = (name: string): Uint8Array => new Uint8Array(readFileSync(new URL(`./fixtures/${name}`, import.meta.url)));
@@ -324,4 +324,13 @@ test("N-37: picture height, HDR transfer and audio channels from the header (Mat
   }
   const sdr = fx("fixture-h264-aac.mkv");
   assert.equal((await probe(memoryReader(sdr).read, sdr.byteLength)).tracks!.find((t) => t.kind === "video")!.hdr, undefined);
+});
+
+test("Matroska codec ids: WebM text tracks are WebVTT, not an image subtitle to burn in", () => {
+  assert.equal(mkvCodecName("D_WEBVTT/SUBTITLES"), "webvtt");
+  assert.equal(mkvCodecName("D_WEBVTT/CAPTIONS"), "webvtt");
+  assert.equal(mkvCodecName("S_TEXT/WEBVTT"), "webvtt");
+  assert.equal(mkvCodecName("S_VOBSUB"), "vobsub");
+  assert.equal(mkvCodecName("S_HDMV/PGS"), "pgs");
+  assert.equal(mkvCodecName("A_VORBIS"), "vorbis");
 });

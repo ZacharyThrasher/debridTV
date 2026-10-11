@@ -119,7 +119,10 @@ export function browse(d: OnDemandDeps, q = "", kind: "all" | "show" | "movie" =
     .filter((i) => i.parsed.kind === "movie" && (!needle || norm(i.parsed.title).includes(needle)))
     .map((i) => itemView(d, i))
     .sort((a, b) => a.title.localeCompare(b.title) || (a.year ?? 0) - (b.year ?? 0));
-  return { shows, movies };
+  // Episode-name matches (up to 30), so "lighthouse" finds the episode, not just its show.
+  const episodes = !needle || kind === "movie" ? [] : sortEpisodes(items.filter((i) => i.parsed.kind === "episode" && norm(i.subtitle ?? i.meta?.title).includes(needle)))
+    .slice(0, 30).map((i) => itemView(d, i));
+  return { shows, movies, episodes };
 }
 
 /** GET /api/ondemand/show */

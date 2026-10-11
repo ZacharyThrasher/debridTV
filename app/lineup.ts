@@ -10,13 +10,13 @@ import { KID_MAX, RATINGS as RATING_SCALE, type Rating } from "../src/clock/rati
 import { hash32 } from "../src/clock/rng.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
 import { JsonFile } from "./store.ts";
-import { breakpoints, type LibItem } from "./library.ts";
+import { airsAsExtra, breakpoints, type LibItem } from "./library.ts";
 
 const MIN = 60_000;
 
 export interface ChannelMeta {
   ruleKey: string;
-  kind: "show" | "mix" | "movies" | "custom" | "demo" | "group";
+  kind: "show" | "mix" | "movies" | "custom" | "demo" | "group" | "trailers" | "music";
   hue: number;
   tagline: string;
 }
@@ -701,6 +701,12 @@ export function autoRules(items: LibItem[], custom: CustomChannel[], groups: Con
         slotMs: c.slotMinutes ? c.slotMinutes * MIN : undefined, preferredNumber: 50 });
   }
   rules.push(...metadataRules(usable));
+  // Coming Attractions (N-23c): local trailers back to back, shuffled. Local files only, so no provider bytes.
+  const trailers = items.filter((i) => i.present && !i.excluded && i.durationMs && airsAsExtra(i) && i.trailer);
+  if (trailers.length >= 3)
+    rules.push({ key: "trailers:local", name: "Coming Attractions", kind: "trailers", tagline: `${trailers.length} trailers from your films`,
+      itemIds: trailers.map((i) => i.id).sort(), ordering: "shuffle", preferredNumber: 8 });
+  rules.push(...musicRules(items.filter((i) => i.present && !i.excluded && i.durationMs && airsAsExtra(i) && i.track)));
   for (const g of groups) {
     const ids = groupIds.get(g.id)!;
     if (!ids.length) continue;
@@ -722,6 +728,32 @@ export function autoRules(items: LibItem[], custom: CustomChannel[], groups: Con
 }
 
 const HOURS = 3_600_000;
+
+/**
+ * Music channels from local audio (N-23a): a Jukebox of everything (5+ tracks,
+ * artists taking turns), and a station per genre with 15+ tracks and an hour of
+ * music (#91+). Songs play back to back; the player shows a visualiser.
+ */
+export function musicRules(tracks: LibItem[]): Rule[] {
+  if (tracks.length < 5) return [];
+  const ids = (list: LibItem[]) => list.map((i) => i.id).sort();
+  const artists = new Set(tracks.map((t) => t.track?.artist?.toLowerCase() ?? "")).size;
+  const rules: Rule[] = [{ key: "music:all", name: "Jukebox", kind: "music", tagline: `${tracks.length} songs${artists > 1 ? `, ${artists} artists` : ""}`,
+    itemIds: ids(tracks), ordering: artists > 1 ? "round-robin-shuffle" : "shuffle", preferredNumber: 90 }];
+  const byGenre = new Map<string, { name: string; list: LibItem[] }>();
+  for (const t of tracks) {
+    const g = t.track?.genre?.trim();
+    if (!g) continue;
+    const k = slug(g);
+    const e = byGenre.get(k) ?? { name: g, list: [] };
+    e.list.push(t);
+    byGenre.set(k, e);
+  }
+  for (const [k, g] of [...byGenre].sort((a, b) => b[1].list.length - a[1].list.length).slice(0, 8))
+    if (g.list.length >= 15 && g.list.reduce((n, i) => n + i.durationMs!, 0) >= HOURS)
+      rules.push({ key: `music:${k}`, name: `${g.name} Radio`, kind: "music", tagline: `${g.list.length} ${g.name} songs`, itemIds: ids(g.list), ordering: "shuffle", preferredNumber: 91 });
+  return rules;
+}
 
 /**
  * Network, genre and collection channels from metadata the viewer's own files

@@ -1,6 +1,7 @@
-// DebridTV local server. Runs on the viewer's own PC and listens on 127.0.0.1 only:
-// nothing here is reachable from other devices (sharing and tuner export stay
-// behind their gates). Provider keys live in the local data folder and never reach
+// DebridTV local server. Runs on the viewer's own PC and listens on 127.0.0.1.
+// Other devices can reach it only when the owner turns on Home network access on
+// the PC (app/lan/access.ts: private addresses, paired devices); tuner export and
+// cloud relay stay behind their gates. Provider keys live in the local data folder and never reach
 // the browser. Media is proxied so every byte and every cancellation is measured.
 //
 //   node app/server.ts            then open http://127.0.0.1:7337
@@ -32,8 +33,11 @@ import { demoItems } from "./demo.ts";
 import { backupIfDue, listBackups, readBackup } from "./backups.ts";
 import { EdgeCache } from "./edgecache.ts";
 import { PinLock } from "./pinlock.ts";
+import { OnlineMetadata } from "./metadata/tmdb.ts";
 import { allowedUnder } from "../src/clock/ratings.ts";
+import { SilenceJob, type SilenceTarget } from "./silence.ts";
 import { browse as onDemandBrowse, continueWatching, show as onDemandShow, type OnDemandDeps } from "./ondemand.ts";
+import { LanAccess, type LanOptions } from "./lan/access.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(HERE, "public");
@@ -50,6 +54,10 @@ export interface AppOptions {
   ffmpeg?: boolean;
   /** Background timers (periodic lineup refresh). */
   timers?: boolean;
+  /** TMDB API and image bases; tests point these at a recorded mock. */
+  tmdb?: { apiBase?: string; imageBase?: string; spacingMs?: number };
+  /** Home network access options (tests simulate a TV's address with `peer`). */
+  lan?: Pick<LanOptions, "peer" | "addresses" | "listen" | "now">;
 }
 
 interface HistoryState {
@@ -67,18 +75,28 @@ let port = opts.port ?? Number(process.env.PORT ?? 7337);
 const config = new JsonFile<Config>("config.json", () => ({}));
 const historyFile = new JsonFile<HistoryState>("history.json", () => ({ spans: {}, recent: [], manual: {} }));
 const meters = new Meters();
-const gates = new Gates(); // Nothing is granted; no code path here asks for a gate.
+const gates = new Gates(); // Only Home network access (lan) can grant "sharing", from the PC.
+const lan = new LanAccess({ gates, ...opts.lan });
 const library = new Library(() => config.get(), meters, () => scheduleRebuild(), opts.bases);
 const liveLineup = new Lineup("lineup.json");
 const demoLineup = new Lineup("lineup-demo.json");
 const demo = demoItems();
 const pin = new PinLock();
+// Online posters and descriptions (off until the viewer enters a TMDB key). Reads its disk cache only, never waits on TMDB.
+const online = new OnlineMetadata({ ...opts.tmdb, log: (d) => meters.log("api", d) });
 /** Which items only locked channels carry; recomputed after every rebuild or lock change. */
 let lockSets: { gen: number; locked: Set<string>; open: Set<string> } | null = null;
 let lockGen = 0;
 let ledger = WatchLedger.import(historyFile.get().spans);
 const ffmpeg = opts.ffmpeg === false ? null : detectFfmpeg();
 const ffprobe = ffmpeg ? detectFfprobe(ffmpeg) : null;
+const silenceJob = new SilenceJob(ffmpeg);
+/** Episodes on this PC with no chapters and no silence check yet (N-22c). Never debrid files. */
+function silenceTargets(all = false): SilenceTarget[] {
+  return library.items().filter((i) => i.provider === "local" && isConnected("local") && i.present && !i.excluded && i.parsed.kind === "episode"
+    && i.durationMs && !i.chaptersMs?.length && (all || !i.silence))
+    .map((i) => ({ id: i.id, path: i.ref, durationMs: i.durationMs!, label: displayTitle(i) }));
+}
 
 function connected() {
   const c = config.get();
@@ -145,6 +163,8 @@ function rebuild() {
   const demoClock = new StationClock(demoMedia());
   demoLineup.sync(demoClock, autoRules(demo, demoLineup.custom(), demoLineup.groups()), now, { timeZone, info: itemInfo(demo, now) });
   clock = isDemo() ? demoClock : liveClock;
+  // Fill in posters and descriptions the files lack; skips PIN-locked items. No-op without a TMDB key.
+  if (!isDemo()) void online.sync(liveItems, lockedItem);
 }
 const PREMIERE_DAYS = 14;
 /** Show, genres, watched and "new" per item, for exclusions, watched rules and premieres. */
@@ -289,11 +309,13 @@ function refuseLocked(res: http.ServerResponse, id: string): boolean {
   return true;
 }
 
-/** URLs for a local file's own artwork (N-01c); paths stay on the server. */
+/** URLs for a local file's own artwork (N-01c), then TMDB's for what it lacks (N-01c online); paths stay on the server. */
 function artView(it: LibItem | undefined): Partial<Record<ArtKind, string>> | undefined {
-  if (!it?.art || it.provider !== "local") return undefined;
+  if (!it) return undefined;
+  const kinds = new Set<ArtKind>([...(it.provider === "local" && it.art ? (Object.keys(it.art) as ArtKind[]) : []), ...online.kinds(it)]);
+  if (!kinds.size) return undefined;
   const out: Partial<Record<ArtKind, string>> = {};
-  for (const k of Object.keys(it.art) as ArtKind[]) out[k] = `/api/art/${it.id}/${k}`;
+  for (const k of kinds) out[k] = `/api/art/${it.id}/${k}`;
   return out;
 }
 /** A show channel's clear logo, if its folder has one; the editor can offer it as the channel's logo. */
@@ -301,8 +323,8 @@ function channelArt(c: StationChannel) {
   if (c.meta.kind !== "show") return undefined;
   const ids = c.revisions[c.revisions.length - 1]!.itemIds;
   for (const id of ids.slice(0, 50)) {
-    const it = itemById(id);
-    if (it?.art?.logo || it?.art?.poster) return artView({ ...it, art: { ...(it.art.logo ? { logo: it.art.logo } : {}), ...(it.art.poster ? { poster: it.art.poster } : {}) } });
+    const a = artView(itemById(id));
+    if (a?.logo || a?.poster) return { ...(a.logo ? { logo: a.logo } : {}), ...(a.poster ? { poster: a.poster } : {}) };
   }
   return undefined;
 }
@@ -335,14 +357,16 @@ function airingView(a: Airing) {
     start: a.startMs,
     end: a.endMs,
     itemId: a.itemId,
-    title: p?.kind === "episode" ? p.show : p?.kind === "movie" ? p.title : (it?.name ?? "Unknown"),
+    title: p?.kind === "episode" ? p.show : p?.kind === "movie" ? p.title : it?.trailer ? it.trailer.title : it?.track?.title ?? (it?.name ?? "Unknown"),
     episode: p?.kind === "episode" ? (p.absolute ? `Ep. ${p.episode}` : `S${p.season} · E${p.episode}`) : undefined,
-    year: p?.kind === "movie" ? p.year : undefined,
-    subtitle: it?.subtitle ?? (p?.kind === "episode" ? it?.meta?.title : undefined),
-    genre: it?.genre ?? it?.meta?.genres?.[0],
+    year: p?.kind === "movie" ? p.year : it?.trailer?.year ?? it?.track?.year,
+    subtitle: it?.subtitle ?? (p?.kind === "episode" ? (it?.meta?.title ?? online.text(it)?.name) : undefined),
+    genre: it?.genre ?? it?.meta?.genres?.[0] ?? it?.track?.genre,
     rating: it ? (effectiveRating(it, library.manualRatings())?.rating ?? null) : null,
-    description: it?.meta?.plot,
-    kind: p?.kind,
+    description: it?.meta?.plot ?? online.text(it)?.overview,
+    kind: it?.trailer ? "trailer" : it?.track ? "track" : p?.kind,
+    ...(it?.trailer ? { trailerFor: trailerFor(it.trailer) } : {}),
+    ...(it?.track ? { artist: it.track.artist ?? null, album: it.track.album ?? null, trackNo: it.track.track ?? null } : {}),
     durationMs: it?.durationMs ?? null,
     ...availabilityView(it),
     provider: it?.provider,
@@ -351,6 +375,12 @@ function airingView(a: Airing) {
     art: artView(it),
     segments: a.segments.map((s) => (s.kind === "program" ? { kind: s.kind, start: s.startMs, end: s.endMs, fileFrom: s.fileFromMs } : { kind: s.kind, start: s.startMs, end: s.endMs, reason: s.reason })),
   };
+}
+
+/** The film a trailer advertises, and its library id when the film itself is here (N-23c). */
+function trailerFor(t: { title: string; titleKey: string; year?: number }) {
+  const film = allItems().find((i) => i.present && i.parsed.kind === "movie" && i.parsed.titleKey === t.titleKey && (!t.year || !i.parsed.year || i.parsed.year === t.year));
+  return { title: t.title, year: t.year ?? null, itemId: film?.id ?? null };
 }
 
 /**
@@ -445,7 +475,8 @@ function sourcesView() {
 
 // ---------------------------------------------------------------- media
 
-const MIME: Record<string, string> = { ".mp4": "video/mp4", ".m4v": "video/mp4", ".mkv": "video/x-matroska", ".webm": "video/webm", ".mov": "video/quicktime", ".ts": "video/mp2t" };
+const MIME: Record<string, string> = { ".mp4": "video/mp4", ".m4v": "video/mp4", ".mkv": "video/x-matroska", ".webm": "video/webm", ".mov": "video/quicktime", ".ts": "video/mp2t",
+  ".mp3": "audio/mpeg", ".flac": "audio/flac", ".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg", ".wav": "audio/wav", ".m4a": "audio/mp4" };
 
 async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, id: string, internal: boolean) {
   const it = itemById(id);
@@ -602,10 +633,17 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
   // Audio codec: AAC by default; ac=opus for browsers without an AAC decoder (some Chromium builds).
   const ac = url.searchParams.get("ac") ?? "aac";
   if (ac !== "aac" && ac !== "opus") return json(res, 400, { error: "Audio is ac=aac or ac=opus." });
+  // N-19: a ceiling on the converted picture's height (only when video is re-encoded; copied video is untouched).
+  const maxhRaw = url.searchParams.get("maxh");
+  const maxh = maxhRaw == null || maxhRaw === "" || maxhRaw === "0" ? null : Number(maxhRaw);
+  if (maxh !== null && maxh !== 720 && maxh !== 1080) return json(res, 400, { error: "maxh is 720 or 1080." });
+  const scale = maxh ? `scale=-2:'min(ih,${maxh})'` : "scale='min(1920,iw)':-2";
   const subCodec = sub.index != null ? (sub as { track?: { codec: string } }).track?.codec : undefined;
   const textSub = sub.index != null && (!subCodec || TEXT_SUBS.has(subCodec));
   const burn = sub.index != null && !textSub && url.searchParams.get("burn") === "1" && IMAGE_SUBS.has(subCodec ?? "");
   const copyVideo = !burn && (it.video ? canDecode.includes(it.video) : false);
+  // Songs (and any file with no picture) get a sound-only stream.
+  const audioOnly = !!it.track || (!!it.tracks?.length && !it.tracks.some((t) => t.kind === "video"));
   const tok = url.searchParams.get("tok");
   const subsOut = textSub && tok ? 3 : null;
   const input = it.provider === "local" ? it.ref : `http://${HOST}:${port}/media/${id}?internal=1`;
@@ -613,9 +651,11 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
   const args = [
     "-hide_banner", "-loglevel", "error", "-nostdin",
     "-ss", start.toFixed(2), "-i", input,
-    ...(burn
-      ? ["-filter_complex", `[0:v:0][0:s:${sub.index}]overlay=eof_action=pass,scale='min(1920,iw)':-2[v]`, "-map", "[v]", ...encode]
-      : ["-map", "0:v:0", ...(copyVideo ? ["-c:v", "copy"] : [...encode, "-vf", "scale='min(1920,iw)':-2"])]),
+    ...(audioOnly
+      ? []
+      : burn
+      ? ["-filter_complex", `[0:v:0][0:s:${sub.index}]overlay=eof_action=pass,${scale}[v]`, "-map", "[v]", ...encode]
+      : ["-map", "0:v:0", ...(copyVideo ? ["-c:v", "copy"] : [...encode, "-vf", scale])]),
     // An index we couldn't check against the file's track list is optional, so a wrong guess plays without sound rather than failing.
     "-map", a.index == null ? "0:a:0?" : `0:a:${a.index}${it.tracks?.length ? "" : "?"}`, "-sn", "-dn", "-map_chapters", "-1",
     ...(ac === "opus" ? ["-c:a", "libopus", "-ac", "2", "-b:a", "160k"] : ["-c:a", "aac", "-ac", "2", "-b:a", "192k"]),
@@ -712,13 +752,9 @@ const liveStarts = new Map<string, number>();
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://${HOST}`);
   const p = url.pathname;
-  // Same-origin only: refuse cross-site requests so a web page can't drive the TV.
-  // Host check blocks DNS-rebinding pages from reading this server as if it were theirs.
-  const host = req.headers.host ?? "";
-  if (host !== `${HOST}:${port}` && host !== `localhost:${port}`) return json(res, 403, { error: "unexpected host" });
-  const origin = req.headers.origin;
-  if (origin && origin !== `http://${HOST}:${port}` && origin !== `http://localhost:${port}`) return json(res, 403, { error: "cross-origin" });
   try {
+    // Host, Origin, home network address and pairing checks; also serves /pair and /api/lan/*.
+    if (await lan.intercept(req, res, url, port)) return;
     if (p.startsWith("/api/")) return await api(req, res, url);
     const live = /^\/media\/([\w-]+)\/live$/.exec(p);
     if (live) return serveLive(req, res, live[1]!, url);
@@ -799,7 +835,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   const art = /^\/api\/art\/([\w-]+)\/(poster|fanart|thumb|logo)$/.exec(p);
   if (art && m === "GET") {
     const it = itemById(art[1]!);
-    const file = it?.provider === "local" ? it.art?.[art[2] as ArtKind] : undefined;
+    const file = (it?.provider === "local" ? it.art?.[art[2] as ArtKind] : undefined) ?? online.imageFile(it, art[2] as ArtKind);
     if (!it || !file) return json(res, 404, { error: "no picture" });
     if (refuseLocked(res, it.id)) return;
     let size = 0;
@@ -900,6 +936,16 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return v == null ? json(res, 404, { pending: true }) : json(res, 200, { startMs: v });
   }
   if (p === "/api/meters") return json(res, 200, meters.snapshot());
+  if (p === "/api/metadata" && m === "GET") return json(res, 200, online.status());
+  if (p === "/api/metadata" && m === "POST") {
+    // { key } checks a TMDB key with TMDB (one request) and keeps it on this PC; { key: null } turns online metadata off.
+    if (!("key" in body)) return json(res, 400, { error: "key missing" });
+    const r = await online.setKey(typeof body.key === "string" ? body.key : null);
+    if (!r.ok) return json(res, 400, { error: r.error });
+    meters.log("api", online.enabled() ? "TMDB key saved; online posters and descriptions are on" : "Online posters and descriptions turned off");
+    if (online.enabled()) rebuild();
+    return json(res, 200, online.status());
+  }
   if (p === "/api/sources" && m === "GET") return json(res, 200, sourcesView());
   if (p === "/api/sources" && m === "POST") {
     const { provider, key, dirs } = body as { provider: string; key?: string; dirs?: string[] };
@@ -1114,6 +1160,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     liveLineup.reset();
     demoLineup.reset();
     rmSync(backupDir(), { recursive: true, force: true });
+    online.forget();
     edge.clear();
     pin.clear();
     meters.cache = { bytes: 0, files: 0 };
@@ -1131,6 +1178,26 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   if (p === "/api/continue" && m === "GET") {
     const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") ?? 20) || 20));
     return json(res, 200, continueWatching(onDemandDeps(), historyFile.get().recent, limit));
+  }
+  if (p === "/api/silence" && m === "GET") {
+    const local = silenceTargets(true);
+    return json(res, 200, { ...silenceJob.state, ffmpeg: !!ffmpeg, eligible: local.length, pending: silenceTargets().length,
+      withBreaks: local.filter((t) => itemById(t.id)?.silence?.breaksMs.length).length });
+  }
+  if (p === "/api/silence/start" && m === "POST") {
+    // N-22c: viewer-started, local files only. Decodes the soundtrack on this PC; no provider is involved.
+    if (!ffmpeg) return json(res, 409, { error: "Finding silences needs ffmpeg on this PC." });
+    if (body.again === true) for (const t of silenceTargets(true)) library.clearSilence(t.id);
+    const targets = silenceTargets();
+    void silenceJob.run(targets, (id, r, ms) => {
+      library.setSilence(id, r);
+      meters.log("silence", "error" in r ? `${itemById(id)?.name.slice(0, 40)}: ${r.error}` : `${r.breaksMs.length} break${r.breaksMs.length === 1 ? "" : "s"} from ${r.silences} silences in ${(ms / 1000).toFixed(1)} s`);
+    }).then(() => scheduleRebuild());
+    return json(res, 200, { ok: true, total: targets.length });
+  }
+  if (p === "/api/silence/stop" && m === "POST") {
+    silenceJob.halt();
+    return json(res, 200, { ok: true });
   }
   if (p === "/api/library") {
     const q = (url.searchParams.get("q") ?? "").toLowerCase();
@@ -1416,6 +1483,7 @@ function onDemandDeps(): OnDemandDeps {
     locked: (id) => lockedItem(id),
     extra: (it) => ({
       rating: effectiveRating(it, manual)?.rating ?? null,
+      description: it.meta?.plot ?? online.text(it)?.overview,
       ...availabilityView(it),
       art: artView(it),
       codecs: { container: it.container, video: it.video, audio: it.audio, ...mediaBadges(it) },
@@ -1446,7 +1514,7 @@ return {
       server.once("error", reject);
       server.listen(port, HOST, () => {
         port = (server.address() as AddressInfo).port;
-        resolveListen(port);
+        lan.start(server, port).then(() => resolveListen(port), reject);
       });
     });
   },
@@ -1454,12 +1522,15 @@ return {
     if (tick) clearInterval(tick);
     if (rebuildTimer) clearTimeout(rebuildTimer);
     library.stopScan("Shutting down");
-    return new Promise((r) => {
+    silenceJob.halt();
+    online.stop();
+    return lan.stop().then(() => new Promise((r) => {
       server.closeAllConnections();
       server.close(() => r());
-    });
+    }));
   },
   isDemo,
+  lan,
   ffmpeg: !!ffmpeg,
 };
 }
@@ -1518,5 +1589,6 @@ if (isMain) {
   console.log(`\n  📺  DebridTV is on the air:  http://${HOST}:${port}\n`);
   console.log(`  Mode: ${app.isDemo() ? "demo (connect a source in Settings)" : "your library"}`);
   console.log(`  Compatibility mode (ffmpeg): ${app.ffmpeg ? "available" : "not found — some files may not play in the browser"}`);
+  console.log(`  Home network: ${app.lan.enabled ? "on (paired TVs and phones can open it)" : "off (turn on at http://" + HOST + ":" + port + "/lan)"}`);
   console.log(`  Data folder: ${dataDir()}\n`);
 }
