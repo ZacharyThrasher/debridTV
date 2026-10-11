@@ -13,6 +13,8 @@ import { tickCard, pinPromptOpen, pinKey } from "./cards.js";
 import { unlockAudio } from "./static.js";
 import { editorOpen, exclusionsOpen } from "./channel-editor.js";
 import { themeEditorOpen } from "./theme.js";
+import { openOnDemand, onDemandOpen } from "./ondemand.js";
+import { groupsOpen } from "./groups.js";
 import "./bezel.js";
 
 applyPrefs();
@@ -85,7 +87,7 @@ addEventListener("keydown", (e) => {
     if (e.key === "Escape") e.target.blur();
     return;
   }
-  if (e.ctrlKey || e.metaKey || e.altKey || editorOpen() || exclusionsOpen() || themeEditorOpen()) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || editorOpen() || exclusionsOpen() || themeEditorOpen() || onDemandOpen() || groupsOpen()) return;
   const k = e.key;
   if (!document.getElementById("welcome").hidden) {
     if (k === "Enter" || k === "Escape" || k === " ") closeWelcome();
@@ -101,6 +103,9 @@ addEventListener("keydown", (e) => {
     else if (k === "s" || k === "S") {
       closeGuide();
       openPanel();
+    } else if (k === "o" || k === "O") {
+      closeGuide();
+      openOnDemand();
     } else if (!guideKey(e)) return;
     e.preventDefault();
     return;
@@ -109,11 +114,14 @@ addEventListener("keydown", (e) => {
   if (pinPromptOpen() && pinKey(k)) return void e.preventDefault();
   // A meanwhile chip on an off-air card has focus: Left/Right move between chips, OK tunes.
   if (chipKey(e)) return void e.preventDefault();
+  // Watching from On Demand: Left/Right skip, Back returns to the live channel.
+  if (tv.onDemand && onDemandKey(k)) return void e.preventDefault();
   switch (k) {
     case "ArrowUp": case "PageUp": case "+": case "=": case "ChannelUp": channelStep(1); break;
     case "ArrowDown": case "PageDown": case "-": case "_": case "ChannelDown": channelStep(-1); break;
     case "g": case "G": case "Enter": case "Guide": openGuide(); break;
     case "s": case "S": case "ContextMenu": case "Settings": openPanel(); break;
+    case "o": case "O": case "MediaTopMenu": case "VOD": openOnDemand(); break;
     case "i": case "I": case "Info": toggleBanner(); break;
     case "ArrowRight": case "ArrowLeft": if (!focusChips(k)) toggleBanner(); break;
     case "Backspace": case "l": case "L": case "LastChannel": lastChannel(); break;
@@ -161,6 +169,21 @@ function chipKey(e) {
   return false;
 }
 
+function onDemandKey(k) {
+  if (k === "ArrowLeft" || k === "ArrowRight" || k === "MediaRewind" || k === "MediaFastForward") {
+    const d = k === "ArrowLeft" || k === "MediaRewind" ? -10_000 : 30_000;
+    if (typeof player.seekBy !== "function") return false;
+    player.seekBy(d);
+    osd(d < 0 ? "◀◀ 10 s" : "30 s ▶▶", "", 900);
+    return true;
+  }
+  if (k === "Escape" || k === "Backspace" || k === "l" || k === "L" || k === "LastChannel") {
+    player.backToLive?.();
+    return true;
+  }
+  return false;
+}
+
 function toggleMute() {
   setPref("muted", !pref("muted"));
   applyVolume();
@@ -196,7 +219,7 @@ addEventListener("pointerdown", () => {
 });
 document.getElementById("dock").addEventListener("click", (e) => {
   const act = e.target.closest("[data-act]")?.dataset.act;
-  ({ up: () => channelStep(1), down: () => channelStep(-1), guide: openGuide, settings: () => openPanel(), mute: toggleMute, full: toggleFull })[act]?.();
+  ({ up: () => channelStep(1), down: () => channelStep(-1), guide: openGuide, ondemand: () => openOnDemand(), settings: () => openPanel(), mute: toggleMute, full: toggleFull })[act]?.();
 });
 document.getElementById("stage").addEventListener("click", (e) => {
   if (e.target.closest("#card, #video, #synth, #crt, #static")) toggleBanner();
@@ -226,7 +249,7 @@ function showWelcome() {
       <div><span class="kk"><kbd>0-9</kbd></span><span>go to a number</span></div>
       <div><span class="kk"><kbd>◀</kbd><kbd>▶</kbd></span><span>what's on</span></div>
       <div><span class="kk"><kbd>Back</kbd></span><span>last channel</span></div>
-      <div><span class="kk"><kbd>▲</kbd></span><span>in the guide: settings</span></div>
+      <div><span class="kk"><kbd>▲</kbd></span><span>in the guide: On Demand, settings</span></div>
     </div>
     <div class="keys kb-only">
       <div><span class="kk"><kbd>↑</kbd><kbd>↓</kbd></span><span>change channel</span></div>
@@ -234,6 +257,7 @@ function showWelcome() {
       <div><span class="kk"><kbd>0-9</kbd></span><span>go to a number</span></div>
       <div><span class="kk"><kbd>I</kbd></span><span>what's on</span></div>
       <div><span class="kk"><kbd>L</kbd></span><span>last channel</span></div>
+      <div><span class="kk"><kbd>O</kbd></span><span>On Demand</span></div>
       <div><span class="kk"><kbd>Space</kbd></span><span>pause</span></div>
       <div><span class="kk"><kbd>M</kbd></span><span>mute</span></div>
       <div><span class="kk"><kbd>F</kbd></span><span>full screen</span></div>

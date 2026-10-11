@@ -201,6 +201,62 @@ describe("player", () => {
     await ctx.close();
   });
 
+  it("On Demand plays a file from any point, seeks, records its own history and returns to live at the end (N-30)", async (t) => {
+    if (skip) return t.skip(skip);
+    const { page, ctx, errors } = await open();
+    await playing(page);
+    const itemId = (await get(`/api/now?channel=${direct!.id}`)).airing.itemId;
+    const watches: any[] = [];
+    page.on("request", (r: any) => new URL(r.url()).pathname === "/api/watch" && watches.push(JSON.parse(r.postData())));
+    await page.evaluate(() => {
+      (window as any).odEvents = [];
+      addEventListener("debridtv:ondemand", (e: any) => (window as any).odEvents.push(e.detail && { ...e.detail }));
+    });
+    const pos = () => page.evaluate(() => (document.getElementById("video") as HTMLVideoElement).currentTime);
+    const state = () => page.evaluate(async () => {
+      const p = await import(location.origin + "/js/player.js");
+      return p.tv.onDemand && { itemId: p.tv.onDemand.itemId, fromMs: p.tv.onDemand.fromMs, durationMs: p.tv.onDemand.durationMs, positionMs: p.tv.onDemand.positionMs };
+    });
+
+    await page.evaluate(async (id: string) => (await import(location.origin + "/js/player.js")).playOnDemand(id, { fromMs: 30_000 }), itemId);
+    await playing(page);
+    const s = await state();
+    assert.equal(s?.itemId, itemId);
+    assert.equal(s?.fromMs, 30_000);
+    assert.ok(Math.abs(s!.durationMs - 45_000) < 1000, `duration ${s?.durationMs}`);
+    let at = await pos();
+    assert.ok(at >= 29.8 && at < 33, `starts at 30 s, not station time (at ${at.toFixed(1)} s)`);
+    await sleep(1500);
+
+    // Left: back 10 s, in place.
+    await page.evaluate(async () => (await import(location.origin + "/js/player.js")).seekBy(-10_000));
+    await page.waitForFunction(() => !(document.getElementById("video") as HTMLVideoElement).seeking);
+    at = await pos();
+    assert.ok(at >= 21 && at < 24.5, `seeked back to about 21.5 s (at ${at.toFixed(1)} s)`);
+    assert.ok(Math.abs((await state())!.positionMs - at * 1000) < 500, "positionMs follows the picture");
+    await sleep(1200);
+
+    // Near the end: it plays out, then the station is back on the air.
+    await page.evaluate(async (id: string) => (await import(location.origin + "/js/player.js")).playOnDemand(id, { fromMs: 60_000 }), itemId);
+    await playing(page);
+    const near = await state();
+    assert.equal(near?.fromMs, near!.durationMs - 5000, "a start past the end is pulled back to 5 s before it");
+    await page.waitForFunction(() => (window as any).odEvents.at(-1) === null, null, { timeout: 12_000 });
+    assert.equal(await state(), null);
+    await playing(page);
+    const d = await drift(page);
+    assert.ok(Math.abs(d.driftMs) < 1500, `back on station time (drift ${d.driftMs} ms)`);
+
+    const ev = await page.evaluate(() => (window as any).odEvents);
+    assert.deepEqual(ev.map((e: any) => e && e.fromMs), [30_000, near!.fromMs, null], "start, start, end");
+    // Seen time is reported as On Demand viewing, and only time actually shown.
+    const od = watches.filter((w) => w.channel === "ondemand");
+    assert.ok(od.length >= 2 && od.every((w) => w.itemId === itemId && w.toMs > w.fromMs), `watch spans: ${JSON.stringify(watches)}`);
+    assert.ok(od.some((w) => w.fromMs >= 29_500 && w.fromMs < 31_000), "a span starts where On Demand started");
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+
   it("a locked channel asks for no link and opens no media until unlocked (N-06b)", async (t) => {
     if (skip) return t.skip(skip);
     // The real server's lock: set a PIN, lock the test channel.
