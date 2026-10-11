@@ -87,14 +87,16 @@ export async function tune(ch, { silent = false } = {}) {
   } catch (e) {
     if (my !== token) return;
     staticOff();
-    if (e.status === 403) return showLocked(ch, e.data ?? null);
+    if (e.status === 403) return showLocked(ch, null); // body is { error, locked, final }
     return messageCard(ch, "Signal lost", "Can't reach the tuner", `The DebridTV server on this PC isn't answering (${e.message}). Is it still running?`);
   }
   if (my !== token) return;
   syncClock(info.now, sent);
   tv.info = info;
   // A PIN-locked channel (N-06b) gets a scrambled card: no link, no media, no bytes.
-  if (isLocked(ch, info)) {
+  // A redacted airing (itemId null on a locked channel) never reaches the media code,
+  // even if the lock flags were missing.
+  if (isLocked(ch, info) || (info.airing && info.airing.itemId == null && info.airing.provider !== "demo")) {
     staticOff();
     scheduleBoundary(ch, info.segment ? info.segment.end : info.airing ? info.airing.end : now() + 60_000);
     return showLocked(ch, info);
@@ -446,11 +448,16 @@ addEventListener("pagehide", () => flushWatch(true));
 
 const unlockedHere = new Set();
 
-/** Locked and not unlocked in this session. Reads the channel and /api/now flags. */
+/**
+ * Locked unless something says it was unlocked. Any source can lock (the channel,
+ * /api/now, the airing); any source can unlock (the server's flag, or the PIN entry's
+ * event in this page). Erring towards "unlocked" is safe: the server still answers a
+ * locked item's link or media request with a final 403, which shows the locked card.
+ */
 function isLocked(ch, info) {
-  const locked = info?.channel?.locked ?? info?.locked ?? ch.locked;
-  const unlocked = info?.channel?.unlocked ?? info?.unlocked ?? ch.unlocked;
-  return !!locked && !unlocked && !unlockedHere.has(ch.id);
+  const locked = !!(info?.channel?.locked || info?.locked || info?.airing?.locked || ch.locked);
+  const unlocked = !!(info?.channel?.unlocked || info?.unlocked || ch.unlocked || unlockedHere.has(ch.id));
+  return locked && !unlocked;
 }
 
 function showLocked(ch, info) {
@@ -462,12 +469,12 @@ function showLocked(ch, info) {
   if (info) setBanner(ch, info, tv.route);
 }
 
-// B's PIN entry fires this; re-tune the channel on screen if it's the one unlocked.
+// The PIN entry fires this. Unlocking is global (detail.channelId is null), so the
+// server's flags decide from here on; we just re-tune the channel on screen.
 addEventListener("debridtv:unlocked", (e) => {
-  const id = e.detail?.channelId ?? e.detail?.id ?? tv.current?.id;
+  const id = e.detail?.channelId ?? null;
   if (id) unlockedHere.add(id);
-  const ch = tv.channels.find((c) => c.id === id);
-  if (ch) ch.unlocked = true;
+  for (const c of tv.channels) if (!id || c.id === id) c.unlocked = true;
   if (tv.current && (!id || tv.current.id === id)) tune(tv.current, { silent: true });
 });
 
