@@ -22,7 +22,7 @@ import { ProviderError } from "../src/providers/types.ts";
 import { Gates } from "../src/gates.ts";
 import { JsonFile, dataDir } from "./store.ts";
 import { Library, displayTitle, fileStatus, plainError, PROVIDER_NAMES, STATUS_ORDER, type Config, type LibItem, type ProviderBases, type RemoteProvider } from "./library.ts";
-import { Lineup, autoRules, type StationChannel, type CustomChannel } from "./lineup.ts";
+import { Lineup, autoRules, cleanLogo, type StationChannel, type CustomChannel } from "./lineup.ts";
 import { Meters } from "./meters.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
 import { demoItems } from "./demo.ts";
@@ -140,7 +140,9 @@ rebuild();
 // ---------------------------------------------------------------- views
 
 function channelView(c: StationChannel) {
-  return { id: c.id, number: c.number, name: c.name, hue: c.meta.hue, kind: c.meta.kind, tagline: c.meta.tagline, ruleKey: c.meta.ruleKey };
+  const st = lineup().settingsFor(c.meta.ruleKey);
+  return { id: c.id, number: c.number, name: c.name, hue: c.meta.hue, kind: c.meta.kind, tagline: c.meta.tagline, ruleKey: c.meta.ruleKey,
+    favorite: !!st.favorite, logo: st.logo ?? null };
 }
 
 function airingView(a: Airing) {
@@ -723,6 +725,30 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     const l = lineup();
     return json(res, 200, { channels: l.allChannels().map((c) => ({ ...channelView(c), hidden: l.hidden().includes(c.meta.ruleKey),
       items: c.revisions[c.revisions.length - 1]!.itemIds.length, ordering: c.revisions[c.revisions.length - 1]!.ordering })), custom: l.custom() });
+  }
+  const chSettings = /^\/api\/channels\/([\w-]+)\/settings$/.exec(p);
+  if (chSettings) {
+    const l = lineup();
+    const ch = l.allChannels().find((c) => c.id === chSettings[1]);
+    if (!ch) return json(res, 404, { error: "no such channel" });
+    if (m === "PUT" || m === "POST") {
+      const b = body as Record<string, unknown>;
+      const logo = b.logo === null ? null : b.logo === undefined ? undefined : cleanLogo(b.logo);
+      if (b.logo != null && !logo) return json(res, 400, { error: "A logo is short text, or an inline PNG/JPEG/WebP/SVG image (data: URL, up to ~200 KB)." });
+      const r = l.updateSettings(ch.meta.ruleKey, {
+        name: typeof b.name === "string" || b.name === null ? (b.name as string | null) : undefined,
+        number: typeof b.number === "number" ? b.number : undefined,
+        favorite: typeof b.favorite === "boolean" ? b.favorite : undefined,
+        logo: logo as never,
+      });
+      if (!r.ok) return json(res, 409, { error: r.error });
+      scheduleRebuild();
+    }
+    const c = l.allChannels().find((x) => x.id === chSettings[1])!;
+    const st = l.settingsFor(c.meta.ruleKey);
+    return json(res, 200, { name: c.name, number: c.number, favorite: !!st.favorite, logo: st.logo ?? null,
+      // Not built yet; accepted shapes are documented in docs/handoffs/library-server.md.
+      kid: false, restrictedHours: [], slots: [] });
   }
   if (p === "/api/channels/hide" && m === "POST") {
     lineup().setHidden(String(body.ruleKey), !!body.hidden);

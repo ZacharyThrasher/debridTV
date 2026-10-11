@@ -35,6 +35,16 @@ interface LineupState {
   numbers: Record<string, number>;
   custom: CustomChannel[];
   hidden: string[];
+  /** The viewer's own touches per channel (by rule key), kept across rebuilds. */
+  settings?: Record<string, ChannelSettings>;
+}
+
+export type ChannelLogo = { kind: "text"; text: string; bg?: string } | { kind: "image"; url: string; bg?: string };
+
+export interface ChannelSettings {
+  name?: string;
+  favorite?: boolean;
+  logo?: ChannelLogo;
 }
 
 export interface Rule {
@@ -93,17 +103,53 @@ export class Lineup {
     });
   }
 
-  /** What a settings export carries: choices, not library facts or credentials. */
-  exportSettings(): { numbers: Record<string, number>; custom: CustomChannel[]; hidden: string[] } {
+  settingsFor(ruleKey: string): ChannelSettings {
+    return this.file.get().settings?.[ruleKey] ?? {};
+  }
+
+  /**
+   * Rename, renumber, favorite or brand a channel. A number already in use is
+   * refused (no silent shuffling of other channels, N-03); `null` clears a field.
+   */
+  updateSettings(ruleKey: string, patch: { name?: string | null; number?: number; favorite?: boolean; logo?: ChannelLogo | null }): { ok: true } | { ok: false; error: string } {
     const s = this.file.get();
-    return { numbers: { ...s.numbers }, custom: s.custom.slice(), hidden: s.hidden.slice() };
+    const ch = s.channels.find((c) => c.meta.ruleKey === ruleKey);
+    if (!ch) return { ok: false, error: "no such channel" };
+    if (patch.number !== undefined && patch.number !== ch.number) {
+      if (!Number.isInteger(patch.number) || patch.number < 1 || patch.number > 9999) return { ok: false, error: "Channel numbers run from 1 to 9999." };
+      const holder = s.channels.find((c) => c.number === patch.number);
+      if (holder) return { ok: false, error: `${patch.number} is ${holder.name}. Pick a free number.` };
+      ch.number = patch.number;
+      s.numbers[ruleKey] = patch.number;
+    }
+    const cur = { ...s.settings?.[ruleKey] };
+    if (patch.name !== undefined) {
+      const n = (patch.name ?? "").trim().slice(0, 40);
+      if (n) cur.name = n;
+      else delete cur.name;
+    }
+    if (patch.favorite !== undefined) cur.favorite = patch.favorite || undefined;
+    if (patch.logo !== undefined) {
+      if (patch.logo === null) delete cur.logo;
+      else cur.logo = patch.logo;
+    }
+    s.settings = { ...s.settings, [ruleKey]: cur };
+    if (cur.name) ch.name = cur.name;
+    this.file.set(s);
+    return { ok: true };
+  }
+
+  /** What a settings export carries: choices, not library facts or credentials. */
+  exportSettings(): { numbers: Record<string, number>; custom: CustomChannel[]; hidden: string[]; settings: Record<string, ChannelSettings> } {
+    const s = this.file.get();
+    return { numbers: { ...s.numbers }, custom: s.custom.slice(), hidden: s.hidden.slice(), settings: { ...s.settings } };
   }
 
   /**
    * Bring back exported choices. Custom channels and hidden flags are merged by id;
    * a remembered number is only taken if nothing here already uses it.
    */
-  importSettings(x: { numbers?: unknown; custom?: unknown; hidden?: unknown }): { custom: number; hidden: number } {
+  importSettings(x: { numbers?: unknown; custom?: unknown; hidden?: unknown; settings?: unknown }): { custom: number; hidden: number } {
     let custom = 0;
     let hidden = 0;
     this.file.update((s) => {
@@ -118,6 +164,11 @@ export class Lineup {
         }
       if (Array.isArray(x.hidden))
         for (const k of x.hidden) if (typeof k === "string" && !s.hidden.includes(k)) (s.hidden.push(k), hidden++);
+      if (x.settings && typeof x.settings === "object")
+        for (const [k, v] of Object.entries(x.settings as Record<string, unknown>)) {
+          const c = cleanSettings(v);
+          if (c) s.settings = { ...s.settings, [k]: c };
+        }
       if (x.numbers && typeof x.numbers === "object") {
         const used = new Set(Object.values(s.numbers));
         for (const [k, n] of Object.entries(x.numbers as Record<string, unknown>))
@@ -157,14 +208,14 @@ export class Lineup {
         s.channels.push({
           id: `ch-${hash32(r.key).toString(36)}`,
           number,
-          name: r.name,
+          name: s.settings?.[r.key]?.name ?? r.name,
           revisions: [{ effectiveFromMs: anchor, seed: r.key, itemIds: r.itemIds, ordering: r.ordering, slotMs: r.slotMs, midBreakMs: r.midBreakMs }],
           meta: { ruleKey: r.key, kind: r.kind, hue: hash32(r.key) % 360, tagline: r.tagline },
         });
         added++;
         continue;
       }
-      existing.name = r.name;
+      existing.name = s.settings?.[r.key]?.name ?? r.name;
       existing.meta.tagline = r.tagline;
       const cur = existing.revisions[existing.revisions.length - 1]!;
       const same =
@@ -181,6 +232,28 @@ export class Lineup {
     this.file.set(s);
     return { added, revised, removed };
   }
+}
+
+/** Accept only well-formed settings; image logos must be inline (no outside requests). */
+export function cleanSettings(v: unknown): ChannelSettings | null {
+  if (!v || typeof v !== "object") return null;
+  const x = v as Record<string, unknown>;
+  const out: ChannelSettings = {};
+  if (typeof x.name === "string" && x.name.trim()) out.name = x.name.trim().slice(0, 40);
+  if (x.favorite === true) out.favorite = true;
+  const logo = cleanLogo(x.logo);
+  if (logo) out.logo = logo;
+  return out;
+}
+
+export function cleanLogo(v: unknown): ChannelLogo | null {
+  if (!v || typeof v !== "object") return null;
+  const l = v as Record<string, unknown>;
+  const bg = typeof l.bg === "string" && /^#[0-9a-f]{3,8}$/i.test(l.bg) ? l.bg : undefined;
+  if (l.kind === "text" && typeof l.text === "string" && l.text.trim()) return { kind: "text", text: l.text.trim().slice(0, 6), ...(bg ? { bg } : {}) };
+  if (l.kind === "image" && typeof l.url === "string" && /^data:image\/(png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(l.url) && l.url.length <= 300_000)
+    return { kind: "image", url: l.url, ...(bg ? { bg } : {}) };
+  return null;
 }
 
 function nextNumber(numbers: Record<string, number>, preferred?: number): number {

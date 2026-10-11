@@ -243,6 +243,22 @@ test("F4: settings export carries choices, never keys", async () => {
   assert.doesNotMatch(text, new RegExp(`${TB_KEY}|${RD_KEY}`));
 });
 
+test("N-03/N-16: rename, renumber, favorite and a logo; a taken number is refused", async () => {
+  const chans = (await get("/api/bootstrap")).body.channels;
+  const ch = chans.find((c: any) => c.name === "Test Show") ?? chans[0];
+  const other = chans.find((c: any) => c.id !== ch.id);
+  const put = (b: unknown) => fetch(`${base}/api/channels/${ch.id}/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
+  assert.equal((await put({ number: other.number })).status, 409);
+  const r = await put({ name: "Show Time", number: 77, favorite: true, logo: { kind: "text", text: "SHOW", bg: "#223344" } });
+  assert.equal(r.status, 200);
+  assert.equal((await put({ logo: { kind: "image", url: "https://tracker.example/logo.png" } })).status, 400, "no outside images");
+  const view = (await get("/api/bootstrap")).body.channels.find((c: any) => c.id === ch.id);
+  assert.deepEqual([view.name, view.number, view.favorite, view.logo.text], ["Show Time", 77, true, "SHOW"]);
+  const s = (await get(`/api/channels/${ch.id}/settings`)).body;
+  assert.equal(s.number, 77);
+  await put({ name: null });
+});
+
 test("A4: disconnecting deletes the key from disk and takes its channels off the air", async () => {
   await post("/api/sources/disconnect", { provider: "torbox" });
   assert.doesNotMatch(configOnDisk(), new RegExp(TB_KEY));

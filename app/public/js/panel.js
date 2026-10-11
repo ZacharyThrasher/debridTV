@@ -271,6 +271,24 @@ body.addEventListener("click", async (e) => {
       await api.post("/api/channels/custom", { name, showKeys, movieIds, ordering: document.getElementById("cord").value, slotMinutes: Number(document.getElementById("cslot").value) });
       toast(`${name} is on the air.`);
       onChange();
+    } else if (b.dataset.fav) {
+      await api.put(`/api/channels/${b.dataset.fav}/settings`, { favorite: b.dataset.on !== "1" });
+      onChange();
+    } else if (b.dataset.editChannel) {
+      const r = await api.get("/api/channels");
+      const ch = r.channels.find((c) => c.id === b.dataset.editChannel);
+      try {
+        const { openChannelEditor } = await import("./channel-editor.js");
+        return void openChannelEditor(ch, { onSaved: () => (onChange(), render()) });
+      } catch {
+        // Until the full editor ships: name and number.
+        const name = prompt(`Name for channel ${ch.number}`, ch.name);
+        if (name == null) return;
+        const num = prompt("Channel number", String(ch.number));
+        if (num == null) return;
+        await api.put(`/api/channels/${ch.id}/settings`, { name: name.trim() || null, number: Number(num) });
+        onChange();
+      }
     } else if (b.dataset.deleteCustom) {
       await api.post("/api/channels/custom/delete", { id: b.dataset.deleteCustom });
       onChange();
@@ -304,6 +322,8 @@ async function channels() {
       <span class="n">${c.number}</span>
       <div><div class="t">${c.name}</div><div class="d">${c.items} programs · ${ORDERINGS[c.ordering] ?? c.ordering}</div></div>
       <div class="inline">
+        <button class="btn x-fav" data-fav="${c.id}" data-on="${c.favorite ? "1" : "0"}" aria-pressed="${String(!!c.favorite)}" aria-label="${c.favorite ? "Remove from" : "Add to"} favorites" title="Favorite">${c.favorite ? "★" : "☆"}</button>
+        <button class="btn" data-edit-channel="${c.id}">Edit</button>
         ${custom ? html`<button class="btn danger" data-delete-custom="${c.ruleKey.slice(7)}" aria-label="Delete ${c.name}">Delete</button>` : ""}
         <button class="btn" data-hide="${c.ruleKey}" data-hidden="${c.hidden ? "1" : "0"}">${c.hidden ? "Show" : "Hide"}</button>
       </div></div>`;
@@ -386,7 +406,7 @@ async function meters() {
 
 // ------------------------------------------------------------------ look & feel
 
-function look() {
+async function look() {
   const sw = (k, label, desc) => html`<div class="opt"><div><div class="ol">${label}</div><div class="od">${desc}</div></div>
     <label class="switch"><input type="checkbox" data-pref="${k}" ${pref(k) ? "checked" : ""}><i></i></label></div>`;
   const themes = [["midnight", "Midnight"], ["cable92", "Cable '92"], ["daylight", "Daylight"]];
@@ -398,14 +418,38 @@ function look() {
     ${raw(sw("sound", "Tuner sounds", "A click and a hiss when you change channel."))}
     ${raw(sw("clock24", "24-hour clock", "Show 21:30 instead of 9:30 PM."))}
     ${raw(sw("calm", "Reduce motion", "Turn off animations."))}
+    ${raw(await startupOpts())}
     <div class="opt"><div><div class="ol">Volume</div></div><input type="range" min="0" max="1" step="0.05" value="${pref("volume")}" data-volume aria-label="Volume"></div>`;
 }
 
 body.addEventListener("change", (e) => {
   const t = e.target;
   if (t.dataset.pref) setPref(t.dataset.pref, t.checked);
-  else if (t.dataset.prefSelect) setPref(t.dataset.prefSelect, t.value);
+  else if (t.dataset.prefSelect) {
+    setPref(t.dataset.prefSelect, t.dataset.num ? Number(t.value) : t.value);
+    if (t.dataset.prefSelect === "guideIdle") render();
+  }
 });
+
+const IDLE_FALLBACK = { stay: "Stay open", close: "Close the guide", tune: "Tune to the highlighted channel" };
+
+async function startupOpts() {
+  const [{ channels }, guide] = await Promise.all([api.get("/api/bootstrap"), import("./guide.js").catch(() => ({}))]);
+  const idle = guide.IDLE_ACTIONS ?? IDLE_FALLBACK;
+  const label = (v) => (typeof v === "string" ? v : v?.label ?? "");
+  const opt = (v, text, cur) => `<option value="${esc(v)}" ${cur === v ? "selected" : ""}>${esc(text)}</option>`;
+  const start = pref("startup") ?? "last";
+  const idleNow = pref("guideIdle") ?? "stay";
+  const mins = pref("guideIdleMin") ?? 2;
+  return html`<div class="opt"><div><div class="ol">Start on</div><div class="od">What the TV shows when you open it.</div></div>
+      <select class="input" style="width:auto;max-width:14em" data-pref-select="startup">${raw(
+        [opt("last", "Last channel", start), opt("guide", "The guide", start),
+          ...channels.map((c) => opt(`ch:${c.id}`, `Channel ${c.number} · ${c.name}`, start))].join(""))}</select></div>
+    <div class="opt"><div><div class="ol">When the guide sits idle</div><div class="od">If nobody touches the guide for a while.</div></div>
+      <select class="input" style="width:auto" data-pref-select="guideIdle">${raw(Object.entries(idle).map(([k, v]) => opt(k, label(v), idleNow)).join(""))}</select></div>
+    ${idleNow !== "stay" ? html`<div class="opt"><div><div class="ol">Idle after</div></div>
+      <select class="input" style="width:auto" data-pref-select="guideIdleMin" data-num="1">${raw([1, 2, 5, 10].map((n) => `<option value="${n}" ${n === mins ? "selected" : ""}>${n} minute${n === 1 ? "" : "s"}</option>`).join(""))}</select></div>` : ""}`;
+}
 body.addEventListener("input", (e) => {
   if ("volume" in e.target.dataset) {
     setPref("volume", Number(e.target.value));
@@ -567,6 +611,7 @@ function addStyles() {
     .panel .x-why.warn { color: var(--warn); } .panel .x-why.bad { color: var(--bad); } .panel .x-why.ok { color: var(--ok); }
     .panel .x-name { font-family: var(--mono); font-size: .75em; opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34em; }
     .panel a.btn { text-decoration: none; display: inline-block; }
+    .panel .x-fav[aria-pressed="true"] { color: var(--amber); }
     @media (max-width: 560px) {
       .panel .x-file { grid-template-columns: 1fr !important; }
       .panel .x-file > .badge { order: -1; justify-self: start; }
