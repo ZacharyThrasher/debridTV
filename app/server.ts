@@ -30,6 +30,7 @@ import { Meters } from "./meters.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
 import { demoItems } from "./demo.ts";
 import { backupIfDue, listBackups, readBackup } from "./backups.ts";
+import { EdgeCache } from "./edgecache.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(HERE, "public");
@@ -108,6 +109,8 @@ function lineup(): Lineup {
   return isDemo() ? demoLineup : liveLineup;
 }
 
+const edge = new EdgeCache(join(dataDir(), "cache"));
+meters.cache = { bytes: edge.bytes(), files: edge.entries() };
 let clock = new StationClock([]);
 let rebuildTimer: NodeJS.Timeout | null = null;
 function scheduleRebuild() {
@@ -123,6 +126,12 @@ function rebuild() {
   const liveItems = liveLibrary();
   const ids = new Set(liveItems.map((i) => i.id));
   const liveClock = new StationClock(library.mediaItems().filter((m) => ids.has(m.id)));
+  // Edge cache keeps only files still in the library, present and not refused.
+  edge.keepOnly((id) => {
+    const it = library.get(id);
+    return !!it && it.present && it.availability !== "policy-blocked" && isConnected(it.provider);
+  });
+  meters.cache = { bytes: edge.bytes(), files: edge.entries() };
   const timeZone = stationTimeZone();
   liveLineup.sync(liveClock, autoRules(liveItems, liveLineup.custom()), now, { timeZone, info: itemInfo(liveItems, now) });
   const demoClock = new StationClock(demoMedia());
@@ -351,10 +360,36 @@ async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, i
     }
   });
   try {
+    const type = MIME[extname(it.name).toLowerCase()] ?? "application/octet-stream";
+    const rm = /^bytes=(\d+)-(\d*)$/.exec(range);
+    const want = rm ? { from: Number(rm[1]), to: rm[2] ? Number(rm[2]) : null } : null;
+    const known = edge.get(id, it.bytes || undefined);
+    // Wholly inside a cached end: answered here, no host involved.
+    if (want && known) {
+      const to = Math.min(want.to ?? known.size - 1, known.size - 1);
+      const local = edge.read(id, want.from, to);
+      if (local) {
+        finished = true;
+        meters.add("cached", local.length);
+        res.writeHead(206, { "content-type": type, "accept-ranges": "bytes", "content-length": String(local.length), "content-range": `bytes ${want.from}-${to}/${known.size}` });
+        return void res.end(local);
+      }
+    }
     let upstream: Response | null = null;
+    // A read starting inside the cached head: send what's here at once and ask the host only for the rest.
+    const lead = want && known && want.from < known.headLen && (want.to == null || want.to >= known.headLen)
+      ? edge.read(id, want.from, known.headLen - 1) : null;
+    const upRange = lead && want ? `bytes=${want.from + lead.length}-${want.to ?? ""}` : range;
     for (let attempt = 0; attempt < 2; attempt++) {
       const grant = await library.grants.get(client, it.ref, ac.signal);
-      upstream = await fetch(grant.url, { headers: { range }, signal: ac.signal });
+      const pending = fetch(grant.url, { headers: { range: upRange }, signal: ac.signal });
+      if (lead && attempt === 0 && !res.headersSent) {
+        const end = want!.to ?? known!.size - 1;
+        res.writeHead(206, { "content-type": type, "accept-ranges": "bytes", "content-length": String(end - want!.from + 1), "content-range": `bytes ${want!.from}-${end}/${known!.size}` });
+        res.write(lead);
+        meters.add("cached", lead.length);
+      }
+      upstream = await pending;
       if (upstream.status !== 403 && upstream.status !== 404 && upstream.status !== 410) break;
       // A refused link is re-resolved exactly once (ADR-0002).
       await upstream.body?.cancel();
@@ -362,29 +397,52 @@ async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, i
     }
     if (!upstream || !upstream.ok || !upstream.body) {
       library.markAvailability(id, "unavailable", `The media host said ${upstream?.status}`);
+      if (res.headersSent) return void res.destroy();
       return json(res, 502, { error: `media host ${upstream?.status}` });
     }
     library.notePlayback(id, upstream.headers);
-    const headers: Record<string, string> = { "content-type": MIME[extname(it.name).toLowerCase()] ?? "application/octet-stream", "accept-ranges": "bytes" };
-    for (const h of ["content-length", "content-range"]) {
-      const v = upstream.headers.get(h);
-      if (v) headers[h] = v;
+    const cr = /bytes (\d+)-(\d+)\/(\d+)/.exec(upstream.headers.get("content-range") ?? "");
+    const total = cr ? Number(cr[3]) : upstream.status === 200 ? Number(upstream.headers.get("content-length") ?? 0) : 0;
+    if (lead && (!cr || Number(cr[1]) !== want!.from + lead.length || total !== known!.size)) {
+      // The host's file isn't the one cached: forget it and end this response; the player asks again.
+      edge.drop(id);
+      await upstream.body.cancel().catch(() => {});
+      return void res.destroy();
     }
-    res.writeHead(upstream.status, headers);
+    if (!res.headersSent) {
+      const headers: Record<string, string> = { "content-type": type, "accept-ranges": "bytes" };
+      for (const h of ["content-length", "content-range"]) {
+        const v = upstream.headers.get(h);
+        if (v) headers[h] = v;
+      }
+      res.writeHead(upstream.status, headers);
+    }
     opened = true;
     meters.open(`${internal ? "[compat] " : ""}${label}`);
     const body = Readable.fromWeb(upstream.body as any);
-    body.on("data", (chunk: Buffer) => meters.add("playback", chunk.length));
+    const watch = total > 0 && (!it.bytes || it.bytes === total) ? edge.observe(id, total, cr ? Number(cr[1]) : 0) : null;
+    let ended = false;
+    body.on("data", (chunk: Buffer) => {
+      meters.add("playback", chunk.length);
+      watch?.chunk(chunk);
+    });
     body.on("end", () => {
       finished = true;
+      ended = true;
       meters.close(label, false);
+    });
+    body.on("close", () => {
+      watch?.done(ended);
+      meters.cache = { bytes: edge.bytes(), files: edge.entries() };
     });
     body.on("error", () => {});
     body.pipe(res);
   } catch (e) {
     if (ac.signal.aborted) return;
     if (e instanceof ProviderError && e.kind === "policy") {
+      edge.drop(id);
       library.markAvailability(id, "policy-blocked", `${PROVIDER_NAMES[it.provider]} refused this file`);
+      if (res.headersSent) return void res.destroy();
       scheduleRebuild();
       return json(res, 451, { error: "policy", message: `${PROVIDER_NAMES[it.provider]} refused this file. DebridTV won't retry it or fetch it elsewhere.` });
     }
@@ -882,6 +940,8 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     liveLineup.reset();
     demoLineup.reset();
     rmSync(backupDir(), { recursive: true, force: true });
+    edge.clear();
+    meters.cache = { bytes: 0, files: 0 };
     rebuild();
     return json(res, 200, { ok: true });
   }
@@ -1007,7 +1067,26 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       lineup().setExclusions(ex);
       scheduleRebuild();
     }
-    return json(res, 200, lineup().exclusions());
+    // Choices for the dialog: every show and genre in the library, with how many files each has.
+    const shows = new Map<string, { key: string; name: string; count: number }>();
+    const genres = new Map<string, { name: string; count: number }>();
+    for (const it of allItems()) {
+      if (!it.present || it.parsed.kind === "other") continue;
+      if (it.parsed.kind === "episode") {
+        const sh = shows.get(it.parsed.showKey) ?? { key: it.parsed.showKey, name: it.parsed.show, count: 0 };
+        sh.count++;
+        shows.set(it.parsed.showKey, sh);
+      }
+      for (const g of it.meta?.genres ?? (it.genre ? [it.genre] : [])) {
+        const k = g.toLowerCase();
+        const gg = genres.get(k) ?? { name: g, count: 0 };
+        gg.count++;
+        genres.set(k, gg);
+      }
+    }
+    return json(res, 200, { ...lineup().exclusions(), options: {
+      shows: [...shows.values()].sort((a, b) => a.name.localeCompare(b.name)),
+      genres: [...genres.values()].sort((a, b) => a.name.localeCompare(b.name)) } });
   }
   if (p === "/api/channels/hide" && m === "POST") {
     lineup().setHidden(String(body.ruleKey), !!body.hidden);

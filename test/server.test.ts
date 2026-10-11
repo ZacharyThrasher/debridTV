@@ -161,6 +161,30 @@ test("playback is proxied, metered, and reuses the scan's link", async () => {
   assert.ok(after.playableAt, "last confirmed playable is recorded");
 });
 
+test("ADR-0003: the ends of a tuned file are kept and answer later range reads without the host", async () => {
+  const files = (await get("/api/library/files?status=ready")).body.files;
+  const id = files.find((f: any) => /S01E03/.test(f.name)).id;
+  // A full read (what a tune does) fills the cache: the fixture is smaller than the 1 MiB head.
+  const full = new Uint8Array(await (await fetch(`${base}/media/${id}`, { headers: { range: "bytes=0-" } })).arrayBuffer());
+  assert.equal(full.byteLength, fixture.byteLength);
+  await until(async () => (await get("/api/meters")).body.cache.files >= 1);
+  const requests = mock.counters.mediaRequests;
+  const hostBytes = mock.counters.mediaBytes;
+  const cachedBefore = (await get("/api/meters")).body.bytes.cached;
+  const tail = await fetch(`${base}/media/${id}`, { headers: { range: `bytes=${fixture.byteLength - 500}-` } });
+  assert.equal(tail.status, 206);
+  assert.equal(tail.headers.get("content-range"), `bytes ${fixture.byteLength - 500}-${fixture.byteLength - 1}/${fixture.byteLength}`);
+  assert.deepEqual(new Uint8Array(await tail.arrayBuffer()), fixture.subarray(fixture.byteLength - 500));
+  const mid = new Uint8Array(await (await fetch(`${base}/media/${id}`, { headers: { range: "bytes=1000-1999" } })).arrayBuffer());
+  assert.deepEqual(mid, fixture.subarray(1000, 2000));
+  assert.equal(mock.counters.mediaRequests, requests, "no host request");
+  assert.equal(mock.counters.mediaBytes, hostBytes, "no host bytes");
+  const m = (await get("/api/meters")).body;
+  assert.equal(m.bytes.cached - cachedBefore, 1500, "served-from-cache bytes counted on their own");
+  assert.ok(m.cache.bytes > 0);
+
+});
+
 test("E6: a refused file is marked once and never asked for again", async () => {
   const r = await post("/api/sources", { provider: "realdebrid", key: RD_KEY });
   assert.equal(r.status, 200, JSON.stringify(r.body));
