@@ -166,7 +166,7 @@ function stats(v, id) {
     ${tile(v.video, "videos", "")}
     ${tile(c.ready ?? v.timed, "ready to air", "ready")}
     ${c["needs-scan"] ? tile(c["needs-scan"], "need a scan", "needs-scan") : ""}
-    ${c["not-ready"] ? tile(c["not-ready"], `not finished at ${id === "local" ? "source" : PROVIDERS[id]?.name ?? ""}`, "not-ready", "warn") : ""}
+    ${c["not-ready"] ? tile(c["not-ready"], `not ready at ${PROVIDERS[id]?.name ?? "source"}`, "not-ready", "warn") : ""}
     ${tile(c.refused ?? v.policyBlocked, "refused", "refused", (c.refused ?? v.policyBlocked) ? "bad" : "")}
     ${tile((c.problem ?? 0) + (c.account ?? 0), "problems", (c.account ? "account" : "problem"), (c.problem || c.account) ? "warn" : "")}
     ${c.gone ? tile(c.gone, "removed", "gone") : ""}
