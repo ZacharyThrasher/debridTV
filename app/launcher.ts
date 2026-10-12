@@ -7,7 +7,7 @@
 //
 //   DebridTV.exe               start and open the browser
 //   DebridTV.exe --no-browser  start without opening a browser
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import http from "node:http";
@@ -38,17 +38,53 @@ function unpack(): string {
   return dir;
 }
 
-/** True when a DebridTV is already answering on this port. */
-function alreadyRunning(): Promise<boolean> {
+/** The DebridTV answering on this port, if any: its version and build ("" for copies run from source). */
+function running(): Promise<{ version: string; build: string } | null> {
   return new Promise((resolve) => {
     const req = http.get(`${URL}api/bootstrap`, { timeout: 1500 }, (res) => {
       let s = "";
       res.on("data", (c) => (s += c));
-      res.on("end", () => resolve(res.statusCode === 200 && s.includes('"channels"')));
+      res.on("end", () => {
+        try {
+          const b = JSON.parse(s) as { channels?: unknown; version?: string; build?: string | null };
+          resolve(res.statusCode === 200 && Array.isArray(b.channels) ? { version: b.version ?? "older", build: b.build ?? "" } : null);
+        } catch {
+          resolve(null);
+        }
+      });
     });
-    req.on("error", () => resolve(false));
-    req.on("timeout", () => (req.destroy(), resolve(false)));
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => (req.destroy(), resolve(null)));
   });
+}
+
+/**
+ * A different DebridTV already holds the port: most often an older copy, such as
+ * `npm start` from a git checkout. Close it so this one can start; both use the
+ * same data folder, so nothing is lost. Windows only; elsewhere, say what to do.
+ */
+async function replaceOther(other: { version: string }): Promise<void> {
+  const hint = `another DebridTV (version ${other.version}) is running on port ${PORT}. Close its window, then start DebridTV again.`;
+  if (process.platform !== "win32") throw new Error(hint);
+  console.log(`  Another DebridTV (version ${other.version}) is running on port ${PORT}, probably an older copy. Closing it so this one can start.`);
+  const pids = new Set<string>();
+  try {
+    const out = execFileSync("netstat", ["-ano", "-p", "tcp"], { encoding: "utf8", windowsHide: true });
+    for (const line of out.split(/\r?\n/)) {
+      const cols = line.trim().split(/\s+/);
+      if (cols.length >= 5 && /^LISTENING$/i.test(cols[3]) && cols[1].endsWith(`:${PORT}`) && /^\d+$/.test(cols[4]) && cols[4] !== "0") pids.add(cols[4]);
+    }
+  } catch {}
+  for (const pid of pids) {
+    try {
+      execFileSync("taskkill", ["/PID", pid, "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    } catch {}
+  }
+  for (let i = 0; i < 40; i++) {
+    if (!(await running())) return;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(hint);
 }
 
 function openBrowser(url: string): void {
@@ -73,15 +109,19 @@ async function start(): Promise<void> {
   process.env.DEBRIDTV_EXE_DIR = dirname(process.execPath);
   if (sea.isSea()) {
     const dir = unpack();
+    // Which build this is, so a second start can tell this copy from an older one.
+    process.env.DEBRIDTV_BUILD = dir.split(/[\\/]/).pop();
     process.env.DEBRIDTV_PUBLIC = join(dir, "public");
     process.env.DEBRIDTV_LAN_PAGES = join(dir, "lan");
   }
-  if (await alreadyRunning()) {
+  const other = await running();
+  if (other && other.build === process.env.DEBRIDTV_BUILD) {
     console.log(`  DebridTV is already running at ${URL}. Opening it.`);
     openBrowser(URL);
     setTimeout(() => process.exit(0), 500);
     return;
   }
+  if (other) await replaceOther(other);
   const { main } = await import("./server.ts");
   try {
     const { app, port } = await main();

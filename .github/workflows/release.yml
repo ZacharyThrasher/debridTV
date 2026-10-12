@@ -62,14 +62,24 @@ jobs:
           # Act like a PC without ffmpeg, so the automatic download is what's tested.
           $env:DEBRIDTV_IGNORE_PATH_FFMPEG = "1"
           $exe = "unzipped\DebridTV\DebridTV.exe"
+          # An older copy (like `npm start` from a checkout) already holds the port: the exe must
+          # replace it, so the loop below waits for an answer that carries this build.
+          Set-Content old.js 'require("http").createServer((q, r) => r.end(JSON.stringify({ channels: [], version: "0.0.9" }))).listen(7337, "127.0.0.1")'
+          $old = Start-Process node -ArgumentList (Resolve-Path old.js).Path -PassThru -RedirectStandardError old.err
+          $oldUp = $false
+          for ($i = 0; $i -lt 30 -and -not $oldUp; $i++) {
+            try { $o = Invoke-RestMethod "http://127.0.0.1:7337/api/bootstrap"; $oldUp = ($o.version -eq "0.0.9") } catch { Start-Sleep 1 }
+          }
+          if (-not $oldUp) { Get-Content old.err; throw "the stand-in older copy didn't start" }
           $p = Start-Process $exe -ArgumentList "--no-browser" -PassThru -RedirectStandardOutput out.log -RedirectStandardError err.log
           $base = "http://127.0.0.1:7337"
           $up = $false
           for ($i = 0; $i -lt 60 -and -not $up; $i++) {
-            try { $b = Invoke-RestMethod "$base/api/bootstrap"; $up = $true } catch { Start-Sleep 1 }
+            try { $b = Invoke-RestMethod "$base/api/bootstrap"; if ($b.build) { $up = $true } else { Start-Sleep 1 } } catch { Start-Sleep 1 }
           }
-          if (-not $up) { Get-Content out.log, err.log; throw "DebridTV didn't start" }
-          Write-Host "Started: version $($b.version), demo $($b.demo), $($b.channels.Count) channels"
+          if (-not $up) { Get-Content out.log, err.log; throw "DebridTV didn't start, or didn't replace the older copy on the port" }
+          Write-Host "Started: version $($b.version), build $($b.build), demo $($b.demo), $($b.channels.Count) channels"
+          if (-not (Select-String -Path out.log -Pattern "Closing it so this one can start" -Quiet)) { Get-Content out.log; throw "the exe didn't say it replaced the older copy" }
           $page = Invoke-WebRequest "$base/" -UseBasicParsing
           if ($page.Content -notmatch "DebridTV") { throw "the guide page didn't load" }
           Invoke-WebRequest "$base/styles.css" -UseBasicParsing | Out-Null

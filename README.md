@@ -11,12 +11,13 @@ on the air.
 
 ## Install on Windows (DebridTV.exe)
 
-1. Download `DebridTV-v0.1.0-win-x64.zip` from
+1. Download `DebridTV-v0.1.1-win-x64.zip` from
    [Releases](https://github.com/ZacharyThrasher/debridTV/releases) and unzip it anywhere
    (for example `C:\Apps\DebridTV`). Nothing else to install: Node is inside the exe.
 2. Double-click **DebridTV.exe**. A small console window opens and your browser opens
    the guide at **http://127.0.0.1:7337**. Keep the window open while you watch; closing
-   it turns DebridTV off. Starting it again while it runs just reopens the browser.
+   it turns DebridTV off. Starting it again while it runs just reopens the browser; if an older DebridTV
+   (such as `npm start` from a checkout) holds the port, the exe closes it and takes over.
 3. The exe isn't code-signed yet, so the first start may show "Windows protected your
    PC". Click **More info → Run anyway**.
 

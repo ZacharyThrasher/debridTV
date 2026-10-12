@@ -50,7 +50,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = process.env.DEBRIDTV_PUBLIC ? resolve(process.env.DEBRIDTV_PUBLIC) : join(HERE, "public");
 const HOST = "127.0.0.1";
 const MIN = 60_000;
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 export interface AppOptions {
   /** 0 picks a free port (tests). Default 7337 or $PORT. */
@@ -989,6 +989,8 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       connected: connected(),
       gates: { sharing: gates.isGranted("sharing"), cloudRelay: gates.isGranted("cloud-relay"), tunerExport: gates.isGranted("tuner-export") },
       version: VERSION,
+      // Set by DebridTV.exe; a second start compares it to tell this copy from an older one.
+      build: process.env.DEBRIDTV_BUILD ?? null,
     });
   }
   if (p === "/api/guide") {
