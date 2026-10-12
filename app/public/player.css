@@ -46,6 +46,7 @@ body.guide-open .pbar, body.panel-open .pbar { display: none; }
 /* The banner and the channel bug make room. */
 body.pbar-on .banner { transform: translateY(calc(-1 * var(--pb-h) + var(--u) * 1.6)); transition: transform .2s var(--pb-ease); }
 body.pbar-on .bug { opacity: 0; }
+body.pbar-on .banner .progress { visibility: hidden; } /* the scrubber shows the same thing */
 body.pbar-on .paused { opacity: 0; }
 
 /* ------------------------------------------------------------------ scrubber */
@@ -84,7 +85,7 @@ html.remote .pb-scrub:focus-visible .pb-rail { box-shadow: 0 0 0 3px color-mix(i
 
 .pb-row { display: flex; align-items: center; justify-content: space-between; gap: var(--pb-gap); margin-top: calc(var(--u) * .2); }
 .pb-left, .pb-right { display: flex; align-items: center; gap: var(--pb-gap); min-width: 0; }
-.pb-left { flex: 1; }
+.pb-left { flex: 1; overflow: hidden; padding: 4px; margin: -4px; } /* room for focus rings */
 .pb-btn {
   flex: none; display: inline-grid; place-items: center; grid-auto-flow: column; gap: .4em;
   min-width: var(--pb-btn); height: var(--pb-btn); padding: 0 calc((var(--pb-btn) - var(--pb-icon)) / 2);
@@ -216,9 +217,19 @@ html.tv .pstats { font-size: 16px; }
 
 /* ------------------------------------------------------------------ phone */
 
+/* Narrower screens and TVs (big targets) drop the words and the least-used buttons first. */
+@media (max-width: 1280px) { .pb-text b { display: none; } }
+html.tv .pb-text b, html.tv .pb-ch { display: none; }
+@media (max-width: 1000px) { .pb-ch, [data-act="settings"] { display: none !important; } }
+
+/* ------------------------------------------------------------------ phone */
+
 @media (max-width: 760px) {
-  :root { --pb-btn: 40px; --pb-icon: 22px; --pb-pad-x: 8px; }
-  .pb-text b, .pb-title, .pb-vol .pb-volr, [data-act="settings"], [data-act="pip"] { display: none !important; }
+  :root { --pb-btn: 40px; --pb-icon: 22px; --pb-pad-x: 6px; }
+  .pb-title, .pb-vol, .pb-prog, [data-act="pip"], [data-act="ondemand"] { display: none !important; }
   .pb-left, .pb-right { gap: 0; }
+  .pb-time { padding: 0 .3em; font-size: .92em; }
+  .pb-live { padding: 0 .55em; }
+  .pb-live small { display: none; }
   .pb-menu { right: 8px; left: 8px; width: auto; }
 }

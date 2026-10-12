@@ -18,8 +18,10 @@ import { openGuide, guideOpen } from "./guide.js";
 import { openPanel, panelOpen } from "./panel.js";
 import { openOnDemand, onDemandOpen } from "./ondemand.js";
 import { osd } from "./ui.js";
-import { move } from "./spatial.js";
+import { move, activeLayer } from "./spatial.js";
+import { pinPromptOpen } from "./cards.js";
 import * as fx from "./avfx.js";
+import { audioTracks, defaultAudio, trackLabel } from "./tracks.js";
 
 const video = document.getElementById("video");
 const stage = document.getElementById("stage");
@@ -168,18 +170,19 @@ new MutationObserver(() => blocked() && barShown() && hideBar()).observe(documen
 
 // ------------------------------------------------------------------ drawing
 
-let chapters = { id: null, list: [] };
+let chapters = { id: null, list: [], tracks: [] };
 let showLeft = false; // time display: elapsed (default) or time left
 let lastId = null;
 
 async function loadChapters(id) {
-  chapters = { id, list: [] };
+  chapters = { id, list: [], tracks: [] };
   chapsEl.innerHTML = "";
   if (!id) return;
   try {
     const it = await api.get(`/api/item?id=${encodeURIComponent(id)}`);
     if (chapters.id !== id) return;
     chapters.list = (it.chaptersMs ?? []).filter((c) => c > 0);
+    chapters.tracks = it.tracks ?? [];
   } catch {}
 }
 
@@ -437,7 +440,7 @@ function rows() {
     case "main":
       return html`
         ${row("speed", "Playback speed", offClock ? `${player.currentRate?.() ?? 1}×` : "Normal")}
-        ${row("audio", "Audio track", "…")}
+        ${row("audio", "Audio track", audioLabel())}
         ${row("async", "Audio sync", signed(fx.audioDelay()))}
         ${row("subs", "Subtitles", captionsOn() ? "On" : "Off")}
         ${row("ssync", "Subtitle sync", signed(fx.subDelay()))}
@@ -501,6 +504,17 @@ const toggle = (k, label, on, note = "") => html`<button class="pm-row pm-toggle
 const stepper = (k, v, unit, label = "") => html`<div class="pm-step">${label ? html`<span>${label}</span>` : ""}
   <button data-m="${k}:-" aria-label="${label || "Less"} down">−</button><output>${unit === "ms" ? signed(v) : `${v} ${unit}`}</output><button data-m="${k}:+" aria-label="${label || "More"} up">+</button></div>`;
 
+/** The playing audio track's name, from the item's track list (fetched with the chapters). */
+function audioLabel() {
+  const now = player.playing?.();
+  const list = chapters.tracks.filter((x) => x.kind === "audio");
+  if (!now || !list.length || chapters.id !== now.itemId) return tv.route === "demo" ? "Demo" : "—";
+  const idx = now.sel?.audio ?? (list.find((x) => x.default) ?? list[0]).index;
+  const t = list.find((x) => x.index === idx);
+  const name = t ? trackLabel(t) : "—";
+  return list.length > 1 ? `${name} (${list.length} tracks)` : name;
+}
+
 function openMenu(to = "main") {
   openedFrom = document.activeElement;
   page = to;
@@ -535,7 +549,6 @@ async function fillAudio() {
     tracks = (await api.get(`/api/item?id=${encodeURIComponent(now.itemId)}`)).tracks ?? [];
   } catch {}
   if (page !== "audio" || menu.hidden) return;
-  const { audioTracks, defaultAudio, trackLabel } = await import("./tracks.js");
   const list = audioTracks(tracks);
   if (!list.length) return void (box.innerHTML = html`<p class="pm-note">This file's tracks aren't known yet.</p>`.html);
   const cur = now.sel?.audio ?? defaultAudio(tracks);
@@ -689,7 +702,10 @@ function hideKeys() {
 // ------------------------------------------------------------------ keys
 
 const typing = (el) => el?.matches?.("input:not([type=range]), textarea, select, [contenteditable=true]");
-const otherLayer = () => blocked() || !keysEl.hidden || !!document.querySelector('[aria-modal="true"]:not(.pb-menu)') || document.getElementById("card")?.querySelector(".pin-pad, .pin");
+const otherLayer = () => {
+  const l = activeLayer();
+  return blocked() || !keysEl.hidden || (!!l && l !== menu) || pinPromptOpen();
+};
 
 // Registered after spatial.js (main.js imports this second), before main.js's own keys.
 addEventListener("keydown", (e) => {
