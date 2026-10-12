@@ -7,8 +7,10 @@
 // host (ADR-0003, EXP-008).
 //
 // Guardrails (the "never retrieve unwatched media" goal):
-//   - filled only from bytes already on their way to a viewer or the probe; this
-//     module never asks a host for anything
+//   - filled only from bytes already on their way to a viewer or the probe, plus
+//     one narrow exception: the next program on the channel being watched, readied
+//     late in the current one (ADR-0006, servePreload). This module never asks a
+//     host for anything itself
 //   - bounded (least recently used goes first), its size shown in Meters
 //   - an entry is dropped when its file leaves the library, is refused, or its size changes
 //   - bytes served from here are counted apart from bytes fetched upstream

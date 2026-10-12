@@ -432,6 +432,9 @@ root.querySelector(".guide-tools").addEventListener("click", (e) => {
   } else if (act === "ondemand") {
     closeGuide();
     openOnDemand();
+  } else if (act === "captions") {
+    closeGuide();
+    import("./captions.js").then((m) => m.openCaptions());
   } else if (act === "now") {
     leaveTools();
     guideKey({ key: "Home" });

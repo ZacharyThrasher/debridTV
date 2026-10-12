@@ -540,8 +540,10 @@ async function meters() {
       <div class="stat"><b>${m.apiTotal}</b><span>API calls</span></div>
       <div class="stat"><b>${fmtBytes(m.bytes.playback)}</b><span>watched bytes</span></div>
       <div class="stat"><b>${fmtBytes(m.bytes.probe)}</b><span>scan bytes</span></div>
-      ${m.cache ? html`<div class="stat" title="The first 1 MB and last 256 KB of files you've tuned, kept on this PC so channel changes start sooner. Never fetched ahead.">
+      ${m.cache ? html`<div class="stat" title="The first 1 MB and last 256 KB of files you've tuned, kept on this PC so channel changes start sooner. Only fetched ahead for the next show on the channel you're watching.">
         <b>${fmtBytes(m.bytes.cached ?? 0)}</b><span>served from cache (${fmtBytes(m.cache.bytes)} in ${m.cache.files} files)</span></div>` : ""}
+      ${m.preload?.started ? html`<div class="stat" title="Fetched a minute before the next show on the channel you were watching. Wasted means nobody played it (you changed channel or stopped).">
+        <b>${fmtBytes(m.bytes.preload ?? 0)}</b><span>next shows readied: ${m.preload.used} played, ${m.preload.wasted} wasted (${fmtBytes(m.preload.wastedBytes)})</span></div>` : ""}
       <div class="stat"><b>${m.tunes}</b><span>channel changes</span></div>
       <div class="stat"><b>${m.streamsOpened}</b><span>streams opened</span></div>
       <div class="stat"><b>${m.streamsCancelled}</b><span>cancelled</span></div>
@@ -567,7 +569,11 @@ async function look() {
   // theme.js (B) lists built-in and custom themes and owns the editor; fall back to the built-ins.
   const themeMod = await import("./theme.js").catch(() => null);
   const themes = themeMod?.themeOptions?.().map((o) => [o.value, o.label]) ?? [["midnight", "Midnight"], ["cable92", "Cable '92"], ["daylight", "Daylight"]];
-  return html`<h3>Look &amp; feel</h3>
+  const breaks = await api.get("/api/station").then((x) => !!x.breaks, () => !!tv.breaks);
+  return html`<h3>Watching</h3>
+    <div class="opt" data-opt="breaks"><div><div class="ol">Station breaks</div><div class="od">Off: shows play back to back, with nothing in between. On: shows start on the half hour, with a short station break between them and at chapter marks, like cable. Either way, you can skip around with ◀ ▶.</div></div>
+      <label class="switch"><input type="checkbox" data-station-breaks aria-label="Station breaks" ${breaks ? "checked" : ""}><i></i></label></div>
+    <h3>Look &amp; feel</h3>
     <div class="opt"><div><div class="ol">Theme</div><div class="od">Colors for the guide and menus.</div></div>
       <span style="display:flex;gap:.4em;flex-wrap:wrap">
       <select class="input" style="width:auto" data-pref-select="theme" aria-label="Theme">${raw(themes.map(([k, v]) => `<option value="${esc(k)}" ${pref("theme") === k ? "selected" : ""}>${esc(v)}</option>`).join(""))}</select>
@@ -587,6 +593,17 @@ async function look() {
 
 body.addEventListener("change", (e) => {
   const t = e.target;
+  if (t.hasAttribute?.("data-station-breaks")) {
+    // A station-wide choice, kept on the PC: each channel switches at the end of what's on now.
+    return void api.post("/api/station", { breaks: t.checked }).then((x) => {
+      tv.breaks = !!x.breaks;
+      toast(x.breaks ? "Station breaks are on. Each channel switches after what's on now." : "Station breaks are off. Shows will play back to back.");
+      onChange();
+    }, (err) => {
+      t.checked = !t.checked;
+      toast(err.message);
+    });
+  }
   if (t.dataset.pref) setPref(t.dataset.pref, t.checked);
   else if (t.dataset.prefSelect) {
     setPref(t.dataset.prefSelect, t.dataset.num ? Number(t.value) : t.value);
@@ -608,16 +625,18 @@ function bugOpts() {
       <select class="input" style="width:auto" data-pref-select="bezel" aria-label="TV set">${raw([["off", "None"], ["classic", "Classic"], ["wood", "Wood console"]].map(([v, l]) => `<option value="${v}" ${v === (pref("bezel") ?? "off") ? "selected" : ""}>${l}</option>`).join(""))}</select></div>
     <div class="opt"><div><div class="ol">Guide preview</div><div class="od">The guide's corner shows what's on the highlighted channel, from the schedule. It never tunes or loads video while you browse.</div></div>
       <label class="switch"><input type="checkbox" data-pref="guidePreview" aria-label="Guide preview" ${pref("guidePreview") !== false ? "checked" : ""}><i></i></label></div>
-    <div class="opt"><div><div class="ol">Rating card</div><div class="od">Show "Rated PG-13" and the like for a few seconds when a program starts.</div></div>
-      <label class="switch"><input type="checkbox" data-pref="ratingCard" aria-label="Rating card" ${pref("ratingCard") !== false ? "checked" : ""}><i></i></label></div>`;
+    <div class="opt"><div><div class="ol">Rating card</div><div class="od">Show "Rated PG-13" and the like for a few seconds when a program starts. Off unless you turn it on.</div></div>
+      <label class="switch"><input type="checkbox" data-pref="ratingCard" aria-label="Rating card" ${pref("ratingCard") === true ? "checked" : ""}><i></i></label></div>`;
 }
 
 /** N-17b: after this long with no key, tap or click, the set asks if you're still watching, then signs off. */
 function signOffOpt() {
-  const cur = Number(pref("signOffHours") ?? 4);
+  const cur = Number(pref("signOffHours") ?? 0);
   const opts = [[0, "Never"], [2, "2 hours"], [3, "3 hours"], [4, "4 hours"], [6, "6 hours"], [8, "8 hours"]];
   return html`<div class="opt"><div><div class="ol">Sign off after</div><div class="od">With nobody pressing anything, ask "Still watching?" and then stop playing, so a sleeping viewer doesn't stream all night.</div></div>
     <select class="input" style="width:auto" data-pref-select="signOffHours" data-num="1" aria-label="Sign off after">${raw(opts.map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`).join(""))}</select></div>
+    <div class="opt"><div><div class="ol">Get the next show ready</div><div class="od">A minute before the next program on the channel you're watching, fetch its first second or so (about 1.3 MB) so it starts without a wait. Never while you surf or browse the guide.</div></div>
+      <label class="switch"><input type="checkbox" data-pref="preloadNext" aria-label="Get the next show ready" ${pref("preloadNext") !== false ? "checked" : ""}><i></i></label></div>
     ${raw(compatQualityOpt())}`;
 }
 

@@ -150,6 +150,16 @@ async function drift(page: any, ch = direct!) {
   return { driftMs: Math.round(vt - n.fileOffsetMs), item: n.airing?.itemId };
 }
 
+/** Wait until the program on screen is at least `inMs` in, with at least `leftMs` to go. */
+async function wellInside(page: any, inMs: number, leftMs: number, ch = direct!) {
+  for (let i = 0; i < 120; i++) {
+    const n = await get(`/api/now?channel=${ch.id}`);
+    if (n.segment?.kind === "program" && n.fileOffsetMs >= inMs && n.airing.end - n.now > leftMs + 1000) break;
+    await sleep(500);
+  }
+  await playing(page);
+}
+
 describe("player", () => {
   it("joins the program at station time (A20)", async (t) => {
     if (skip) return t.skip(skip);
@@ -162,18 +172,11 @@ describe("player", () => {
     await closeQuietly(ctx);
   });
 
-  it("resuming from pause returns to live, not where it paused (A21)", async (t) => {
+  it("resuming from pause plays on from where it paused, and Back goes to live (ADR-0006)", async (t) => {
     if (skip) return t.skip(skip);
     const { page, ctx } = await open();
     await playing(page);
-    // Pause well inside a program, so a program change can't fake a pass.
-    for (let i = 0; i < 60; i++) {
-      const n = await get(`/api/now?channel=${direct!.id}`);
-      if (n.segment?.kind === "program" && n.airing.end - n.now > 12_000) break;
-      await sleep(500);
-    }
-    await sleep(500);
-    const before = await drift(page);
+    await wellInside(page, 0, 12_000);
     await page.keyboard.press(" ");
     await sleep(500);
     assert.ok(await page.locator("#paused").isVisible(), "paused overlay shows");
@@ -182,9 +185,64 @@ describe("player", () => {
     await playing(page);
     await sleep(800);
     const after = await drift(page);
-    assert.ok(Math.abs(after.driftMs) < 1500, `back on station time (drift ${after.driftMs} ms)`);
+    assert.ok(after.driftMs < -3500 && after.driftMs > -7000, `picks up where it paused, behind the station (drift ${after.driftMs} ms)`);
+    // While paused the control bar is up and its own LIVE button stands in for the pill.
+    assert.equal(await page.evaluate(() => document.getElementById("live-pill")!.hidden), false, "Back to live shows");
+    assert.match(await page.locator(".pb-live").innerText(), /Back to live/i);
+    await page.keyboard.press("l");
+    await page.waitForFunction(() => document.getElementById("live-pill")!.hidden);
+    await playing(page);
+    await sleep(800);
+    const live = await drift(page);
+    assert.ok(Math.abs(live.driftMs) < 1500, `back on station time (drift ${live.driftMs} ms)`);
     await closeQuietly(ctx);
-    void before;
+  });
+
+  it("skips back in place, jumps to the next program, and the pill goes back to live (ADR-0006)", async (t) => {
+    if (skip) return t.skip(skip);
+    const { page, ctx, media, errors } = await open();
+    await playing(page);
+    // 12 s into a program with time left, so a 10 s skip stays inside it.
+    await wellInside(page, 12_000, 8_000);
+    media.length = 0;
+    await page.keyboard.press("ArrowLeft");
+    await page.waitForFunction(() => !(document.getElementById("video") as HTMLVideoElement).seeking);
+    await sleep(600);
+    const back = await drift(page);
+    assert.ok(Math.abs(back.driftMs + 10_000) < 1500, `10 s behind (drift ${back.driftMs} ms)`);
+    assert.equal(media.length, 0, "a direct file seeks in place, no new request");
+    assert.match(await page.locator("#live-pill").innerText(), /Back to live[\s\S]*behind/);
+    // The scrub-bar contract: timeline() and seekTo().
+    const tl = () => page.evaluate(async () => (await import(location.origin + "/js/player.js")).timeline());
+    let line = await tl();
+    assert.equal(line.mode, "shifted");
+    assert.ok(Math.abs(line.liveMs - line.posMs - 10_000) < 1500, JSON.stringify(line));
+    assert.ok(line.durMs > 40_000 && line.maxMs === line.durMs && line.minMs === 0);
+    await page.evaluate(async (to: number) => (await import(location.origin + "/js/player.js")).seekTo(to), line.posMs + 5000);
+    await page.waitForFunction(() => !(document.getElementById("video") as HTMLVideoElement).seeking);
+    line = await tl();
+    assert.ok(Math.abs(line.liveMs - line.posMs - 5000) < 1500, `seekTo moved 5 s closer to live: ${JSON.stringify(line)}`);
+
+    const shown = () => page.evaluate(async () => {
+      const p = await import(location.origin + "/js/player.js");
+      return { start: p.tv.info?.airing?.start, end: p.tv.info?.airing?.end, shift: p.timeShift() };
+    });
+    const before = await shown();
+    await page.keyboard.press("]");
+    await page.waitForFunction(async (end: number) => (await import(location.origin + "/js/player.js")).tv.info?.airing?.start === end, before.end);
+    await playing(page);
+    const next = await shown();
+    assert.equal(next.start, before.end, "the next program in the schedule");
+    assert.ok(next.shift > 0, `ahead of the station (${next.shift} ms)`);
+    assert.match(await page.locator("#live-pill").innerText(), /ahead/);
+
+    await page.evaluate(() => document.getElementById("live-pill")!.click()); // the control bar may be covering it
+    await page.waitForFunction(() => document.getElementById("live-pill")!.hidden);
+    await playing(page);
+    await sleep(800);
+    assert.ok(Math.abs((await drift(page)).driftMs) < 1500, "live again");
+    assert.deepEqual(errors, []);
+    await closeQuietly(ctx);
   });
 
   it("fast surfing opens media only for the channel it lands on (A25)", async (t) => {
@@ -288,7 +346,7 @@ describe("player", () => {
     await closeQuietly(ctx);
   });
 
-  it("A picks another audio language and C turns captions on, in step with the picture, and both carry over (N-18a)", async (t) => {
+  it("A picks another audio language and the subtitles menu turns captions on, in step with the picture, and both carry over (N-18a)", async (t) => {
     if (skip) return t.skip(skip);
     if (!langs) return t.skip("the language test channel didn't go on air");
     // Start early in a program, so the whole check stays inside one file.
@@ -316,8 +374,17 @@ describe("player", () => {
     assert.equal((await prefs()).audioLang, "spa", "remembers the language");
     assert.match(await page.evaluate(() => document.getElementById("osd-num")!.textContent ?? ""), /Spanish/i);
 
+    // C opens the subtitles menu; it lists Off and the English track, with Off picked.
     await page.keyboard.press("c");
+    await page.waitForSelector('#captions:not([hidden]) [data-sub="0"]');
+    assert.equal(await page.locator('#captions [data-sub="off"]').getAttribute("aria-checked"), "true");
+    assert.match(await page.locator('#captions [data-sub="0"]').innerText(), /English/);
+    assert.match(await page.locator('#captions [data-audio="1"]').innerText(), /Spanish/, "the audio tracks are listed too");
+    await page.locator('#captions [data-sub="0"]').click();
     await page.waitForFunction(() => /&a=1&s=0/.test(document.getElementById("video")!.getAttribute("src") ?? ""));
+    await page.waitForSelector('#captions [data-sub="0"][aria-checked="true"]');
+    await page.keyboard.press("Escape");
+    await page.waitForSelector("#captions", { state: "hidden" });
     await playing(page);
     assert.equal((await prefs()).subLang, "eng");
     // The cue on screen is the one for this second of the file.
@@ -352,11 +419,26 @@ describe("player", () => {
     const next = await open({ audioLang: "spa", subLang: "eng" }, langs);
     await playing(next.page);
     assert.match(await next.page.evaluate(() => document.getElementById("video")!.getAttribute("src") ?? ""), /&a=1&s=0/);
-    // C past the last track turns captions off but keeps the Spanish sound.
-    await next.page.keyboard.press("c");
+    // The look settings apply to the captions on screen.
+    await next.page.waitForFunction(() => [...(document.getElementById("video") as HTMLVideoElement).textTracks].some((x) => (x.cues?.length ?? 0) > 0), null, { timeout: 15_000 });
+    await next.page.locator('[data-act="captions"]').dispatchEvent("click");
+    await next.page.waitForSelector('#captions:not([hidden]) [data-sub="0"][aria-checked="true"]');
+    await next.page.locator('#captions [data-cap="capColor"][data-v="yellow"]').click();
+    await next.page.locator('#captions [data-cap="capPos"][data-v="top"]').click();
+    assert.match(await next.page.evaluate(() => document.getElementById("caption-style")!.textContent ?? ""), /#ffe14d/);
+    const lines = await next.page.evaluate(() => [...(document.getElementById("video") as HTMLVideoElement).textTracks]
+      .flatMap((x) => [...(x.cues ?? [])].map((c) => (c as VTTCue).line)));
+    assert.ok(lines.length && lines.every((l: unknown) => l === 0), `cues moved to the top: ${JSON.stringify(lines)}`);
+    // Off turns captions off but keeps the Spanish sound.
+    await next.page.locator('#captions [data-sub="off"]').click();
     await next.page.waitForFunction(() => !/&s=/.test(document.getElementById("video")!.getAttribute("src") ?? "x&s="));
     assert.match(await next.page.evaluate(() => document.getElementById("video")!.getAttribute("src") ?? ""), /&a=1/);
     assert.equal(await next.page.evaluate(() => JSON.parse(localStorage.getItem("debridtv.prefs")!).subLang), "off");
+    // A remote's CC button turns them back on, in the language used last.
+    await next.page.keyboard.press("Escape");
+    await next.page.evaluate(() => dispatchEvent(new KeyboardEvent("keydown", { key: "Subtitle", bubbles: true })));
+    await next.page.waitForFunction(() => /&a=1&s=0/.test(document.getElementById("video")!.getAttribute("src") ?? ""));
+    assert.equal(await next.page.evaluate(() => JSON.parse(localStorage.getItem("debridtv.prefs")!).subLang), "eng");
     assert.deepEqual([...errors, ...next.errors], []);
     await closeQuietly(next.ctx);
   });
@@ -488,6 +570,38 @@ describe("player", () => {
     assert.equal(await page.locator("#signoff").isVisible(), false);
     assert.equal(await page.locator("#bug").innerText(), bug);
     assert.equal(await page.evaluate(() => !(document.getElementById("video") as HTMLVideoElement).paused), true, "still playing");
+    await closeQuietly(ctx);
+  });
+
+  it("readies the next show only after settling on a channel, and drops it on a channel change (ADR-0006)", async (t) => {
+    if (skip) return t.skip(skip);
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    await ctx.addInitScript(`localStorage.setItem("debridtv.prefs", ${JSON.stringify(JSON.stringify({ welcomed: true, startup: `ch:${direct!.id}` }))})`);
+    // The test files are local, which is never pre-loaded; make the next program a provider file starting in 30 s.
+    await ctx.route("**/api/now?*", async (r: any) => {
+      const res = await r.fetch();
+      const body = await res.json();
+      if (body.airing && body.next) body.next = { ...body.next, itemId: "remote-next", provider: "torbox", availability: "ok", start: body.now + 30_000 };
+      await r.fulfill({ response: res, json: body });
+    });
+    const asked: Array<{ at: number; itemId: string }> = [];
+    const dropped: number[] = [];
+    // Hold the pre-load open, as a slow provider would.
+    await ctx.route("**/api/preload", (r: any) => asked.push({ at: Date.now(), itemId: JSON.parse(r.request().postData()).itemId }));
+    const page = await ctx.newPage();
+    page.on("requestfailed", (r: any) => new URL(r.url()).pathname === "/api/preload" && dropped.push(Date.now()));
+    const t0 = Date.now();
+    await page.goto(BASE + "/");
+    await playing(page);
+    await sleep(6000);
+    assert.equal(asked.length, 0, "nothing fetched ahead in the first seconds on a channel");
+    for (let i = 0; i < 60 && !asked.length; i++) await sleep(250);
+    assert.equal(asked.length, 1, "one pre-load once settled");
+    assert.equal(asked[0]!.itemId, "remote-next");
+    assert.ok(asked[0]!.at - t0 >= 9000, `waited for the viewer to settle (${asked[0]!.at - t0} ms)`);
+    await page.keyboard.press("ArrowUp");
+    for (let i = 0; i < 20 && !dropped.length; i++) await sleep(100);
+    assert.equal(dropped.length, 1, "changing channel drops the pre-load request");
     await closeQuietly(ctx);
   });
 });

@@ -220,7 +220,13 @@ describe("guide", { skip }, () => {
   });
 });
 
+const station = (breaks: boolean) =>
+  fetch(`${BASE}/api/station`, { method: "POST", headers: { "content-type": "application/json", origin: BASE }, body: JSON.stringify({ breaks }) });
+
 describe("station breaks", { skip }, () => {
+  // Breaks are opt-in (ADR-0006); these tests turn them on and back off.
+  before(async () => void (await station(true)));
+  after(async () => void (await station(false)));
   it("a long break rotates through what's on, from the local clock only", async () => {
     const brk = await findLongBreak();
     assert.ok(brk, "demo lineup should have a long break in the next 12 hours");

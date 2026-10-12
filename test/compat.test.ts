@@ -145,3 +145,32 @@ test("N-19: maxh caps the converted picture's height; copied video is left as it
   assert.equal(await height("&maxh=720"), "1080", "copied video is untouched");
   assert.equal((await fetch(`${base}/media/${big}/live?maxh=480`)).status, 400);
 });
+
+test("Player: ad shifts the sound later (positive) or earlier (negative); bad values are refused", { skip: !hasFfmpeg }, async () => {
+  const file = join(media, "Sync.Test.S01E01.mkv");
+  await run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=320x180:r=10:d=3", "-f", "lavfi", "-i", "sine=duration=3",
+    "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", file]);
+  await post("/api/sources/refresh", { provider: "local" });
+  await post("/api/scan/start", {});
+  let sync = "";
+  for (let i = 0; i < 100 && !sync; i++) {
+    const f = (await (await fetch(`${base}/api/library/files?q=Sync`)).json()).files.find((x: any) => x.name.startsWith("Sync.Test"));
+    if (f?.durationMs) sync = f.id;
+    else await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.ok(sync);
+  const { writeFileSync } = await import("node:fs");
+  const audioSecs = async (q: string) => {
+    const res = await fetch(`${base}/media/${sync}/live?start=0${q}`);
+    assert.equal(res.status, 200);
+    const out = join(home, `sync${q.replace(/\W/g, "")}.mp4`);
+    writeFileSync(out, new Uint8Array(await res.arrayBuffer()));
+    const { stdout } = await run("ffprobe", ["-v", "error", "-select_streams", "a", "-show_entries", "packet=pts_time", "-of", "csv=p=0", out]);
+    const t = stdout.trim().split("\n").map(Number).filter(Number.isFinite);
+    return t.at(-1)! - t[0]!;
+  };
+  const plain = await audioSecs("");
+  assert.ok(Math.abs(await audioSecs("&ad=500") - plain - 0.5) < 0.1, "half a second of silence first");
+  assert.ok(Math.abs(plain - await audioSecs("&ad=-500") - 0.5) < 0.1, "the first half second is skipped");
+  for (const bad of ["abc", "1.5", "20000"]) assert.equal((await fetch(`${base}/media/${sync}/live?ad=${bad}`)).status, 400, bad);
+});

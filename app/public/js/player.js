@@ -6,7 +6,7 @@
 // media bytes, and leaving a channel cancels its stream at once.
 
 import { api } from "./api.js";
-import { now, sleep, clamp, pref, setPref, syncClock, toast } from "./util.js";
+import { now, viewNow, shift, sleep, clamp, pref, setPref, syncClock, toast } from "./util.js";
 import { staticOn, staticOff, click } from "./static.js";
 import { synthStart, synthStop, synthPaused } from "./synth.js";
 import { breakCard, offAirCard, unavailableCard, messageCard, hideCard } from "./cards.js";
@@ -14,6 +14,7 @@ import * as cards from "./cards.js"; // lockedCard comes from workstream B
 import { osd, osdHide, bug, setBanner, showBanner } from "./ui.js";
 import { initSignOff, signedOff } from "./signoff.js";
 import { musicShow, musicHide } from "./music.js";
+import { planPreload, cancelPreload } from "./preload.js";
 import { tracksFor, selectionFor, needsCompat, selectionQuery, audioTracks, subTracks, defaultAudio, isText, trackLabel, Captions } from "./tracks.js";
 
 const video = document.getElementById("video");
@@ -21,7 +22,8 @@ const synthEl = document.getElementById("synth");
 const pausedEl = document.getElementById("paused");
 
 // onDemand is { itemId, fromMs, durationMs, title, positionMs } while On Demand plays (parity N-30), else null.
-export const tv = { channels: [], current: null, last: null, info: null, route: "card", ffmpeg: false, paused: false, onDemand: null };
+// breaks: station breaks are on (ADR-0006: off unless the viewer turns them on); set from /api/bootstrap.
+export const tv = { channels: [], current: null, last: null, info: null, route: "card", ffmpeg: false, paused: false, onDemand: null, breaks: false };
 
 const MIN_WAIT = 150, MAX_WAIT = 1200; // EXP-006 adaptive bounds
 // EXP-008: a slow surfer (about one press a second) gets a paused "peek" of the
@@ -52,9 +54,20 @@ export function byNumber(n) {
   return tv.channels.find((c) => c.number === n);
 }
 
-export async function tune(ch, { silent = false } = {}) {
+/**
+ * opts.silent: a boundary, resume or seek on the channel already on screen (no click,
+ * static or OSD). Any other tune is a channel change, which goes back to live.
+ * opts.seek: reopen the picture at the (time-shifted) station position even if the
+ * same program is already playing.
+ */
+export async function tune(ch, { silent = false, seek = false } = {}) {
   if (!ch || signedOff()) return;
   const my = ++token;
+  if (!silent) {
+    cancelPreload();
+    clearTimeout(liveSeekTimer);
+    setShift(0);
+  }
   endOnDemand();
   clearTimeout(boundary);
   clearTimeout(stallTimer);
@@ -86,7 +99,7 @@ export async function tune(ch, { silent = false } = {}) {
   const sent = Date.now();
   let info;
   try {
-    info = await api.get(`/api/now?channel=${encodeURIComponent(ch.id)}${silent ? "" : "&count=1"}`);
+    info = await api.get(`/api/now?channel=${encodeURIComponent(ch.id)}${shift.ms ? `&at=${Math.round(viewNow())}` : ""}${silent ? "" : "&count=1"}`);
   } catch (e) {
     if (my !== token) return;
     staticOff();
@@ -119,17 +132,23 @@ export async function tune(ch, { silent = false } = {}) {
     } else if (wait > MIN_WAIT) await sleep(wait - MIN_WAIT);
     if (my !== token) return;
   }
-  render(ch, info, my, silent, hold);
+  render(ch, info, my, silent, hold, seek);
 }
 
 export function togglePause() {
   if (tv.onDemand) return toggleOnDemandPause();
   if (!tv.current) return;
   if (tv.paused) {
-    // Like real TV, resuming returns to live (parity C4): the station never waited.
+    // Resuming picks up where you paused (ADR-0006). The station kept going, so the
+    // viewer is now that much behind it, with Back to live one key away.
+    const away = performance.now() - pausedLiveAt;
+    setShift(shift.ms - away);
     setPaused(false);
-    tune(tv.current, { silent: true });
-  } else setPaused(true);
+    resumeLive(away);
+  } else {
+    pausedLiveAt = performance.now();
+    setPaused(true);
+  }
 }
 
 export function applyVolume() {
@@ -139,7 +158,7 @@ export function applyVolume() {
 
 // ------------------------------------------------------------------ render
 
-function render(ch, info, my, silent, hold = 0) {
+function render(ch, info, my, silent, hold = 0, seek = false) {
   const seg = info.segment;
   const a = info.airing;
   const newProgram = !media || media.itemId !== a?.itemId || seg?.kind !== "program";
@@ -149,11 +168,16 @@ function render(ch, info, my, silent, hold = 0) {
   }
   hideCard();
   scheduleBoundary(ch, seg ? seg.end : a ? a.end : now() + 60_000);
+  planPreload(ch, info); // ADR-0006: the next program's opening bytes, late in this one
 
   if (info.offAir || !a) {
     tv.route = "card";
     staticOff();
     offAirCard(ch);
+  } else if (seg.kind === "break" && !tv.breaks) {
+    // Breaks are off (ADR-0006), but this one was already in the schedule (the program
+    // on air when they were turned off, or the gap before a time slot): skip over it.
+    return skipTo(ch, seg.end);
   } else if (seg.kind === "break") {
     tv.route = "card";
     stopMedia();
@@ -176,12 +200,13 @@ function render(ch, info, my, silent, hold = 0) {
     synthStart(a, info.fileOffsetMs + (now() - info.now));
     staticOff();
     startWatch(a.itemId, ch.id);
-  } else if (silent && media && media.itemId === a.itemId && !newProgram && !video.paused) {
+  } else if (silent && !seek && media && media.itemId === a.itemId && !newProgram && !video.paused) {
     // Same program continuing after a mid-break boundary we never left.
   } else {
     playMedia(ch, info, my, null, hold);
   }
   setBanner(ch, info, tv.route);
+  timelineChanged();
   if (!silent || newProgram) showBanner();
   if (silent) osdHide();
 }
@@ -190,7 +215,7 @@ function scheduleBoundary(ch, at) {
   clearTimeout(boundary);
   boundary = setTimeout(() => {
     if (tv.current?.id === ch.id && !tv.paused) tune(ch, { silent: true });
-  }, Math.max(250, at - now() + 60));
+  }, Math.max(250, at - viewNow() + 60));
 }
 
 // ------------------------------------------------------------------ media
@@ -241,6 +266,8 @@ async function playMedia(ch, info, my, forced = null, hold = 0) {
   }
   let route = chooseRoute(a);
   if (sel && needsCompat(sel) && tv.ffmpeg && route === "direct") route = "live";
+  // Sound earlier than the picture can only be done on the PC (see audioShiftQuery).
+  if (audioShiftQuery() && route === "direct" && a.kind !== "track") route = "live";
   tv.route = route;
   const offsetAt = () => info.fileOffsetMs + (now() - info.now);
   media = { itemId: a.itemId, route, liveStart: 0, ch, info, sel, my };
@@ -358,6 +385,7 @@ function startLive(offsetMs, a, onPlaying, onError) {
   const m = media;
   m.liveStart = offsetMs;
   m.aligned = false;
+  m.shift = audioShiftQuery();
   video.onloadedmetadata = null;
   video.onplaying = () => {
     if (media !== m) return;
@@ -368,7 +396,7 @@ function startLive(offsetMs, a, onPlaying, onError) {
     onPlaying();
   };
   video.onerror = onError;
-  video.src = `/media/${encodeURIComponent(a.itemId)}/live?start=${(offsetMs / 1000).toFixed(2)}&v=${v}&tok=${tok}${aacOk ? "" : "&ac=opus"}${capQuery()}${selectionQuery(m.sel)}`;
+  video.src = `/media/${encodeURIComponent(a.itemId)}/live?start=${(offsetMs / 1000).toFixed(2)}&v=${v}&tok=${tok}${aacOk ? "" : "&ac=opus"}${capQuery()}${selectionQuery(m.sel)}${audioShiftQuery()}`;
   video.play().catch(() => autoplayHint());
   if (m.sel?.sub != null && !m.sel.burn) {
     tracksFor(a.itemId).then((tracks) => {
@@ -450,7 +478,7 @@ function stopMedia() {
 }
 
 function setPaused(p, { quiet = false } = {}) {
-  if (p) flushWatch(true);
+  if (p) flushWatch(true), cancelPreload();
   tv.paused = p;
   pausedEl.hidden = !p;
   if (p) {
@@ -491,6 +519,188 @@ function flushWatch(end = false) {
 setInterval(() => flushWatch(false), 15_000);
 addEventListener("pagehide", () => flushWatch(true));
 
+// ------------------------------------------------------------------ time shift (ADR-0006)
+
+// Any channel can be skipped around like a recording: back and ahead within what's
+// on, and on to the next or previous program. The schedule never moves; the viewer
+// watches it at another point (shift.ms in util.js), and Back to live returns to
+// the station clock. Everything else still holds: the server answers /api/now?at=
+// with the same lock and refusal rules, a seek opens only the program being
+// watched, and the guide still loads nothing.
+//
+// For the player controls: seekBy(ms), skipProgram(±1), backToLive(), and the
+// "debridtv:timeshift" event ({ shiftMs }, 0 = live). The same three actions can be
+// asked for with events: "debridtv:seek" ({ by }), "debridtv:skip" ({ dir }) and
+// "debridtv:backtolive".
+
+const MAX_SHIFT = 7 * 24 * 3_600_000; // the station keeps about a week of schedule history
+let liveSeekTimer = 0;
+let pausedLiveAt = 0;
+let skipChain = Promise.resolve();
+
+/** Where the viewer is against the station clock, in ms: negative behind, positive ahead. */
+export const timeShift = () => shift.ms;
+
+function setShift(ms) {
+  const v = Math.round(clamp(ms, -MAX_SHIFT, MAX_SHIFT));
+  const next = Math.abs(v) < 1000 ? 0 : v; // within a second of the station is live
+  if (next === shift.ms) return;
+  shift.ms = next;
+  dispatchEvent(new CustomEvent("debridtv:timeshift", { detail: { shiftMs: next } }));
+  timelineChanged();
+}
+
+/**
+ * Where the picture is, for a scrub bar. File times in ms:
+ *   mode    "live" (on the station clock), "shifted" (behind or ahead), "ondemand"
+ *   posMs   the picture's position in the file
+ *   durMs   the file's length
+ *   liveMs  where the station is in this file right now (outside 0–durMs when the
+ *           live point is in another program); null in On Demand
+ *   minMs, maxMs  the range seekTo() accepts: the whole file, on any channel
+ * Null when nothing with a timeline is on screen (a card, off air, locked).
+ */
+export function timeline() {
+  if (tv.onDemand) {
+    const durMs = tv.onDemand.durationMs || 0;
+    return { mode: "ondemand", posMs: tv.onDemand.positionMs, durMs, liveMs: null, minMs: 0, maxMs: durMs, itemId: tv.onDemand.itemId };
+  }
+  const info = tv.info;
+  const a = info?.airing;
+  if (!a || info.segment?.kind !== "program" || info.fileOffsetMs == null || !a.itemId) return null;
+  const posMs = filePos() ?? info.fileOffsetMs + (now() - info.now);
+  const durMs = a.durationMs || (media?.itemId === a.itemId && Number.isFinite(video.duration) ? video.duration * 1000 : 0);
+  return { mode: shift.ms ? "shifted" : "live", posMs, durMs, liveMs: posMs - shift.ms, minMs: 0, maxMs: durMs, itemId: a.itemId };
+}
+
+let lastMode = null;
+/** "debridtv:timeline" ({ mode }) whenever live / shifted / ondemand / nothing changes. */
+function timelineChanged() {
+  const mode = tv.onDemand ? "ondemand" : tv.info?.segment?.kind === "program" && tv.info?.airing?.itemId ? (shift.ms ? "shifted" : "live") : null;
+  if (mode === lastMode) return;
+  lastMode = mode;
+  dispatchEvent(new CustomEvent("debridtv:timeline", { detail: { mode } }));
+}
+addEventListener("debridtv:ondemand", timelineChanged);
+
+/** Jump to a point in the file on screen (a scrub bar). On a channel this time-shifts. */
+export function seekTo(fileMs) {
+  const t = timeline();
+  if (!t || !Number.isFinite(fileMs)) return;
+  seekBy(clamp(fileMs, t.minMs, Math.max(t.minMs, t.maxMs - 1000)) - t.posMs);
+}
+
+// Playing a shifted channel faster or slower (the speed menu) moves the picture away
+// from a fixed shift. While the speed isn't 1×, the shift follows the picture once a
+// second, so the banner, boundaries and Back to live stay right. Compatibility mode
+// uses its own 1.1× to catch up to live (alignLive); that isn't the viewer's speed.
+setInterval(() => {
+  const m = media;
+  const info = tv.info;
+  if (!m || m.route !== "direct" || tv.onDemand || tv.paused || video.playbackRate === 1 || m.info !== info || info?.segment?.kind !== "program") return;
+  const pos = filePos();
+  if (pos == null || info.segment.fileFrom == null) return;
+  const t = now();
+  setShift(info.segment.start + (pos - info.segment.fileFrom) - t);
+  info.fileOffsetMs = pos;
+  info.now = t;
+  scheduleBoundary(tv.current, info.segment.end);
+}, 1000);
+
+/** A paused channel counts the pause as time behind the station, then plays on. */
+function unpauseLive() {
+  if (!tv.paused) return false;
+  setShift(shift.ms - (performance.now() - pausedLiveAt));
+  setPaused(false, { quiet: true });
+  return true;
+}
+
+/** Play on after a pause. A direct file just continues; anything else reopens where the viewer was. */
+function resumeLive(away) {
+  const ch = tv.current;
+  const m = media;
+  const info = tv.info;
+  if (!ch) return;
+  if (m && m.my === token && m.route === "direct" && m.info === info && info?.segment?.kind === "program" && video.readyState >= 2) {
+    info.now += away; // the same file position now lines up with a later instant
+    scheduleBoundary(ch, info.segment.end);
+    startWatch(m.itemId, ch.id);
+    return void video.play().catch(() => autoplayHint());
+  }
+  tune(ch, { silent: true, seek: true });
+}
+
+/** Watch the channel from station time `atMs`. */
+function skipTo(ch, atMs) {
+  setShift(atMs - now());
+  return tune(ch, { silent: true, seek: true });
+}
+
+/**
+ * Left/Right on a channel. Inside the program on screen, a direct file seeks in
+ * place; anything else (a compatibility stream, the demo picture, a different
+ * program) reopens at the new point once the presses settle, so a run of presses
+ * costs one stream.
+ */
+function seekLive(deltaMs) {
+  const ch = tv.current;
+  if (!ch || signedOff()) return;
+  const wasPaused = unpauseLive();
+  const before = shift.ms;
+  setShift(before + deltaMs);
+  const d = shift.ms - before;
+  const m = media;
+  const info = tv.info;
+  const seg = info?.segment;
+  const target = viewNow();
+  if (!wasPaused && m && m.my === token && m.route === "direct" && m.info === info && seg?.kind === "program"
+    && info.fileOffsetMs != null && target >= seg.start && target < seg.end - 1000 && video.readyState >= 1) {
+    flushWatch(true);
+    info.fileOffsetMs += d;
+    video.onseeked = () => {
+      video.onseeked = null;
+      if (media === m && !tv.paused) startWatch(m.itemId, ch.id);
+    };
+    video.currentTime = Math.max(0, (info.fileOffsetMs + (now() - info.now)) / 1000);
+    scheduleBoundary(ch, seg.end);
+    return;
+  }
+  clearTimeout(liveSeekTimer);
+  liveSeekTimer = setTimeout(() => tv.current === ch && !tv.onDemand && tune(ch, { silent: true, seek: true }), 400);
+}
+
+/**
+ * Next (+1) or previous (−1) program on this channel. Previous goes to the start of
+ * the program on screen first, unless it started less than 15 s ago.
+ */
+export function skipProgram(dir) {
+  skipChain = skipChain.then(() => skipOnce(dir)).catch(() => {});
+  return skipChain;
+}
+
+async function skipOnce(dir) {
+  const ch = tv.current;
+  if (!ch || tv.onDemand || signedOff()) return;
+  unpauseLive();
+  clearTimeout(liveSeekTimer);
+  const a = tv.info?.airing;
+  if (!a) return void osd(dir > 0 ? "▶▶|" : "|◀◀", "Nothing on the air here", 1500);
+  let to = dir > 0 ? a.end : a.start;
+  if (dir < 0 && viewNow() - a.start < 15_000) {
+    let prev = null;
+    try {
+      prev = await api.get(`/api/now?channel=${encodeURIComponent(ch.id)}&at=${Math.round(a.start - 1)}`);
+    } catch {}
+    if (tv.current !== ch) return;
+    if (prev?.airing) to = prev.airing.start;
+  }
+  await skipTo(ch, to);
+}
+
+addEventListener("debridtv:seek", (e) => Number.isFinite(e.detail?.by) && seekBy(e.detail.by));
+addEventListener("debridtv:skip", (e) => skipProgram(e.detail?.dir < 0 ? -1 : 1));
+addEventListener("debridtv:backtolive", () => backToLive());
+
 // ------------------------------------------------------------------ On Demand
 
 // On Demand (parity N-30) plays one file from any point, off the station clock.
@@ -525,6 +735,7 @@ function odInfo(item, fromMs) {
 export async function playOnDemand(itemId, { fromMs = 0, item: listed = null } = {}) {
   if (!itemId || signedOff()) return;
   const my = ++token;
+  cancelPreload();
   clearTimeout(boundary);
   clearTimeout(stallTimer);
   flushWatch(true);
@@ -593,8 +804,13 @@ function demoRun() {
   if (Number.isFinite(left)) d.endTimer = setTimeout(() => odDemo === d && backToLive(), Math.max(0, left));
 }
 
-/** Back to the live airing on the channel we came from. */
+/** Back to the live airing: from On Demand, or from a time-shifted channel (ADR-0006). */
 export function backToLive() {
+  clearTimeout(liveSeekTimer);
+  if (!tv.onDemand && tv.current) {
+    setShift(0);
+    return tune(tv.current, { silent: true, seek: true });
+  }
   if (tv.current) return tune(tv.current);
   token++;
   endOnDemand();
@@ -609,7 +825,7 @@ export function backToLive() {
  */
 export function seekBy(deltaMs) {
   const m = media;
-  if (!tv.onDemand) return;
+  if (!tv.onDemand) return seekLive(deltaMs);
   const end = tv.onDemand.durationMs ? tv.onDemand.durationMs - 1000 : Infinity;
   const target = Math.round(clamp(tv.onDemand.positionMs + deltaMs, 0, Math.max(0, end)));
   if (odDemo) {
@@ -713,6 +929,7 @@ function isLocked(ch, info) {
 }
 
 function showLocked(ch, info) {
+  cancelPreload();
   tv.route = "card";
   stopMedia();
   synthStop();
@@ -761,21 +978,62 @@ export async function cycleAudio() {
   replay(m, sel);
 }
 
-/** C key: captions off → each subtitle track → off. */
-export async function cycleCaptions() {
+/**
+ * What the subtitles menu (captions.js) offers for the program on screen:
+ * { why } when there is nothing to choose from, else the program's tracks and the
+ * ones playing now (subNow null = subtitles off).
+ */
+export async function trackChoices() {
   const m = media;
-  if (!m) return osd("CC", tv.route === "demo" ? "Demo channels have no captions" : "Nothing playing", 1500);
+  if (!m) return { why: tv.route === "demo" ? "Demo channels have no subtitles." : "Nothing is playing right now." };
+  const tracks = await tracksFor(m.itemId);
+  if (media !== m) return trackChoices();
+  return {
+    why: null,
+    ffmpeg: !!tv.ffmpeg,
+    audio: audioTracks(tracks),
+    subs: subTracks(tracks),
+    audioNow: m.sel?.audio ?? defaultAudio(tracks),
+    subNow: m.sel?.sub ?? null,
+  };
+}
+
+const langOf = (t) => (t.lang && t.lang !== "und" ? t.lang : "any");
+
+/**
+ * Subtitles on (a track's index) or off (null) for this program. The language is
+ * remembered, so the next program and the next channel start the same way.
+ */
+export async function pickSubtitle(index) {
+  const m = media;
+  if (!m) return;
+  const tracks = await tracksFor(m.itemId);
+  if (media !== m) return;
+  const t = index == null ? null : subTracks(tracks).find((x) => x.index === index);
+  if (t) setPref("subLast", langOf(t));
+  setPref("subLang", t ? langOf(t) : "off");
+  if (!tv.ffmpeg || (m.sel?.sub ?? null) === (t?.index ?? null)) return;
+  osd(t ? "CC ON" : "CC OFF", t ? `${trackLabel(t)}${isText(t) ? "" : " · drawn into the picture"}` : "", 2500);
+  replay(m, { ...(m.sel ?? { audio: null }), sub: t?.index ?? null, burn: t ? !isText(t) : false });
+}
+
+/**
+ * The remote's Subtitle button: off ⇄ on, in the language used last (else the
+ * program's first full track).
+ */
+export async function toggleCaptions() {
+  const m = media;
+  if (!m) return osd("CC", tv.route === "demo" ? "Demo channels have no subtitles" : "Nothing playing", 1500);
   const tracks = await tracksFor(m.itemId);
   if (media !== m) return;
   const list = subTracks(tracks);
-  if (!list.length) return osd("CC", "No captions for this program", 2000);
-  if (!tv.ffmpeg) return osd("CC", "Captions need compatibility mode (install ffmpeg)", 3000);
-  const at = list.findIndex((t) => t.index === m.sel?.sub);
-  const next = list[at + 1] ?? null; // past the last one: off
-  setPref("subLang", next ? next.lang && next.lang !== "und" ? next.lang : "any" : "off");
-  osd(next ? "CC ON" : "CC OFF", next ? `${trackLabel(next)}${isText(next) ? "" : " · drawn into the picture"}` : "", 2500);
-  const sel = { ...(m.sel ?? { audio: null }), sub: next?.index ?? null, burn: next ? !isText(next) : false };
-  replay(m, sel);
+  if (m.sel?.sub != null) return pickSubtitle(null);
+  if (!list.length) return osd("CC", "No subtitles for this program", 2000);
+  if (!tv.ffmpeg) return osd("CC", "Subtitles need compatibility mode (install ffmpeg)", 3000);
+  const last = pref("subLast");
+  const same = list.filter((t) => !last || last === "any" || t.lang === last);
+  const pick = same.find((t) => !t.forced && isText(t)) ?? same.find((t) => !t.forced) ?? list.find((t) => !t.forced) ?? list[0];
+  return pickSubtitle(pick.index);
 }
 
 // ------------------------------------------------------------------ picture shape
@@ -812,6 +1070,9 @@ initSignOff({
   // Drop every stream and timer: nothing is fetched until the viewer is back.
   stop() {
     token++;
+    cancelPreload();
+    clearTimeout(liveSeekTimer);
+    setShift(0);
     endOnDemand();
     clearTimeout(boundary);
     clearTimeout(stallTimer);
@@ -826,3 +1087,72 @@ initSignOff({
     if (tv.current) tune(tv.current, { silent: true });
   },
 });
+
+// ------------------------------------------------------------------ control bar
+
+// What the YouTube-style bar (controls.js, docs/parity/player.md) calls besides the
+// time shift's timeline(), seekTo(), seekBy(), skipProgram() and backToLive() above.
+
+/**
+ * Playback speed (pitch kept): On Demand, and a time-shifted channel in direct play
+ * (the shift follows the picture, see above). Live stays 1×; compatibility mode drives
+ * its own catch-up speed.
+ */
+export function setRate(r) {
+  if (!speedOk()) return false;
+  rate = clamp(Number(r) || 1, 0.25, 4);
+  video.preservesPitch = true;
+  if (media) video.playbackRate = rate;
+  return true;
+}
+export const speedOk = () => !!tv.onDemand || (!!shift.ms && media?.route === "direct");
+export const currentRate = () => (speedOk() ? rate : 1);
+let rate = 1;
+video.addEventListener("playing", () => {
+  // A restarted compatibility stream (seek, track change) starts at 1×.
+  if (speedOk() && media && video.playbackRate !== rate) video.playbackRate = rate;
+});
+// Back to live (or a new channel) is normal speed again.
+addEventListener("debridtv:timeline", (e) => e.detail?.mode !== "ondemand" && e.detail?.mode !== "shifted" && (rate = 1));
+
+/** The program on screen, for the bar's menus: { itemId, route, sel } or null. */
+export const playing = () => (media ? { itemId: media.itemId, route: media.route, sel: media.sel ?? null } : null);
+
+/** Pick an audio track by index (null = the file's default). Remembers the language. */
+export async function pickAudio(index) {
+  const m = media;
+  if (!m) return false;
+  const tracks = await tracksFor(m.itemId);
+  if (media !== m) return false;
+  const t = audioTracks(tracks).find((x) => x.index === index) ?? null;
+  const isDefault = index == null || index === defaultAudio(tracks);
+  if (!isDefault && !tv.ffmpeg) return osd("AUDIO", "Switching tracks needs compatibility mode (install ffmpeg)", 3000), false;
+  setPref("audioLang", t?.lang && t.lang !== "und" ? t.lang : null);
+  if ((m.sel?.audio ?? null) === (isDefault ? null : index)) return true;
+  osd("AUDIO", trackLabel(t ?? audioTracks(tracks).find((x) => x.index === defaultAudio(tracks))), 2000);
+  replay(m, { ...(m.sel ?? { sub: null, burn: false }), audio: isDefault ? null : index });
+  return true;
+}
+
+/** Restart the program where it is with the current audio shift (sound earlier needs the PC). */
+export function reapplyAudioShift() {
+  const m = media;
+  if (!m || m.my !== token) return;
+  const want = audioShiftQuery() !== "";
+  // Already playing with this shift? Nothing to do.
+  if (m.route === "direct" ? !want : (m.shift ?? "") === audioShiftQuery()) return;
+  if (want && !tv.ffmpeg) return void toast("Moving the sound earlier needs compatibility mode (install ffmpeg). Later works anywhere.");
+  replay(m, m.sel);
+}
+
+/**
+ * pref audioDelayMs < 0 (sound earlier) → &ad= for the compatibility stream. Sound later
+ * (> 0) is a Web Audio delay in controls.js, which works on any route without a restart.
+ */
+function audioShiftQuery() {
+  const d = Math.round(Number(pref("audioDelayMs")) || 0);
+  return d < 0 && tv.ffmpeg ? `&ad=${Math.max(-10_000, d)}` : "";
+}
+
+/** The demo picture's canvas, for screenshots on demo channels. */
+export const demoCanvas = () => (tv.route === "demo" ? synthEl : null);

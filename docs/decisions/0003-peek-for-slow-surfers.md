@@ -1,6 +1,6 @@
 # ADR-0003 — Slow surfers get a paused peek; every tune should cost one round trip
 
-**Status:** accepted for the player (2026-10-11); server half proposed · **Evidence:** EXP-007, EXP-008
+**Status:** accepted for the player (2026-10-11); server half proposed · **Evidence:** EXP-007, EXP-008 · **Amended by** ADR-0006 (the next show on the channel being watched may be fetched ahead)
 
 ## Context
 With adaptive-prefetch (ADR-0002, EXP-006) a viewer pressing about once a second waits
