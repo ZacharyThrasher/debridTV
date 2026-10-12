@@ -1,6 +1,6 @@
 {
-  "ranAt": "2026-10-12T00:18:48.783Z",
-  "commit": "1f4e425",
+  "ranAt": "2026-10-12T02:00:32.385Z",
+  "commit": "48842f4",
   "node": "v22.22.0",
   "pass": 29,
   "total": 29,
@@ -62,7 +62,7 @@
       ],
       "name": "number keys tune to that channel; bug shows number + name",
       "pass": true,
-      "detail": "4 MARATHON"
+      "detail": "4 Marathon"
     },
     {
       "id": "A03",
@@ -72,8 +72,8 @@
       "name": "channel up then L returns to the previous channel",
       "pass": true,
       "detail": {
-        "afterUp": "5\nFEATURE PRESENTATION",
-        "afterLast": "4\nMARATHON"
+        "afterUp": "5\nFeature Presentation",
+        "afterLast": "4\nMarathon"
       }
     },
     {
@@ -84,7 +84,7 @@
       ],
       "name": "info banner shows title, times and what's next",
       "pass": true,
-      "detail": " 4Marathon Harbor Lights S2 · E5“Late Visitor”SitcomPG23 minLIVEDemo picture 12:16 AM 11:55 – 12:18 AM Next at 12:18 AMPocket Planet "
+      "detail": " 4Marathon Pocket Planet S1 · E8“A Signal”NatureG50 minLIVEDemo picture 1:58 AM 1:48 – 2:37 AM Next at 2:37 AMStar Courier "
     },
     {
       "id": "A05",
@@ -155,8 +155,8 @@
       "name": "reload starts on the last channel watched",
       "pass": true,
       "detail": {
-        "lastBefore": "4\nMARATHON",
-        "lastAfter": "4\nMARATHON"
+        "lastBefore": "4\nMarathon",
+        "lastAfter": "4\nMarathon"
       }
     },
     {
@@ -178,7 +178,7 @@
       "pass": true,
       "detail": {
         "item": "Harbor Lights",
-        "offset": 80828
+        "offset": 785058
       }
     },
     {
@@ -269,10 +269,10 @@
       "name": "tuning in joins the program at station time (direct play)",
       "pass": true,
       "detail": {
-        "videoMs": 273705,
-        "stationMs": 273825,
-        "item": "Audit Show S1 · E8",
-        "driftMs": -120
+        "videoMs": 46649,
+        "stationMs": 46759,
+        "item": "Audit Show S1 · E6",
+        "driftMs": -110
       }
     },
     {
@@ -284,19 +284,19 @@
       "pass": true,
       "detail": {
         "pausedShown": true,
-        "pausedAtMs": 273902,
+        "pausedAtMs": 46907,
         "resumed": {
-          "videoMs": 276408,
-          "stationMs": 281541,
-          "item": "Audit Show S1 · E8",
-          "driftMs": -5133
+          "videoMs": 49414,
+          "stationMs": 54537,
+          "item": "Audit Show S1 · E6",
+          "driftMs": -5123
         },
         "pill": true,
         "live": {
-          "videoMs": 283943,
-          "stationMs": 284052,
-          "item": "Audit Show S1 · E8",
-          "driftMs": -109
+          "videoMs": 56956,
+          "stationMs": 57046,
+          "item": "Audit Show S1 · E6",
+          "driftMs": -90
         }
       }
     },
@@ -309,13 +309,13 @@
       "pass": true,
       "detail": [
         {
-          "title": "Audit Show · S01E08",
-          "seenMs": 8566,
+          "title": "Audit Show · S01E06",
+          "seenMs": 8572,
           "watched": false
         },
         {
-          "title": "Harbor Lights · S02E05",
-          "seenMs": 40188,
+          "title": "Pocket Planet · S01E08",
+          "seenMs": 39845,
           "watched": false
         }
       ]
@@ -357,7 +357,7 @@
       "detail": {
         "mediaRequests": 1,
         "distinctFiles": 1,
-        "landed": "10 AUDIT SHOW"
+        "landed": "10 Audit Show"
       }
     },
     {
