@@ -508,6 +508,7 @@ function rows() {
       return html`${head("Sound")}
         ${stepper("vol", Math.round(fx.level() * 100), "%")}
         <p class="pm-note">Above 100% boosts quiet files (up to 200%).</p>
+        ${window.__dtvSound ? row("aout", "Output", outLabel) : ""}
         ${toggle("night", "Night mode", !!pref("nightMode"), "Evens out loud and quiet parts")}
         ${stepper("bass", Number(pref("bassDb")) || 0, "dB", "Bass")}
         ${stepper("treble", Number(pref("trebleDb")) || 0, "dB", "Treble")}`;
@@ -542,6 +543,8 @@ function rows() {
     }
     case "audio":
       return html`${head("Audio track")}<div class="pm-tracks"><p class="pm-note">Looking up tracks…</p></div>`;
+    case "aout":
+      return html`<button class="pm-head" data-m="page:sound" aria-label="Back">${icon(P.prev)}<span>Sound output</span></button><div class="pm-outs"><p class="pm-note">Looking up outputs…</p></div>`;
   }
   return "";
 }
@@ -594,6 +597,7 @@ function renderMenu(focusFirst = false, keep = null) {
   menu.innerHTML = String(rows());
   menu.dataset.page = page;
   if (page === "audio") fillAudio();
+  if (page === "aout") fillOutputs();
   const again = keep && menu.querySelector(`[data-m="${CSS.escape(keep)}"]`);
   if (again) again.focus({ focusVisible: true });
   else if (focusFirst && (document.documentElement.classList.contains("remote") || bar.contains(document.activeElement)))
@@ -616,6 +620,25 @@ async function fillAudio() {
     ${list.length > 1 && !tv.ffmpeg ? html`<p class="pm-note">Other tracks need compatibility mode (install ffmpeg on the PC).</p>` : ""}`.html;
   if (bar.contains(document.activeElement) || document.documentElement.classList.contains("remote")) box.querySelector(".on, button")?.focus({ focusVisible: true });
 }
+
+// Sound → Output, in the app window: where mpv sends the sound.
+let outLabel = "Windows default";
+let outList = [];
+const outName = (d) => (d.name === "auto" ? "Windows default" : d.description || d.name);
+async function fillOutputs() {
+  const box = menu.querySelector(".pm-outs");
+  const [list, cur] = await Promise.all([window.__dtvSound.list(), window.__dtvSound.current()]);
+  if (page !== "aout" || menu.hidden) return;
+  outList = list.some((d) => d.name === "auto") ? list : [{ name: "auto" }, ...list];
+  const now = outList.find((d) => d.name === cur);
+  if (now) outLabel = outName(now);
+  box.innerHTML = html`${outList.map((d, i) => pick(`aout:${i}`, outName(d), d.name === cur))}
+    <p class="pm-note">Windows default follows the output picked in Windows. DebridTV remembers your choice.</p>`.html;
+  if (bar.contains(document.activeElement) || document.documentElement.classList.contains("remote")) box.querySelector(".on, button")?.focus({ focusVisible: true });
+}
+addEventListener("debridtv:soundoutput", () => window.__dtvSound?.current().then((cur) => {
+  window.__dtvSound.list().then((l) => (outLabel = outName(l.find((d) => d.name === cur) ?? { name: "auto" })));
+}));
 
 const STEP = { ad: 50, sd: 100, vol: 5, bass: 1, treble: 1, zoom: 5, bri: 5, con: 5, sat: 5, ct: 1, cb: 1, cl: 1, cr: 1 };
 menu.addEventListener("click", (e) => {
@@ -642,6 +665,13 @@ menu.addEventListener("click", (e) => {
       setSleep(v === "end" ? "end" : Number(v));
       closeMenu();
       return void draw();
+    case "aout": {
+      const d = outList[Number(v)];
+      if (!d) return;
+      outLabel = outName(d);
+      osd("SOUND", outLabel, 2000);
+      return void window.__dtvSound.set(d.name).then(() => renderMenu(false, m));
+    }
     case "atrack":
       player.pickAudio?.(Number(v));
       page = "main";

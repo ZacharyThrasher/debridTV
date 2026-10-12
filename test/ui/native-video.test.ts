@@ -98,9 +98,9 @@ after(async () => {
 });
 
 /** A real mpv plus the page, wired the way the app window wires them. */
-async function open(ch: { id: string }) {
+async function open(ch: { id: string }, mpvArgs = ["--ao=null"], env: Record<string, string> = {}) {
   const sock = join(home, `mpv-${Math.random().toString(36).slice(2)}.sock`);
-  const mpv = spawn("mpv", ["--idle=yes", "--vo=null", "--ao=null", "--no-config", "--keep-open=no", "--msg-level=all=error", `--input-ipc-server=${sock}`], { stdio: "ignore" });
+  const mpv = spawn("mpv", ["--idle=yes", "--vo=null", ...mpvArgs, "--no-config", "--keep-open=no", "--msg-level=all=error", `--input-ipc-server=${sock}`], { stdio: "ignore", env: { ...process.env, ...env } });
   let conn: Socket | null = null;
   for (let i = 0; i < 100 && !conn; i++) {
     conn = await new Promise<Socket | null>((r) => {
@@ -235,6 +235,40 @@ describe("native player (desktop app)", () => {
       const t1 = await s.prop("time-pos");
       assert.ok(t1 < t0, `went back (${t0.toFixed(1)} → ${t1.toFixed(1)})`);
       assert.equal(loads(), n0, "a seek, not a reload");
+      assert.deepEqual(s.errors, []);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("moves the sound to another output when the speakers won't open", async (t) => {
+    if (skip) return t.skip(skip);
+    // Stands in for speakers another app holds to itself (VoiceMeeter on Windows):
+    // the device mpv starts on can't open. SDL's silent driver is the one that works.
+    const s = await open(dts!, ["--audio-device=alsa/held-by-another-app"], { SDL_AUDIODRIVER: "dummy", JACK_NO_START_SERVER: "1", ALSA_CONFIG_PATH: "/dev/null" });
+    try {
+      await playing(s.page);
+      // The page tries the outputs in turn; the last one works.
+      for (let i = 0; i < 80 && !(await s.prop("current-ao").catch(() => null)); i++) await sleep(250);
+      assert.equal(await s.prop("current-ao"), "sdl", "sound reached an output that opens");
+      assert.equal(await s.prop("audio-device"), "sdl");
+      assert.ok((await s.prop("audio-params"))?.samplerate > 0, "mpv is playing the sound");
+      await s.page.waitForFunction(() => /speakers are busy/.test(document.getElementById("toast")?.textContent ?? ""), null, { timeout: 5000 }).catch(() => {});
+      const note = await s.page.locator("#toast").textContent();
+      assert.match(note ?? "", /speakers are busy in another app/);
+      assert.equal(await s.page.evaluate(() => localStorage.getItem("debridtv.soundOutput")), "sdl", "remembered for next time");
+      // Sound → Output lists mpv's outputs and moves the sound on a click.
+      await s.page.mouse.move(640, 600);
+      await s.page.locator('[data-act="menu"]').click();
+      await s.page.locator('[data-m="page:sound"]').click();
+      await s.page.locator('[data-m="page:aout"]').click();
+      const picks = s.page.locator(".pm-outs .pm-pick");
+      await picks.first().waitFor();
+      assert.match((await s.page.locator(".pm-outs .pm-pick.on").textContent()) ?? "", /sdl/i, "the output playing now is ticked");
+      await s.page.locator(".pm-outs .pm-pick", { hasText: "Windows default" }).click();
+      for (let i = 0; i < 20 && (await s.prop("audio-device")) !== "auto"; i++) await sleep(250);
+      assert.equal(await s.prop("audio-device"), "auto");
+      assert.equal(await s.page.evaluate(() => localStorage.getItem("debridtv.soundOutputPick")), null, "Windows default is no pick at all");
       assert.deepEqual(s.errors, []);
     } finally {
       await s.close();
