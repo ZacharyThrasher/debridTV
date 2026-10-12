@@ -444,7 +444,8 @@ function rows() {
   const t = player.timeline?.();
   const offClock = !!player.speedOk?.();
   const p = fx.picture();
-  const pictureChanged = p.zoom !== 1 || p.rotate || p.flip || p.brightness !== 1 || p.contrast !== 1 || p.saturation !== 1;
+  const tweaked = p.zoom !== 1 || p.rotate || p.flip || p.brightness !== 1 || p.contrast !== 1 || p.saturation !== 1;
+  const pictureChanged = tweaked || fx.cropOn(p);
   const loop = fx.abLoop();
   switch (page) {
     case "main":
@@ -455,7 +456,7 @@ function rows() {
         ${row("subs", "Subtitles", captionsLabel())}
         ${row("ssync", "Subtitle sync", signed(fx.subDelay()))}
         ${row("sound", "Sound", [fx.level() > 1 && `${Math.round(fx.level() * 100)}%`, pref("nightMode") && "Night mode"].filter(Boolean).join(" · ") || "Normal")}
-        ${row("picture", "Picture", [SHAPES[pref("aspect") ?? "auto"], pictureChanged && "adjusted"].filter(Boolean).join(" · "))}
+        ${row("picture", "Picture", [SHAPES[pref("aspect") ?? "auto"], fx.cropOn(p) && `Crop ${cropLabel(p)}`, tweaked && "adjusted"].filter(Boolean).join(" · "))}
         ${row("loop", "Loop", loop ? (loop.whole ? "This program" : loop.b == null ? "A set" : "A–B") : "Off")}
         <div class="pm-sep"></div>
         ${act("shot", "Screenshot", "X")}
@@ -489,6 +490,7 @@ function rows() {
     case "picture":
       return html`${head("Picture")}
         <div class="pm-chips">${Object.entries(SHAPES).map(([k, v]) => html`<button class="pm-chip ${(pref("aspect") ?? "auto") === k ? "on" : ""}" data-m="shape:${k}" role="menuitemradio" aria-checked="${(pref("aspect") ?? "auto") === k}">${v}</button>`)}</div>
+        ${row("crop", "Crop", cropLabel(p))}
         ${stepper("zoom", Math.round(p.zoom * 100), "%", "Zoom")}
         ${act("rotate", `Rotate (${p.rotate}°)`)}
         ${toggle("flip", "Mirror", !!p.flip)}
@@ -496,6 +498,14 @@ function rows() {
         ${stepper("con", Math.round(p.contrast * 100), "%", "Contrast")}
         ${stepper("sat", Math.round(p.saturation * 100), "%", "Colour")}
         ${act("picreset", "Reset picture")}`;
+    case "crop":
+      return html`${head("Crop")}
+        <div class="pm-chips">${CROPS.map(([k, v]) => html`<button class="pm-chip ${cropPreset === k && fx.cropOn(p) === (k !== "off") ? "on" : ""}" data-m="cropset:${k}" role="menuitem">${v}</button>`)}</div>
+        <p class="pm-note">Auto finds black bars in the picture on screen. Or trim each edge:</p>
+        ${stepper("ct", Math.round(p.cropT * 100), "%", "Top")}
+        ${stepper("cb", Math.round(p.cropB * 100), "%", "Bottom")}
+        ${stepper("cl", Math.round(p.cropL * 100), "%", "Left")}
+        ${stepper("cr", Math.round(p.cropR * 100), "%", "Right")}`;
     case "loop":
       return html`${head("Loop")}${t && t.maxMs > t.minMs
         ? html`${act("ab", !loop || loop.whole ? "Set A here" : loop.b == null ? "Set B here" : "Clear A–B loop")}
@@ -505,6 +515,12 @@ function rows() {
       return html`${head("Audio track")}<div class="pm-tracks"><p class="pm-note">Looking up tracks…</p></div>`;
   }
   return "";
+}
+const CROPS = [["off", "Off"], ["auto", "Auto"], ["1.78", "16:9"], ["1.33", "4:3"], ["1.85", "1.85:1"], ["2.39", "2.39:1"]];
+let cropPreset = "off";
+function cropLabel(p) {
+  if (!fx.cropOn(p)) return "Off";
+  return CROPS.find(([k]) => k === cropPreset && k !== "off")?.[1] ?? "Custom";
 }
 const row = (k, label, value) => html`<button class="pm-row" data-m="page:${k}" role="menuitem"><span>${label}</span><em>${value}</em>${icon(P.next)}</button>`;
 const act = (k, label, key = "") => html`<button class="pm-row" data-m="${k}" role="menuitem"><span>${label}</span>${key ? html`<kbd>${key}</kbd>` : ""}</button>`;
@@ -572,7 +588,7 @@ async function fillAudio() {
   if (bar.contains(document.activeElement) || document.documentElement.classList.contains("remote")) box.querySelector(".on, button")?.focus({ focusVisible: true });
 }
 
-const STEP = { ad: 50, sd: 100, vol: 5, bass: 1, treble: 1, zoom: 5, bri: 5, con: 5, sat: 5 };
+const STEP = { ad: 50, sd: 100, vol: 5, bass: 1, treble: 1, zoom: 5, bri: 5, con: 5, sat: 5, ct: 1, cb: 1, cl: 1, cr: 1 };
 menu.addEventListener("click", (e) => {
   const b = e.target.closest("[data-m]");
   if (!b) return;
@@ -637,7 +653,25 @@ menu.addEventListener("click", (e) => {
       fx.setPicture({ [key]: clamp(Math.round((p[key] + (dir * STEP[k]) / 100) * 100) / 100, 0.5, 1.5) });
       break;
     }
+    case "cropset":
+      cropPreset = v;
+      if (v === "off") fx.setPicture({ cropT: 0, cropR: 0, cropB: 0, cropL: 0 });
+      else if (v === "auto") {
+        const c = fx.autoCrop();
+        if (c) osd("CROP", fx.cropOn(fx.picture()) ? `${Math.round((c.cropT + c.cropB) * 100)}% top/bottom · ${Math.round((c.cropL + c.cropR) * 100)}% sides` : "No black bars found", 1800);
+      } else fx.cropToRatio(Number(v));
+      break;
+    case "ct":
+    case "cb":
+    case "cl":
+    case "cr": {
+      const key = { ct: "cropT", cb: "cropB", cl: "cropL", cr: "cropR" }[k];
+      cropPreset = "custom";
+      fx.setPicture({ [key]: clamp(Math.round(p[key] * 100 + dir * STEP[k]) / 100, 0, 0.4) });
+      break;
+    }
     case "picreset":
+      cropPreset = "off";
       fx.setPicture({ ...fx.PICTURE });
       setPref("aspect", "auto");
       player.applyAspect?.();
