@@ -3,6 +3,8 @@
 // Every route here is PC only (app/lan/access.ts). Searching sends the query to
 // the sources the viewer chose; nothing reaches an account until Add is pressed
 // (or a file lands in the watched folder) while "Allow adding" is on.
+// Stremio addons the viewer added are searched by IMDb id: typed in, or looked up
+// on TMDB from the typed title when online artwork is on (src/acquire/stremio.ts).
 
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
@@ -11,6 +13,8 @@ import type { JsonFile } from "./store.ts";
 import type { Config } from "./library.ts";
 import { Acquirer, AddingOffError, parsePaste, type AddInput, type AddProvider } from "./acquire.ts";
 import { indexerCaps, redactUrl, searchArchive, searchIndexer, type Indexer, type SearchQuery, type SearchResult } from "../src/acquire/search.ts";
+import { addonBase, addonHost, addonManifest, readQuery, searchAddon, type StremioTarget } from "../src/acquire/stremio.ts";
+import type { ImdbMatch } from "./metadata/tmdb.ts";
 
 export interface AcquireRouteDeps {
   config: JsonFile<Config>;
@@ -19,6 +23,8 @@ export interface AcquireRouteDeps {
   log: (detail: string) => void;
   /** Read the provider's list again and rebuild channels. */
   onAdded: (provider: AddProvider) => void;
+  /** Title → IMDb id for Stremio addon search (TMDB, when the viewer turned it on). */
+  imdbLookup?: (title: string, media?: "tv" | "movie") => Promise<ImdbMatch | null>;
   /** Tests: the Archive's address, shorter waits, and whether the folder is watched on a timer. */
   archiveBase?: string;
   timing?: ConstructorParameters<typeof Acquirer>[0]["timing"];
@@ -60,7 +66,50 @@ export function acquireRoutes(d: AcquireRouteDeps) {
 
   const indexers = () => d.config.get().indexers ?? [];
   /** The browser never sees a key, only whether one is set. */
-  const indexerView = (ix: Indexer) => ({ id: ix.id, name: ix.name, url: redactUrl(ix.url), kind: ix.kind, enabled: ix.enabled !== false, hasKey: !!ix.apiKey });
+  const indexerView = (ix: Indexer) => ({
+    id: ix.id,
+    name: ix.name,
+    // An addon address usually holds the viewer's settings and keys in its path: only the host leaves the PC.
+    url: ix.kind === "stremio" ? addonHost(ix.url) : redactUrl(ix.url),
+    kind: ix.kind,
+    enabled: ix.enabled !== false,
+    hasKey: !!ix.apiKey,
+  });
+  const testSource = (ix: Indexer) => (ix.kind === "stremio" ? addonManifest(ix) : indexerCaps(ix));
+
+  /**
+   * What to ask the addons for: a typed IMDb id, or the title looked up on TMDB.
+   * Shows need an episode; without one, episode 1 of the season (or of season 1).
+   */
+  async function addonTarget(q: string, type: SearchQuery["type"]): Promise<{ target: StremioTarget; note: string } | { error: string }> {
+    const r = readQuery(q);
+    const tv = type === "tvsearch" || r.season != null;
+    const media = type === "movie" ? "movie" : tv ? "tv" : undefined;
+    let imdbId = r.imdbId;
+    let name = imdbId ?? "";
+    let isTv = media === "tv";
+    if (!imdbId) {
+      if (!r.title) return { error: "Type a title or an IMDb id (tt…)" };
+      if (!d.imdbLookup) return { error: "Type the IMDb id (tt…), or turn on online artwork in Settings so DebridTV can look titles up" };
+      let m: ImdbMatch | null;
+      try {
+        m = await d.imdbLookup(r.title, media);
+      } catch (e) {
+        return { error: `Couldn't look the title up: ${(e as Error).message}` };
+      }
+      if (!m) return { error: `No IMDb id found for “${r.title.slice(0, 60)}”. Type the IMDb id (tt…) instead` };
+      imdbId = m.imdbId;
+      isTv = m.media === "tv";
+      name = `${m.name}${m.year ? ` (${m.year})` : ""}`;
+    }
+    if (!isTv) return { target: { type: "movie", imdbId }, note: name };
+    const season = r.season ?? 1;
+    const episode = r.episode ?? 1;
+    return {
+      target: { type: "series", imdbId, season, episode },
+      note: `${name}, S${season} E${episode}${r.episode == null ? " (type S2E5 for another episode)" : ""}`,
+    };
+  }
 
   function settings() {
     const c = d.config.get();
@@ -83,9 +132,26 @@ export function acquireRoutes(d: AcquireRouteDeps) {
     if (query.type === "tvsearch" && season > 0) query.season = season;
     const only = url.searchParams.get("sources")?.split(",").filter(Boolean);
     const want = (id: string) => !only || only.includes(id);
-    const jobs: Array<Promise<{ source: string; results: SearchResult[]; error?: string }>> = [];
+    const jobs: Array<Promise<{ source: string; results: SearchResult[]; error?: string; note?: string }>> = [];
+    const addons = indexers().filter((ix) => ix.kind === "stremio" && ix.enabled !== false && want(ix.id));
+    if (addons.length) {
+      // One lookup for every addon; they all take the same id.
+      const look = addonTarget(q, query.type);
+      for (const ix of addons) {
+        jobs.push(look.then(async (t) => {
+          if ("error" in t) return { source: ix.name, results: [], error: t.error };
+          try {
+            const r = await searchAddon(ix, t.target);
+            const left = r.skipped ? ` · ${r.skipped} play-only link${r.skipped === 1 ? "" : "s"} left out` : "";
+            return { source: ix.name, results: r.results, note: t.note + left };
+          } catch (e) {
+            return { source: ix.name, results: [], error: (e as Error).message };
+          }
+        }));
+      }
+    }
     for (const ix of indexers()) {
-      if (ix.enabled === false || !want(ix.id)) continue;
+      if (ix.kind === "stremio" || ix.enabled === false || !want(ix.id)) continue;
       jobs.push(searchIndexer(ix, query).then((results) => ({ source: ix.name, results: results.map((r) => hideKey(r, ix.apiKey)) }), (e: Error) => ({ source: ix.name, results: [], error: e.message })));
     }
     if (d.config.get().archiveSearch !== false && want("archive"))
@@ -103,7 +169,7 @@ export function acquireRoutes(d: AcquireRouteDeps) {
       results.push(r);
     }
     results.sort((a, b) => (b.seeders ?? -1) - (a.seeders ?? -1) || (b.size ?? 0) - (a.size ?? 0));
-    return { status: 200, body: { q, results: results.slice(0, 200), sources: done.map((x) => ({ source: x.source, count: x.results.length, error: x.error ?? null })) } };
+    return { status: 200, body: { q, results: results.slice(0, 200), sources: done.map((x) => ({ source: x.source, count: x.results.length, error: x.error ?? null, ...(x.note ? { note: x.note } : {}) })) } };
   }
 
   function inputFromResult(r: Partial<SearchResult>): AddInput | null {
@@ -174,20 +240,24 @@ export function acquireRoutes(d: AcquireRouteDeps) {
   }
 
   async function saveIndexer(body: Record<string, unknown>): Promise<Reply> {
-    const url = String(body.url ?? "").trim();
-    if (!/^https?:\/\/[^\s]+$/i.test(url)) return { status: 400, body: { error: "Enter the indexer's Torznab or Newznab address (it starts with http)." } };
-    const kind = body.kind === "newznab" ? "newznab" : "torznab";
+    const kind = body.kind === "newznab" ? "newznab" : body.kind === "stremio" ? "stremio" : "torznab";
+    let url = String(body.url ?? "").trim();
+    if (kind === "stremio") {
+      url = addonBase(url);
+      if (!/^https?:\/\/[^\s/]+(\/[^\s]*)?$/i.test(url)) return { status: 400, body: { error: "Enter the addon's address (its manifest.json link, starting with https or stremio)." } };
+    } else if (!/^https?:\/\/[^\s]+$/i.test(url)) return { status: 400, body: { error: "Enter the indexer's Torznab or Newznab address (it starts with http)." } };
     const old = indexers().find((i) => i.id === body.id);
-    const key = typeof body.apiKey === "string" ? body.apiKey.trim() : undefined;
+    const key = kind === "stremio" ? undefined : typeof body.apiKey === "string" ? body.apiKey.trim() : undefined;
     const ix: Indexer = {
       id: old?.id ?? randomUUID().slice(0, 8),
       name: String(body.name ?? "").trim().slice(0, 60) || new URL(url).hostname,
       url,
       kind,
       enabled: body.enabled === false ? false : true,
-      ...(key ? { apiKey: key } : key === "" ? {} : old?.apiKey ? { apiKey: old.apiKey } : {}),
+      ...(key ? { apiKey: key } : key === "" || kind === "stremio" ? {} : old?.apiKey ? { apiKey: old.apiKey } : {}),
     };
-    const test = await indexerCaps(ix);
+    const test = await testSource(ix);
+    if (kind === "stremio" && !String(body.name ?? "").trim() && test.ok && test.title) ix.name = test.title;
     d.config.update((c) => {
       c.indexers = [...(c.indexers ?? []).filter((i) => i.id !== ix.id), ix];
     }, { secret: true });
@@ -209,7 +279,7 @@ export function acquireRoutes(d: AcquireRouteDeps) {
       if (p === "/api/indexers" && m === "POST") return saveIndexer(body);
       if (p === "/api/indexers/test" && m === "POST") {
         const ix = indexers().find((i) => i.id === body.id);
-        return ix ? { status: 200, body: await indexerCaps(ix) } : { status: 404, body: { error: "No such search source." } };
+        return ix ? { status: 200, body: await testSource(ix) } : { status: 404, body: { error: "No such search source." } };
       }
       if (p === "/api/indexers/remove" && m === "POST") {
         d.config.update((c) => {
