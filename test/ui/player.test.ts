@@ -370,7 +370,7 @@ describe("player", () => {
     assert.match(await next.page.evaluate(() => document.getElementById("caption-style")!.textContent ?? ""), /#ffe14d/);
     const lines = await next.page.evaluate(() => [...(document.getElementById("video") as HTMLVideoElement).textTracks]
       .flatMap((x) => [...(x.cues ?? [])].map((c) => (c as VTTCue).line)));
-    assert.ok(lines.length && lines.every((l) => l === 0), `cues moved to the top: ${JSON.stringify(lines)}`);
+    assert.ok(lines.length && lines.every((l: unknown) => l === 0), `cues moved to the top: ${JSON.stringify(lines)}`);
     // Off turns captions off but keeps the Spanish sound.
     await next.page.locator('#captions [data-sub="off"]').click();
     await next.page.waitForFunction(() => !/&s=/.test(document.getElementById("video")!.getAttribute("src") ?? "x&s="));
