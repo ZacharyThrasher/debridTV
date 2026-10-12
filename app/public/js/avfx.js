@@ -283,8 +283,7 @@ function placeLoaded() {
   const t = player.timeline?.();
   if (!t || t.itemId !== loaded.itemId) return clearLoaded();
   if (!loadedTrack) {
-    loadedTrack = video.addTextTrack("subtitles", "Your file", "");
-    cueStyle();
+    loadedTrack = video.addTextTrack("subtitles", "Your file", ""); // styled by the captions sheet's ::cue rule
   }
   for (const c of [...(loadedTrack.cues ?? [])]) loadedTrack.removeCue(c);
   const zero = t.posMs - video.currentTime * 1000; // file ms at video time 0
@@ -301,13 +300,6 @@ function placeLoaded() {
 // A new stream (seek in compatibility mode, track change, next program) moves the zero.
 video.addEventListener("playing", () => loaded && placeLoaded());
 addEventListener("debridtv:ondemand", () => loaded && setTimeout(placeLoaded, 0));
-
-function cueStyle() {
-  if (document.getElementById("cue-style")) return;
-  const s = Object.assign(document.createElement("style"), { id: "cue-style" });
-  s.textContent = `#video::cue { background: rgba(0,0,0,.78); color: #fff; font-family: Inter, system-ui, sans-serif; font-size: clamp(18px, 3.6vh, 48px); }`;
-  document.head.append(s);
-}
 
 // ------------------------------------------------------------------ frames and screenshots
 
