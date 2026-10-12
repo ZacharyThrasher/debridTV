@@ -356,7 +356,10 @@ function captionsOn() {
 }
 function captionsLabel() {
   try {
-    if (captionsMod?.captionsState) return captionsMod.captionsState().label;
+    if (captionsMod?.captionsState) {
+      const c = captionsMod.captionsState();
+      return c.on ? c.label || "On" : "Off";
+    }
   } catch {}
   return captionsOn() ? "On" : "Off";
 }

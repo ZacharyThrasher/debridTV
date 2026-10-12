@@ -5,7 +5,7 @@
 // the style changes. Choices are prefs, so the next program and channel follow them.
 
 import { html, raw, setPref } from "./util.js";
-import { trackChoices, pickSubtitle, pickAudio, playing } from "./player.js";
+import { trackChoices, pickSubtitle, pickAudio } from "./player.js";
 import { trackLabel, isText, CAPTION_STYLE, capPref, captionCss } from "./tracks.js";
 import { keepFocus } from "./spatial.js";
 
@@ -46,54 +46,9 @@ export function closeCaptions() {
 const radio = (attrs, on, body) =>
   html`<button class="cc-opt" role="menuitemradio" aria-checked="${on ? "true" : "false"}" ${raw(attrs)}><i aria-hidden="true"></i><span>${body}</span></button>`;
 
-// ------------------------------------------------------------------ state for the bar
-// controls.js asks captionsState() to light its CC button and label the Subtitles row.
-// The program's subtitle tracks are learned once per program (tracksFor caches them).
-
-const video = document.getElementById("video");
-let known = { itemId: null, subs: [] };
-let lastSent = "";
-
-/** { on, label, available } for the program on screen. Loaded .srt/.vtt files count as on. */
-export function captionsState() {
-  const p = playing();
-  const sub = p?.sel?.sub ?? null;
-  const subs = p && known.itemId === p.itemId ? known.subs : [];
-  const t = sub == null ? null : subs.find((x) => x.index === sub);
-  const loaded = [...video.textTracks].some((x) => x.mode === "showing" && (x.cues?.length ?? 0) > 0);
-  return { on: sub != null || loaded, label: t ? trackLabel(t) : loaded ? "Subtitle file" : sub != null ? "On" : "Off", available: subs.length > 0 || loaded };
-}
-
-/** "debridtv:captions" ({ on, label, available }) whenever that changes. */
-function announce() {
-  const s = captionsState();
-  const k = JSON.stringify(s);
-  if (k === lastSent) return;
-  lastSent = k;
-  dispatchEvent(new CustomEvent("debridtv:captions", { detail: s }));
-}
-
-async function learn() {
-  const p = playing();
-  if (!p) return announce();
-  if (known.itemId !== p.itemId) {
-    const c = await trackChoices().catch(() => null);
-    if (playing()?.itemId !== p.itemId) return;
-    known = { itemId: p.itemId, subs: c?.subs ?? [] };
-  }
-  announce();
-}
-video.addEventListener("loadstart", () => setTimeout(learn, 0));
-video.textTracks.addEventListener?.("change", announce);
-video.textTracks.addEventListener?.("addtrack", () => setTimeout(announce, 0));
-
 async function draw() {
   const n = ++drawn;
   const c = await trackChoices().catch(() => ({ why: "Couldn't read this program's tracks." }));
-  if (!c.why) {
-    const p = playing();
-    if (p) known = { itemId: p.itemId, subs: c.subs };
-  }
   if (n !== drawn || sheet.hidden) return;
   keepFocus(sheet, () => (sheet.innerHTML = render(c).html));
 }
@@ -141,7 +96,6 @@ sheet.addEventListener("click", async (e) => {
     // Marked at once; the stream restarts with the new choice behind the menu.
     for (const x of sheet.querySelectorAll("[data-sub]")) x.setAttribute("aria-checked", String(x === b));
     await pickSubtitle(b.dataset.sub === "off" ? null : Number(b.dataset.sub));
-    announce();
     return draw();
   }
   if (b.dataset.audio) {
