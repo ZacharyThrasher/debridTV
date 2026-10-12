@@ -146,7 +146,7 @@ test("unfinished torrents are listed, then quietly replaced when they finish", a
   }
 });
 
-test("B7: the scan pauses once when told to slow down, and stops on the second time", async () => {
+test("B7: the scan waits when told to slow down, longer each time, and stops when it keeps happening", async () => {
   // Five files, but the mock allows only two link requests a minute.
   const fx = new Uint8Array(readFileSync(new URL("./fixtures/fixture-h264-aac.mkv", import.meta.url)));
   const files = Array.from({ length: 5 }, (_, i) => ({ ref: `tb:${300 + i}:1`, name: `Slow.Show.S01E0${i + 1}.mkv`, bytes: fx.byteLength, content: fx }));
@@ -162,7 +162,8 @@ test("B7: the scan pauses once when told to slow down, and stops on the second t
     await run;
     clearInterval(watch);
     assert.ok(paused, "paused after the first 429");
-    assert.match(lib.scan.stoppedReason ?? "", /slow down twice/);
+    assert.match(lib.scan.stoppedReason ?? "", /kept asking DebridTV to slow down/);
+    assert.equal(meters.api.calls["tb.requestdl"], 2 + 4, "three waits, then one last try: no hammering");
     // Rate limits are about the account, not the file: nothing was marked against it.
     assert.ok(lib.items().every((i) => !i.probe?.error), JSON.stringify(lib.items().map((i) => i.probe)));
     assert.equal(lib.items().filter((i) => i.durationMs).length, 2, "the two allowed requests did their job");
@@ -210,6 +211,107 @@ test("D1: a Real-Debrid pack opens up into its files during the scan; samples st
     // A refresh keeps the opened files present while the pack is still listed.
     await lib.refresh("realdebrid");
     assert.ok(mine().every((i) => i.present));
+  } finally {
+    await mock.close();
+  }
+});
+
+test("a provider failing link requests (503) pauses the scan and it resumes by itself; files are not blamed", async () => {
+  const fx = new Uint8Array(readFileSync(new URL("./fixtures/fixture-h264-aac.mkv", import.meta.url)));
+  const files = Array.from({ length: 4 }, (_, i) => ({ ref: `rd:d${i}`, name: `Down.Show.S01E0${i + 1}.mkv`, bytes: fx.byteLength, content: fx }));
+  let down = false;
+  const mock = await startMockProviders({ files, rdDown: () => down, rdDownRetryAfterSec: 0.2 });
+  try {
+    const meters = new Meters();
+    const reasons = new Set<string>();
+    const lib: InstanceType<typeof Library> = new Library(() => ({ rdToken: "r".repeat(20), scanPerMinute: 120 }), meters, () => {
+      if (lib.scan.pausedReason) reasons.add(lib.scan.pausedReason);
+    }, { realdebrid: `${mock.baseUrl}/rd` });
+    lib.rateLimitPauseMs = 40;
+    await lib.refresh("realdebrid");
+    const mine = () => lib.items().filter((i) => i.name.startsWith("Down."));
+
+    // An outage that ends: the scan waits (at least as long as Retry-After says), then carries on.
+    down = true;
+    const t0 = Date.now();
+    setTimeout(() => (down = false), 150);
+    await lib.runScan();
+    assert.ok(Date.now() - t0 >= 200, "waited at least the provider's Retry-After");
+    assert.deepEqual([...reasons], ["Real-Debrid is having trouble"]);
+    assert.equal(lib.scan.stoppedReason, undefined);
+    assert.equal(mine().filter((i) => i.durationMs).length, 4, "every file timed once the provider was back");
+    assert.ok(mine().every((i) => !i.probe?.error));
+
+    // An outage that doesn't end: a few spaced tries, then the scan stops and blames no file.
+    lib.forgetAccount("realdebrid");
+    await lib.refresh("realdebrid");
+    for (const i of mine()) i.durationMs = null, (i.probe = undefined);
+    down = true;
+    const before = meters.api.calls["rd.unrestrict"] ?? 0;
+    await lib.runScan();
+    assert.match(lib.scan.stoppedReason ?? "", /kept failing link requests \(HTTP 503\)/);
+    assert.equal((meters.api.calls["rd.unrestrict"] ?? 0) - before, 4, "four spaced tries in all");
+    assert.ok(mine().every((i) => !i.probe?.error), "an outage is not recorded against any file");
+  } finally {
+    await mock.close();
+  }
+});
+
+test("a 503 with the provider's own error code is about that file: noted, not retried; a long run of them pauses the scan", async () => {
+  const fx = new Uint8Array(readFileSync(new URL("./fixtures/fixture-h264-aac.mkv", import.meta.url)));
+  const files = Array.from({ length: 8 }, (_, i) => ({ ref: `rd:c${i}`, name: `Coded.Show.S01E0${i + 1}.mkv`, bytes: fx.byteLength, content: fx }));
+  let down = true;
+  let asked = 0;
+  const mock = await startMockProviders({ files, rdDownCode: 19, rdDown: () => (++asked, asked === 2 ? (down = false) : 0, down) });
+  try {
+    const meters = new Meters();
+    let paused = 0;
+    const lib: InstanceType<typeof Library> = new Library(() => ({ rdToken: "r".repeat(20), scanPerMinute: 120 }), meters, () => {
+      if (lib.scan.pausedUntil) paused++;
+    }, { realdebrid: `${mock.baseUrl}/rd` });
+    lib.rateLimitPauseMs = 30;
+    await lib.refresh("realdebrid");
+    const mine = () => lib.items().filter((i) => i.name.startsWith("Coded."));
+    const before = meters.api.calls["rd.unrestrict"] ?? 0;
+    await lib.runScan();
+    assert.equal(paused, 0, "one refused file does not pause the scan");
+    assert.equal((meters.api.calls["rd.unrestrict"] ?? 0) - before, 8, "the refused file was asked for once");
+    assert.equal(mine().filter((i) => i.probe?.error).length, 1);
+    assert.equal(mine().filter((i) => i.durationMs).length, 7);
+
+    // Every file refused the same way: that is the provider. The scan waits, and no file stays blamed.
+    for (const i of mine()) i.durationMs = null, (i.probe = undefined);
+    lib.forgetAccount("realdebrid"); // drops the links already held, so every file needs a new one
+    await lib.refresh("realdebrid");
+    asked = 100;
+    down = true;
+    await lib.runScan();
+    assert.ok(paused > 0, "paused after a run of refusals");
+    assert.ok(mine().filter((i) => i.probe?.error).length < 5, "the run of refusals was not left recorded against the files");
+  } finally {
+    await mock.close();
+  }
+});
+
+test("playback comes first: when playback is pushed back, the scan leaves that provider alone for a while", async () => {
+  const fx = new Uint8Array(readFileSync(new URL("./fixtures/fixture-h264-aac.mkv", import.meta.url)));
+  const files = Array.from({ length: 2 }, (_, i) => ({ ref: `rd:h${i}`, name: `Hold.Show.S01E0${i + 1}.mkv`, bytes: fx.byteLength, content: fx }));
+  const mock = await startMockProviders({ files });
+  try {
+    const meters = new Meters();
+    let callsWhileHeld = -1;
+    const lib: InstanceType<typeof Library> = new Library(() => ({ rdToken: "r".repeat(20), scanPerMinute: 120 }), meters, () => {
+      if (lib.scan.pausedReason?.startsWith("playback comes first")) callsWhileHeld = meters.api.calls["rd.unrestrict"] ?? 0;
+    }, { realdebrid: `${mock.baseUrl}/rd` });
+    lib.rateLimitPauseMs = 150;
+    await lib.refresh("realdebrid");
+    const before = meters.api.calls["rd.unrestrict"] ?? 0;
+    lib.playbackPushedBack("realdebrid", "provider-down");
+    const t0 = Date.now();
+    await lib.runScan();
+    assert.equal(callsWhileHeld, before, "no link request while playback had priority");
+    assert.ok(Date.now() - t0 >= 150);
+    assert.equal(lib.items().filter((i) => i.name.startsWith("Hold.") && i.durationMs).length, 2, "the scan carried on afterwards");
   } finally {
     await mock.close();
   }
