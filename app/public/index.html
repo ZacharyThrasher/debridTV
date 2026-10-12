@@ -8,6 +8,7 @@
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="fonts/fonts.css" />
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="player.css" />
 </head>
 <body>
   <main id="stage" aria-label="Television">
@@ -68,15 +69,6 @@
 
   <div id="welcome" class="welcome" hidden></div>
   <div id="toast" class="toast" role="status" hidden></div>
-  <nav id="dock" class="dock" aria-label="Controls">
-    <button data-act="down" aria-label="Channel down">▼</button>
-    <button data-act="up" aria-label="Channel up">▲</button>
-    <button data-act="guide">Guide</button>
-    <button data-act="ondemand">On Demand</button>
-    <button data-act="settings">Settings</button>
-    <button data-act="mute" aria-label="Mute">🔊</button>
-    <button data-act="full" aria-label="Fullscreen">⛶</button>
-  </nav>
 
   <script type="module" src="js/main.js"></script>
 </body>

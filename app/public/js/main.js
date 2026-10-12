@@ -2,6 +2,7 @@
 // guide and settings, and keeps the clock ticking.
 
 import "./spatial.js"; // first, so the remote's keys reach it before any other handler
+import "./controls.js"; // second: the control bar's keys (it replaces the old dock)
 import { api, whereAmI } from "./api.js";
 import { html, raw, pref, setPref, applyPrefs, syncClock, toast } from "./util.js";
 import { tv, tune, channelStep, lastChannel, byNumber, togglePause, applyVolume } from "./player.js";
@@ -191,7 +192,6 @@ function toggleMute() {
   setPref("muted", !pref("muted"));
   applyVolume();
   osd(pref("muted") ? "MUTE" : `VOL ${Math.round(pref("volume") * 100)}`, "", 1500);
-  document.querySelector('[data-act="mute"]').textContent = pref("muted") ? "🔇" : "🔊";
 }
 
 // Picture shape (parity N-12): Z cycles; player.js applies it to the video.
@@ -219,10 +219,6 @@ addEventListener("pointermove", () => {
 addEventListener("pointerdown", () => {
   unlockAudio();
   applyVolume();
-});
-document.getElementById("dock").addEventListener("click", (e) => {
-  const act = e.target.closest("[data-act]")?.dataset.act;
-  ({ up: () => channelStep(1), down: () => channelStep(-1), guide: openGuide, ondemand: () => openOnDemand(), settings: () => openPanel(), mute: toggleMute, full: toggleFull })[act]?.();
 });
 document.getElementById("stage").addEventListener("click", (e) => {
   if (e.target.closest("#card, #video, #synth, #crt, #static")) toggleBanner();
