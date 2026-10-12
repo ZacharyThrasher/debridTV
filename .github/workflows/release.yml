@@ -2,6 +2,7 @@
 # automatic ffmpeg download), and only then makes the GitHub release.
 #   Run it from Actions → Release → Run workflow (tick "publish" to publish right
 #   away; otherwise it's a draft), or push a tag like v0.1.0 for a draft.
+#   Pull requests run the build and Windows check only.
 name: Release
 
 on:
@@ -13,6 +14,9 @@ on:
         default: false
   push:
     tags: ["v*"]
+  # Pull requests that touch the app or packaging get the Windows check, no release.
+  pull_request:
+    paths: ["app/**", "src/**", "scripts/**", "packaging/**", "package*.json", ".github/workflows/release.yml"]
 
 permissions:
   contents: write
@@ -89,6 +93,7 @@ jobs:
           Write-Host "Windows check passed: starts, serves the guide, reopens, and sets up ffmpeg."
 
   release:
+    if: github.event_name != 'pull_request'
     needs: [build, windows-test]
     runs-on: ubuntu-latest
     steps:
