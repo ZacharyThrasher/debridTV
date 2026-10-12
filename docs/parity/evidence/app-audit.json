@@ -1,6 +1,6 @@
 {
-  "ranAt": "2026-10-12T02:00:32.385Z",
-  "commit": "48842f4",
+  "ranAt": "2026-10-12T12:47:04.961Z",
+  "commit": "cc26e80",
   "node": "v22.22.0",
   "pass": 29,
   "total": 29,
@@ -84,7 +84,7 @@
       ],
       "name": "info banner shows title, times and what's next",
       "pass": true,
-      "detail": " 4Marathon Pocket Planet S1 · E8“A Signal”NatureG50 minLIVEDemo picture 1:58 AM 1:48 – 2:37 AM Next at 2:37 AMStar Courier "
+      "detail": " 4Marathon Harbor Lights S2 · E5“Late Visitor”SitcomPG23 minLIVEDemo picture 12:44 PM 12:25 – 12:48 PM Next at 12:48 PMPocket Planet "
     },
     {
       "id": "A05",
@@ -177,8 +177,8 @@
       "name": "the airing 3 h from now is identical across a restart",
       "pass": true,
       "detail": {
-        "item": "Harbor Lights",
-        "offset": 785058
+        "item": "Mall Rats Anonymous",
+        "offset": 1278185
       }
     },
     {
@@ -269,10 +269,10 @@
       "name": "tuning in joins the program at station time (direct play)",
       "pass": true,
       "detail": {
-        "videoMs": 46649,
-        "stationMs": 46759,
-        "item": "Audit Show S1 · E6",
-        "driftMs": -110
+        "videoMs": 169178,
+        "stationMs": 169318,
+        "item": "Audit Show S1 · E8",
+        "driftMs": -140
       }
     },
     {
@@ -284,19 +284,19 @@
       "pass": true,
       "detail": {
         "pausedShown": true,
-        "pausedAtMs": 46907,
+        "pausedAtMs": 169360,
         "resumed": {
-          "videoMs": 49414,
-          "stationMs": 54537,
-          "item": "Audit Show S1 · E6",
-          "driftMs": -5123
+          "videoMs": 171867,
+          "stationMs": 177018,
+          "item": "Audit Show S1 · E8",
+          "driftMs": -5151
         },
         "pill": true,
         "live": {
-          "videoMs": 56956,
-          "stationMs": 57046,
-          "item": "Audit Show S1 · E6",
-          "driftMs": -90
+          "videoMs": 179422,
+          "stationMs": 179530,
+          "item": "Audit Show S1 · E8",
+          "driftMs": -108
         }
       }
     },
@@ -309,13 +309,13 @@
       "pass": true,
       "detail": [
         {
-          "title": "Audit Show · S01E06",
-          "seenMs": 8572,
+          "title": "Audit Show · S01E08",
+          "seenMs": 8457,
           "watched": false
         },
         {
-          "title": "Pocket Planet · S01E08",
-          "seenMs": 39845,
+          "title": "Harbor Lights · S02E05",
+          "seenMs": 39861,
           "watched": false
         }
       ]
@@ -355,7 +355,7 @@
       "name": "fast surfing (6 presses, 120 ms apart) requests media only for the channel it lands on",
       "pass": true,
       "detail": {
-        "mediaRequests": 1,
+        "mediaRequests": 3,
         "distinctFiles": 1,
         "landed": "10 Audit Show"
       }

@@ -9,7 +9,32 @@ account connected it runs demo channels (made-up shows painted in the browser, z
 traffic). Connect TorBox, Real-Debrid or a folder of videos to put your own library
 on the air.
 
-## Watch it (Windows, macOS or Linux)
+## Install on Windows (DebridTV.exe)
+
+1. Download `DebridTV-v0.1.0-win-x64.zip` from
+   [Releases](https://github.com/ZacharyThrasher/debridTV/releases) and unzip it anywhere
+   (for example `C:\Apps\DebridTV`). Nothing else to install: Node is inside the exe.
+2. Double-click **DebridTV.exe**. A small console window opens and your browser opens
+   the guide at **http://127.0.0.1:7337**. Keep the window open while you watch; closing
+   it turns DebridTV off. Starting it again while it runs just reopens the browser.
+3. The exe isn't code-signed yet, so the first start may show "Windows protected your
+   PC". Click **More info → Run anyway**.
+
+Your settings, keys, channels and history live in `%APPDATA%\DebridTV`, never next to
+the exe. Running from a git checkout (`npm start`) uses the same folder, so switching to
+the exe, or replacing it with a newer one, keeps everything. Page files are unpacked once
+per version to `%LOCALAPPDATA%\DebridTV\app`.
+
+ffmpeg isn't bundled (it is large and GPL-licensed). Compatibility mode turns on when
+ffmpeg is on your PATH (`winget install Gyan.FFmpeg`) or when `ffmpeg.exe` and
+`ffprobe.exe` sit in the same folder as `DebridTV.exe`. Settings → Sources says which.
+
+Options: `DebridTV.exe --no-browser`, and `set PORT=7340` before starting to change the port.
+
+Build it yourself with `npm ci && npm run build:exe` (needs `zip` and `unzip`; builds on
+Linux, macOS or Windows with Git Bash). Output lands in `dist/`.
+
+## Run from source (Windows, macOS or Linux)
 
 You need [Node.js](https://nodejs.org) 22.18 or newer. [ffmpeg](https://ffmpeg.org) is
 optional but recommended: it turns on *compatibility mode* for files the browser can't

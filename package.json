@@ -1,6 +1,6 @@
 {
   "name": "debridtv",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "description": "Personal pseudo-live television over user-authorized libraries (Real-Debrid, TorBox, local).",
   "type": "module",
@@ -14,10 +14,13 @@
     "exp:002": "node experiments/exp002-surf.ts",
     "exp:003": "node experiments/exp003-chunk-amplification.ts",
     "start": "node app/server.ts",
-    "dev:mock": "node app/dev-mock.ts"
+    "dev:mock": "node app/dev-mock.ts",
+    "build:exe": "node scripts/build-exe.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",
+    "esbuild": "^0.25.10",
+    "postject": "^1.0.0-alpha.6",
     "typescript": "^5.9.0"
   }
 }

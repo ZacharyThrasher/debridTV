@@ -22,7 +22,8 @@ import { fileURLToPath } from "node:url";
 import { JsonFile } from "../store.ts";
 import type { Gates } from "../../src/gates.ts";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+// The Windows app unpacks these pages elsewhere and points here with $DEBRIDTV_LAN_PAGES.
+const HERE = process.env.DEBRIDTV_LAN_PAGES ?? dirname(fileURLToPath(import.meta.url));
 
 export const PAIR_CODE_MS = 5 * 60_000;
 /** Wrong codes allowed before the code is thrown away and the PC must show a new one. */
