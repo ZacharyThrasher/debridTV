@@ -784,6 +784,12 @@ textarea.input { font-family: var(--font-mono); font-size: .9em; line-height: 1.
 .keys div { border-bottom: 1px solid var(--rule); padding: .6em 0; font-size: .9em; color: var(--ink-2); display: flex; align-items: center; gap: .7em; line-height: 1.2; }
 .keys .kk { display: inline-flex; gap: .2em; flex: none; min-width: 3.2em; }
 .welcome .btn { font-size: 1.08em; padding: .75em 1.5em; }
+/* First run with nothing on the air yet: three ruled steps, the current one in full ink. */
+.setup-steps { list-style: none; counter-reset: step; margin: 2em 0 2.2em; padding: 0; border-top: 1px solid var(--rule); max-width: 34em; }
+.setup-steps li { counter-increment: step; border-bottom: 1px solid var(--rule); padding: .7em 0; color: var(--ink-3); display: flex; gap: 1em; }
+.setup-steps li::before { content: counter(step); font-variant-numeric: tabular-nums; min-width: 1.2em; }
+.setup-steps li.now { color: var(--ink); font-weight: 600; }
+.setup-steps li.done { color: var(--ink-2); text-decoration: line-through; text-decoration-color: var(--rule); }
 
 .toast {
   position: fixed; left: 50%; top: calc(var(--u)*2); transform: translateX(-50%); z-index: 40; max-width: min(90vw, 40em);

@@ -185,6 +185,8 @@ function fail(message: string): void {
 
 async function start(): Promise<void> {
   process.env.DEBRIDTV_EXE_DIR = dirname(process.execPath);
+  // A release has no made-up channels: until your library is on, a setup page shows instead.
+  process.env.DEBRIDTV_DEMO ??= "0";
   if (sea.isSea()) {
     const dir = unpack();
     // Which build this is, so a second start can tell this copy from an older one.

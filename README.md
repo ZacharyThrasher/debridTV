@@ -11,7 +11,7 @@ on the air.
 
 ## Install on Windows (DebridTV.exe)
 
-1. Download `DebridTV-v0.1.1-win-x64.zip` from
+1. Download `DebridTV-v0.1.2-win-x64.zip` from
    [Releases](https://github.com/ZacharyThrasher/debridTV/releases) and unzip it anywhere
    (for example `C:\Apps\DebridTV`). Nothing else to install: Node is inside the exe.
 2. Double-click **DebridTV.exe**. A small console window opens and your browser opens
@@ -20,6 +20,8 @@ on the air.
    (such as `npm start` from a checkout) holds the port, the exe closes it and takes over.
 3. The exe isn't code-signed yet, so the first start may show "Windows protected your
    PC". Click **More info → Run anyway**.
+4. The exe has no demo channels: until your library is on the air it shows the setup
+   steps (connect a source, scan, watch). `npm start` from source still shows the demo.
 
 Your settings, keys, channels and history live in `%APPDATA%\DebridTV`, never next to
 the exe. Running from a git checkout (`npm start`) uses the same folder, so switching to
