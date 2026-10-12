@@ -50,7 +50,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = process.env.DEBRIDTV_PUBLIC ? resolve(process.env.DEBRIDTV_PUBLIC) : join(HERE, "public");
 const HOST = "127.0.0.1";
 const MIN = 60_000;
-const VERSION = "0.1.2";
+const VERSION = "0.1.3";
 
 export interface AppOptions {
   /** 0 picks a free port (tests). Default 7337 or $PORT. */
