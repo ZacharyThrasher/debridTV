@@ -220,9 +220,17 @@ function scheduleBoundary(ch, at) {
 
 // ------------------------------------------------------------------ media
 
-const AUDIO_OK = new Set(["aac", "mp3", "opus", "vorbis", "flac"]);
-
 const probeEl = document.createElement("video");
+// Sound this browser decodes itself. Dolby is asked, not assumed: Edge on Windows with the
+// Dolby extension says yes, Chrome and Firefox say no. DTS and TrueHD never play in a browser.
+const AUDIO_OK = new Set(["aac", "mp3", "opus", "vorbis", "flac"]);
+if (probeEl.canPlayType('audio/mp4; codecs="ac-3"')) AUDIO_OK.add("ac3");
+if (probeEl.canPlayType('audio/mp4; codecs="ec-3"')) AUDIO_OK.add("eac3");
+// Firefox says "maybe" to MKV since it learned the container, but measured on 157 it plays
+// FLAC-in-MKV with no sound and no error, and on a fast provider it downloads the whole file
+// before the first frame (16 s and 1.5 GB per tune), then stutters re-opening the stream.
+// Its MKV goes through compatibility mode, which copies the picture and starts in about a second.
+const MKV_NATIVE = /Chrome\//.test(navigator.userAgent);
 const CODEC_TYPES = {
   h264: 'video/mp4; codecs="avc1.42E01E"',
   hevc: 'video/mp4; codecs="hvc1.1.6.L93.B0"',
@@ -244,7 +252,7 @@ function chooseRoute(a) {
   // A music track (N-23a) has no picture; any container the browser can open will do.
   if (a.kind === "track") return !audio || AUDIO_OK.has(audio) || !tv.ffmpeg ? "direct" : "live";
   const containerOk = c.container === "mp4" || c.container === "matroska" || !c.container || c.container === "unknown";
-  const mkvNative = c.container !== "matroska" || !!video.canPlayType("video/x-matroska") || /Chrome\//.test(navigator.userAgent);
+  const mkvNative = c.container !== "matroska" || MKV_NATIVE;
   const ok = containerOk && mkvNative && canVideo(c.video) && (!audio || AUDIO_OK.has(audio));
   if (ok || !tv.ffmpeg) return "direct";
   // Compatibility mode copies the picture when we can decode it, else converts it to H.264.
@@ -409,8 +417,10 @@ function startLive(offsetMs, a, onPlaying, onError) {
 
 /**
  * A copied picture starts on the keyframe before the live position (up to a few
- * seconds early). Ask where that was, jump ahead if it's already buffered, else
- * catch up by playing 10% faster (pitch preserved) until we're back on station time.
+ * seconds early). Ask where that was and jump ahead to station time as soon as that
+ * much has arrived; the stream comes in faster than it plays, so that is a moment.
+ * Until then it plays from the keyframe at normal speed. (It used to catch up at 1.1x
+ * with the pitch held, which made the sound warble for up to a minute after a tune.)
  */
 async function alignLive(m, tok, requestedMs) {
   let startMs = null;
@@ -427,18 +437,15 @@ async function alignLive(m, tok, requestedMs) {
   if (startMs == null || requestedMs - startMs < 250) return;
   m.liveStart = startMs;
   const behind = () => m.info.fileOffsetMs + (now() - m.info.now) - (startMs + video.currentTime * 1000);
-  const b = video.buffered;
-  const target = video.currentTime + behind() / 1000;
-  if (b.length && b.end(b.length - 1) >= target + 0.3) {
-    video.currentTime = target;
-    return;
-  }
-  video.preservesPitch = true;
-  while (media === m && behind() > 150) {
-    if (!tv.paused) video.playbackRate = 1.1;
+  for (let i = 0; i < 40 && media === m && behind() > 150; i++) {
+    const b = video.buffered;
+    const target = video.currentTime + behind() / 1000;
+    if (!tv.paused && b.length && b.end(b.length - 1) >= target + 0.3) {
+      video.currentTime = target;
+      return;
+    }
     await sleep(250);
   }
-  video.playbackRate = 1;
 }
 
 /**
@@ -968,6 +975,17 @@ function replay(m, sel) {
   staticOn();
   // On Demand picks up where the viewer is, not where it started.
   playMedia(m.ch, m.info.onDemand ? odInfo(odItem, filePos() ?? m.info.fileOffsetMs) : m.info, m.my, sel);
+}
+
+/**
+ * ffmpeg appeared after the page loaded (the Windows app fetches it on first start).
+ * A program that was sent direct only because there was no compatibility mode starts
+ * again through it, so a silent Dolby or DTS picture gets its sound without a reload.
+ */
+export function ffmpegArrived() {
+  tv.ffmpeg = true;
+  const m = media;
+  if (m && m.my === token && m.route === "direct" && chooseRoute(m.info.airing) !== "direct") replay(m, m.sel);
 }
 
 /** A key: next audio track. Remembers the language for the next programs too. */
