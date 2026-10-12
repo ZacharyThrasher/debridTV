@@ -761,21 +761,77 @@ export async function cycleAudio() {
   replay(m, sel);
 }
 
-/** C key: captions off → each subtitle track → off. */
-export async function cycleCaptions() {
+/**
+ * What the subtitles menu (captions.js) offers for the program on screen:
+ * { why } when there is nothing to choose from, else the program's tracks and the
+ * ones playing now (subNow null = subtitles off).
+ */
+export async function trackChoices() {
   const m = media;
-  if (!m) return osd("CC", tv.route === "demo" ? "Demo channels have no captions" : "Nothing playing", 1500);
+  if (!m) return { why: tv.route === "demo" ? "Demo channels have no subtitles." : "Nothing is playing right now." };
+  const tracks = await tracksFor(m.itemId);
+  if (media !== m) return trackChoices();
+  return {
+    why: null,
+    ffmpeg: !!tv.ffmpeg,
+    audio: audioTracks(tracks),
+    subs: subTracks(tracks),
+    audioNow: m.sel?.audio ?? defaultAudio(tracks),
+    subNow: m.sel?.sub ?? null,
+  };
+}
+
+const langOf = (t) => (t.lang && t.lang !== "und" ? t.lang : "any");
+
+/**
+ * Subtitles on (a track's index) or off (null) for this program. The language is
+ * remembered, so the next program and the next channel start the same way.
+ */
+export async function pickSubtitle(index) {
+  const m = media;
+  if (!m) return;
+  const tracks = await tracksFor(m.itemId);
+  if (media !== m) return;
+  const t = index == null ? null : subTracks(tracks).find((x) => x.index === index);
+  if (t) setPref("subLast", langOf(t));
+  setPref("subLang", t ? langOf(t) : "off");
+  if (!tv.ffmpeg || (m.sel?.sub ?? null) === (t?.index ?? null)) return;
+  osd(t ? "CC ON" : "CC OFF", t ? `${trackLabel(t)}${isText(t) ? "" : " · drawn into the picture"}` : "", 2500);
+  replay(m, { ...(m.sel ?? { audio: null }), sub: t?.index ?? null, burn: t ? !isText(t) : false });
+}
+
+/** Another audio track for this program; its language carries over too. */
+export async function pickAudio(index) {
+  const m = media;
+  if (!m) return;
+  const tracks = await tracksFor(m.itemId);
+  if (media !== m) return;
+  const t = audioTracks(tracks).find((x) => x.index === index);
+  if (!t) return;
+  setPref("audioLang", t.lang && t.lang !== "und" ? t.lang : null);
+  const cur = m.sel?.audio ?? defaultAudio(tracks);
+  if (!tv.ffmpeg || cur === t.index) return;
+  osd("AUDIO", trackLabel(t), 2500);
+  replay(m, { ...(m.sel ?? { sub: null, burn: false }), audio: t.index === defaultAudio(tracks) ? null : t.index });
+}
+
+/**
+ * The remote's Subtitle button: off ⇄ on, in the language used last (else the
+ * program's first full track).
+ */
+export async function toggleCaptions() {
+  const m = media;
+  if (!m) return osd("CC", tv.route === "demo" ? "Demo channels have no subtitles" : "Nothing playing", 1500);
   const tracks = await tracksFor(m.itemId);
   if (media !== m) return;
   const list = subTracks(tracks);
-  if (!list.length) return osd("CC", "No captions for this program", 2000);
-  if (!tv.ffmpeg) return osd("CC", "Captions need compatibility mode (install ffmpeg)", 3000);
-  const at = list.findIndex((t) => t.index === m.sel?.sub);
-  const next = list[at + 1] ?? null; // past the last one: off
-  setPref("subLang", next ? next.lang && next.lang !== "und" ? next.lang : "any" : "off");
-  osd(next ? "CC ON" : "CC OFF", next ? `${trackLabel(next)}${isText(next) ? "" : " · drawn into the picture"}` : "", 2500);
-  const sel = { ...(m.sel ?? { audio: null }), sub: next?.index ?? null, burn: next ? !isText(next) : false };
-  replay(m, sel);
+  if (m.sel?.sub != null) return pickSubtitle(null);
+  if (!list.length) return osd("CC", "No subtitles for this program", 2000);
+  if (!tv.ffmpeg) return osd("CC", "Subtitles need compatibility mode (install ffmpeg)", 3000);
+  const last = pref("subLast");
+  const same = list.filter((t) => !last || last === "any" || t.lang === last);
+  const pick = same.find((t) => !t.forced && isText(t)) ?? same.find((t) => !t.forced) ?? list.find((t) => !t.forced) ?? list[0];
+  return pickSubtitle(pick.index);
 }
 
 // ------------------------------------------------------------------ picture shape

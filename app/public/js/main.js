@@ -15,6 +15,7 @@ import { editorOpen, exclusionsOpen } from "./channel-editor.js";
 import { themeEditorOpen } from "./theme.js";
 import { openOnDemand, onDemandOpen, watchFilm } from "./ondemand.js";
 import { groupsOpen } from "./groups.js";
+import { openCaptions, captionsOpen } from "./captions.js";
 import "./bezel.js";
 
 applyPrefs();
@@ -89,7 +90,7 @@ addEventListener("keydown", (e) => {
     if (e.key === "Escape") e.target.blur();
     return;
   }
-  if (e.ctrlKey || e.metaKey || e.altKey || editorOpen() || exclusionsOpen() || themeEditorOpen() || onDemandOpen() || groupsOpen()) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || editorOpen() || exclusionsOpen() || themeEditorOpen() || onDemandOpen() || groupsOpen() || captionsOpen()) return;
   const k = e.key;
   if (!document.getElementById("welcome").hidden) {
     if (k === "Enter" || k === "Escape" || k === " ") closeWelcome();
@@ -133,7 +134,8 @@ addEventListener("keydown", (e) => {
     case "f": case "F": toggleFull(); break;
     case "z": case "Z": cycleAspect(); break;
     case "a": case "A": player.cycleAudio?.(); break; // audio track (workstream A shows the OSD)
-    case "c": case "C": player.cycleCaptions?.(); break; // captions
+    case "c": case "C": openCaptions(); break; // the subtitles menu (captions.js)
+    case "Subtitle": case "ClosedCaptionToggle": player.toggleCaptions(); break; // a remote's CC button: on ⇄ off
     case "?": showWelcome(); break;
     default:
       if (/^[0-9]$/.test(k)) enterDigit(k);
@@ -222,7 +224,7 @@ addEventListener("pointerdown", () => {
 });
 document.getElementById("dock").addEventListener("click", (e) => {
   const act = e.target.closest("[data-act]")?.dataset.act;
-  ({ up: () => channelStep(1), down: () => channelStep(-1), guide: openGuide, ondemand: () => openOnDemand(), settings: () => openPanel(), mute: toggleMute, full: toggleFull })[act]?.();
+  ({ up: () => channelStep(1), down: () => channelStep(-1), guide: openGuide, ondemand: () => openOnDemand(), captions: openCaptions, settings: () => openPanel(), mute: toggleMute, full: toggleFull })[act]?.();
 });
 document.getElementById("stage").addEventListener("click", (e) => {
   if (e.target.closest("#card, #video, #synth, #crt, #static")) toggleBanner();
@@ -252,7 +254,7 @@ function showWelcome() {
       <div><span class="kk"><kbd>0-9</kbd></span><span>go to a number</span></div>
       <div><span class="kk"><kbd>◀</kbd><kbd>▶</kbd></span><span>what's on</span></div>
       <div><span class="kk"><kbd>Back</kbd></span><span>last channel</span></div>
-      <div><span class="kk"><kbd>▲</kbd></span><span>in the guide: On Demand, settings</span></div>
+      <div><span class="kk"><kbd>▲</kbd></span><span>in the guide: On Demand, subtitles, settings</span></div>
     </div>
     <div class="keys kb-only">
       <div><span class="kk"><kbd>↑</kbd><kbd>↓</kbd></span><span>change channel</span></div>
@@ -266,7 +268,7 @@ function showWelcome() {
       <div><span class="kk"><kbd>F</kbd></span><span>full screen</span></div>
       ${typeof player.applyAspect === "function" ? raw('<div><span class="kk"><kbd>Z</kbd></span><span>picture shape</span></div>') : ""}
       ${typeof player.cycleAudio === "function" ? raw('<div><span class="kk"><kbd>A</kbd></span><span>audio track</span></div>') : ""}
-      ${typeof player.cycleCaptions === "function" ? raw('<div><span class="kk"><kbd>C</kbd></span><span>captions</span></div>') : ""}
+      <div><span class="kk"><kbd>C</kbd></span><span>subtitles</span></div>
       <div><span class="kk"><kbd>S</kbd></span><span>settings</span></div>
     </div>
     <button class="btn primary" data-start>Start watching</button>

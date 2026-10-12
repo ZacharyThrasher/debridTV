@@ -89,6 +89,7 @@ describe("On Demand (N-30)", { skip }, () => {
     await page.keyboard.press("g");
     await page.waitForSelector(".cell.focus");
     await page.keyboard.press("ArrowUp"); // toolbar: Settings
+    await page.keyboard.press("ArrowLeft"); // Subtitles
     await page.keyboard.press("ArrowLeft"); // On Demand
     await page.keyboard.press("Enter");
     await page.waitForSelector("#ondemand:not([hidden]) .od-card");

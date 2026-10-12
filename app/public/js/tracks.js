@@ -6,7 +6,7 @@
 // remembered by language, so the next program speaks the same language.
 
 import { api } from "./api.js";
-import { pref } from "./util.js";
+import { pref, onPrefsApplied } from "./util.js";
 
 const TEXT_SUBS = new Set(["srt", "subrip", "ass", "ssa", "webvtt", "mov_text", "ttml", "text"]);
 const cache = new Map();
@@ -116,7 +116,6 @@ export class Captions {
     this.stop();
     if (!this.track) {
       this.track = this.video.addTextTrack("captions", label, lang || "");
-      styleCues();
     }
     this.track.mode = "showing";
     this.tok = tok;
@@ -137,7 +136,7 @@ export class Captions {
         if (this.tok !== tok) return;
         for (const c of cues) {
           // Times share the stream's zero; lines from before the keyframe it started on are negative.
-          if (c.endMs > 0) this.track.addCue(new VTTCue(Math.max(0, c.startMs) / 1000, c.endMs / 1000, c.text));
+          if (c.endMs > 0) this.track.addCue(placeCue(new VTTCue(Math.max(0, c.startMs) / 1000, c.endMs / 1000, c.text)));
           this.since = Math.max(this.since, c.n); // the server sends cues with n > since
         }
         if (done) return;
@@ -156,14 +155,64 @@ export class Captions {
   }
 }
 
-let styled = false;
-function styleCues() {
-  if (styled) return;
-  styled = true;
-  const s = document.createElement("style");
-  // Line-21 closed captions: white mono text on solid black boxes.
-  s.textContent = `#video::cue { background: rgba(0,0,0,.9); color: #fff; font-family: VT323, ui-monospace, Consolas, monospace;
-    font-size: clamp(20px, 4.4vh, 56px); line-height: 1.15; text-shadow: none; }
-  #video::-webkit-media-text-track-display { padding: 0 .3em; }`;
-  document.head.append(s);
+// ------------------------------------------------------------------ caption style
+
+/**
+ * How captions look, chosen in the subtitles menu (captions.js) and kept as prefs:
+ *   capSize  s | m | l | xl            capBg    box | shade | none
+ *   capPos   bottom | raised | top     capFont  classic | clean
+ *   capColor white | yellow
+ * Defaults are the Line-21 look: white mono text on solid black boxes, at the bottom.
+ * Burned-in (picture) subtitles are part of the video, so none of this reaches them.
+ */
+export const CAPTION_STYLE = {
+  capSize: { label: "Size", def: "m", opts: { s: "Small", m: "Medium", l: "Large", xl: "Huge" } },
+  capBg: { label: "Background", def: "box", opts: { box: "Solid", shade: "See-through", none: "None" } },
+  capPos: { label: "Position", def: "bottom", opts: { bottom: "Bottom", raised: "Higher", top: "Top" } },
+  capFont: { label: "Lettering", def: "classic", opts: { classic: "Classic TV", clean: "Clean" } },
+  capColor: { label: "Color", def: "white", opts: { white: "White", yellow: "Yellow" } },
+};
+export const capPref = (k) => (pref(k) in CAPTION_STYLE[k].opts ? pref(k) : CAPTION_STYLE[k].def);
+
+const SIZES = { s: "clamp(15px, 3.3vh, 42px)", m: "clamp(20px, 4.4vh, 56px)", l: "clamp(24px, 5.8vh, 74px)", xl: "clamp(30px, 7.4vh, 96px)" };
+const FONTS = { classic: "VT323, ui-monospace, Consolas, monospace", clean: "Inter, system-ui, sans-serif" };
+const OUTLINE = "0 0 4px #000, 0 0 2px #000, 1px 1px 2px #000, -1px -1px 2px #000";
+
+// The menu's sample is a small box, so it shows the sizes relative to each other.
+const SAMPLE_SIZES = { s: "1.05em", m: "1.35em", l: "1.75em", xl: "2.2em" };
+
+/** CSS declarations for one caption line in the current style (for ::cue, or the menu's sample). */
+export function captionCss({ sample = false } = {}) {
+  const bg = capPref("capBg");
+  return [
+    `color: ${capPref("capColor") === "yellow" ? "#ffe14d" : "#fff"}`,
+    `background: ${bg === "box" ? "rgba(0,0,0,.9)" : bg === "shade" ? "rgba(0,0,0,.5)" : "transparent"}`,
+    `font-family: ${FONTS[capPref("capFont")]}`,
+    `font-size: ${(sample ? SAMPLE_SIZES : SIZES)[capPref("capSize")]}`,
+    `font-weight: ${capPref("capFont") === "clean" ? 600 : 400}`,
+    "line-height: 1.15",
+    `text-shadow: ${bg === "box" ? "none" : OUTLINE}`,
+  ].join("; ");
 }
+
+/** Which line a cue sits on: the browser's default (bottom), three lines up (clear of the banner), or the top. */
+function placeCue(cue) {
+  const p = capPref("capPos");
+  cue.line = p === "top" ? 0 : p === "raised" ? -4 : "auto";
+  return cue;
+}
+
+let styleEl = null;
+/** Applies the caption prefs to the picture's captions, including cues already on screen. */
+export function applyCaptionStyle() {
+  if (!styleEl) {
+    styleEl = document.createElement("style");
+    styleEl.id = "caption-style";
+    document.head.append(styleEl);
+  }
+  styleEl.textContent = `#video::cue { ${captionCss()} }
+  #video::-webkit-media-text-track-display { padding: 0 .3em; }`;
+  const video = document.getElementById("video");
+  for (const t of video?.textTracks ?? []) for (const c of [...(t.cues ?? [])]) placeCue(c);
+}
+onPrefsApplied(applyCaptionStyle);
