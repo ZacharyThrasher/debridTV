@@ -35,7 +35,7 @@ Settings → Sources shows the progress; reload the page when it says ready. Not
 on the PC changes. An ffmpeg already on your PATH, or `ffmpeg.exe` and `ffprobe.exe` next
 to `DebridTV.exe`, is used instead. Set `DEBRIDTV_NO_FFMPEG_DOWNLOAD=1` to skip it.
 
-Options: `DebridTV.exe --no-browser`, and `set PORT=7340` before starting to change the port.
+On Windows the guide opens in its own window, which uses Edge's engine so Dolby Digital sound plays without conversion. Options: `DebridTV.exe --browser` to use your default browser instead, `DebridTV.exe --no-browser`, and `set PORT=7340` before starting to change the port.
 
 Releases are made by the **Release** workflow (Actions → Release → Run workflow): it
 builds the exe, starts it on a real Windows machine (including the ffmpeg download),

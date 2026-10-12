@@ -1,0 +1,24 @@
+Third-party software in DebridTV
+================================
+
+Node.js
+  Packed inside DebridTV.exe. MIT license: see LICENSE-node.txt.
+
+The DebridTV window (packed inside DebridTV.exe as debridtv-window.exe)
+  Built with wry and tao (Tauri project, MIT or Apache-2.0), the windows and
+  windows-sys crates (Microsoft, MIT or Apache-2.0), webview2-com (MIT), tokio
+  (MIT) and serde_json (MIT or Apache-2.0). Microsoft Edge WebView2 is part of
+  Windows and is not included.
+
+mpv (not included; downloaded on first start)
+  DebridTV downloads the mpv project's official Windows build, unchanged, from
+  https://github.com/mpv-player/mpv/releases and runs it as a separate program.
+  mpv is free software under the GNU General Public License version 2 or later
+  (and LGPL 2.1 or later for parts of it). Its license, copyright notices and
+  complete source code are at https://github.com/mpv-player/mpv (use the tag
+  that matches the downloaded version, e.g. v0.41.0). You may replace mpv.exe in
+  %LOCALAPPDATA%\DebridTV\mpv with any other build.
+
+ffmpeg (not included; downloaded on first start)
+  The "release essentials" build from https://www.gyan.dev/ffmpeg/builds/,
+  GPL version 3. Source: https://ffmpeg.org/download.html

@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- Windows CI check for the app window: the real native-video.js plays a DTS file
+     in mpv under this page. A red bar covers the bottom (the page must show on top
+     of the picture); the rest is see-through (the picture must show through). -->
+<html>
+<head><meta charset="utf-8"><title>DebridTV window check</title></head>
+<body style="margin:0;height:100vh;background:#000;overflow:hidden">
+  <main id="stage" style="position:fixed;inset:0;background:#000"><video id="video" style="position:absolute;inset:0;width:100%;height:100%"></video></main>
+  <div id="bar" style="position:fixed;left:0;right:0;bottom:0;height:22vh;background:#f0402f"></div>
+  <script type="module" src="/js/native-video.js"></script>
+  <script type="module">
+    const v = document.getElementById("video");
+    const report = (o) => fetch("/report", { method: "POST", body: JSON.stringify(o) });
+    const events = [];
+    for (const e of ["loadstart", "loadedmetadata", "seeking", "seeked", "play", "playing", "waiting", "error", "pause", "ended"]) v.addEventListener(e, () => events.push(e));
+    if (!window.__DTV_NATIVE) report({ ok: false, why: "the page has no native player" });
+    else {
+      // A compatibility-mode URL, as the guide asks for DTS files: mpv must play the file itself from 3 s.
+      v.src = "/media/test/live?start=3";
+      v.play();
+      v.addEventListener("playing", async () => {
+        await new Promise((r) => setTimeout(r, 4000));
+        const get = (n) => window.__dtvMpvGet(n).catch((e) => `error: ${e.message}`);
+        report({
+          ok: true, events, currentTime: v.currentTime, paused: v.paused, readyState: v.readyState,
+          path: await get("path"), timePos: await get("time-pos"), audioCodec: await get("audio-codec-name"),
+          audioParams: await get("audio-params"), videoCodec: await get("video-codec"), vo: await get("current-vo"),
+          hwdec: await get("hwdec-current"), width: v.videoWidth, height: v.videoHeight,
+        });
+      }, { once: true });
+      v.addEventListener("error", () => report({ ok: false, why: "error event", events, error: v.error }), { once: true });
+    }
+  </script>
+</body>
+</html>
