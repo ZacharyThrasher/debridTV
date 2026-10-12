@@ -39,10 +39,13 @@ sign-off were on by default.
 - **Pause plays on from where you paused**, and leaves you behind live.
 - **Other friction is off by default**: the rating card (`ratingCard` pref) and
   auto sign-off (`signOffHours`, default now 0 = never). Both stay one setting away.
-- **The player exposes it for the controls.** `seekBy(ms)`, `skipProgram(±1)`,
-  `backToLive()`, `timeShift()` and the `debridtv:timeshift` event, plus the
+- **The player exposes it for the controls.** `seekBy(ms)`, `seekTo(fileMs)`,
+  `skipProgram(±1)`, `backToLive()`, `timeShift()`, `timeline()` (mode
+  live/shifted/ondemand, posMs, durMs, liveMs, minMs, maxMs, itemId), the
+  `debridtv:timeshift` and `debridtv:timeline` events, plus the
   `debridtv:seek`, `debridtv:skip` and `debridtv:backtolive` events, so a player
-  bar can drive it without reaching into the tuner.
+  bar can drive it without reaching into the tuner. A speed other than 1× on a
+  shifted channel works: the shift follows the picture once a second.
 
 ## What still holds
 

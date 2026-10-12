@@ -210,6 +210,16 @@ describe("player", () => {
     assert.ok(Math.abs(back.driftMs + 10_000) < 1500, `10 s behind (drift ${back.driftMs} ms)`);
     assert.equal(media.length, 0, "a direct file seeks in place, no new request");
     assert.match(await page.locator("#live-pill").innerText(), /Back to live[\s\S]*behind/);
+    // The scrub-bar contract: timeline() and seekTo().
+    const tl = () => page.evaluate(async () => (await import(location.origin + "/js/player.js")).timeline());
+    let line = await tl();
+    assert.equal(line.mode, "shifted");
+    assert.ok(Math.abs(line.liveMs - line.posMs - 10_000) < 1500, JSON.stringify(line));
+    assert.ok(line.durMs > 40_000 && line.maxMs === line.durMs && line.minMs === 0);
+    await page.evaluate(async (to: number) => (await import(location.origin + "/js/player.js")).seekTo(to), line.posMs + 5000);
+    await page.waitForFunction(() => !(document.getElementById("video") as HTMLVideoElement).seeking);
+    line = await tl();
+    assert.ok(Math.abs(line.liveMs - line.posMs - 5000) < 1500, `seekTo moved 5 s closer to live: ${JSON.stringify(line)}`);
 
     const shown = () => page.evaluate(async () => {
       const p = await import(location.origin + "/js/player.js");
