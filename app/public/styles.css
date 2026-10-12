@@ -422,7 +422,7 @@ body.guide-open { background: var(--bg); }
 .brand-mark { width: 1.2em; height: .85em; border-radius: .22em; background: linear-gradient(135deg, var(--amber), var(--magenta)); box-shadow: 0 0 .8em rgba(255,95,162,.35); }
 .guide-date { color: var(--dim); font-weight: 600; font-size: calc(var(--u)*.95); }
 .guide-hints { display: flex; gap: calc(var(--u)*1.2); justify-content: flex-end; color: var(--dim); font-size: calc(var(--u)*.8); }
-.guide-clock { font-family: var(--mono); font-size: calc(var(--u)*2); color: var(--ink); line-height: 1; }
+.guide-clock { font-family: var(--mono); font-size: calc(var(--u)*2); color: var(--ink); line-height: 1; white-space: nowrap; }
 
 .grid { touch-action: none; position: relative; overflow: hidden; background: var(--panel-solid); min-height: 0; --label: calc(var(--u)*15); --row: calc(var(--u)*3.6); }
 .grid-times { position: sticky; top: 0; z-index: 3; height: calc(var(--u)*2); margin-left: var(--label); position: relative; border-bottom: 1px solid var(--line); background: var(--panel-solid); }
@@ -1101,7 +1101,9 @@ html.remote :is(.panel, .ced) select:focus-visible {
 }
 .guide-tools button:hover, .guide-tools button:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--focus) 16%, transparent); border-color: var(--focus); }
 .guide-tools button span { font-size: 1.15em; line-height: 1; }
-.guide-tools b { font-weight: inherit; }
+.guide-tools b { font-weight: inherit; white-space: nowrap; }
+/* The CC box says "subtitles" on its own; a fourth label would crowd the bar on a TV. */
+.guide-tools [data-gt="captions"] b { display: none; }
 .guide.in-tools .cell.focus { outline-color: var(--line-strong); box-shadow: none; --fill: var(--cell-now); }
 .guide-jump {
   font-family: var(--mono); font-size: calc(var(--u)*2); line-height: 1; color: var(--osd); min-width: 0;
@@ -1445,3 +1447,43 @@ html[data-where="device"] .ced-pin { display: none !important; }
 .banner .b-art.square { height: calc(var(--u)*7.4); aspect-ratio: 1; border-radius: calc(var(--radius) * .6); }
 .banner .artist { font-weight: 700; }
 .od-src { font-size: .85em; letter-spacing: .02em; opacity: .85; }
+
+/* ------------------------------------------------------------------ subtitles menu (captions.js)
+   A side sheet over the picture, not a full-screen dialog: the captions behind it change
+   as the look changes. */
+.cc-glyph { display: inline-block; font-family: var(--display); font-weight: 800; font-size: .78em; letter-spacing: .04em; line-height: 1;
+  padding: .18em .32em .14em; border: 2px solid currentColor; border-radius: .3em; }
+.cc-sheet {
+  position: fixed; top: calc(var(--u)*1.2); right: calc(var(--u)*1.2); bottom: calc(var(--u)*1.2); width: min(calc(100vw - 2.4*var(--u)), calc(var(--u)*30));
+  display: grid; grid-template-rows: auto 1fr; overflow: hidden; z-index: 26;
+  background: color-mix(in srgb, var(--panel-solid) 92%, transparent); border: 1px solid var(--line-strong); border-radius: calc(var(--u)*1.2);
+  box-shadow: 0 30px 80px rgba(0,0,0,.55); backdrop-filter: blur(14px); font-size: max(14px, calc(var(--u)*.92)); animation: slide .28s var(--ease);
+}
+.cc-sheet[hidden] { display: none; }
+.cc-head { display: flex; align-items: center; justify-content: space-between; padding: 1.1em 1.3em .4em; }
+.cc-title { display: flex; align-items: center; gap: .55em; font-family: var(--display); font-weight: 800; font-size: 1.6em; letter-spacing: .02em; }
+.cc-badge { font-size: .55em; padding: .2em .4em .15em; border-radius: .3em; background: var(--ink); color: var(--panel-solid); letter-spacing: .06em; }
+.cc-body { overflow-y: auto; padding: .4em 1.3em 1.4em; }
+.cc-body h4 { font-family: var(--display); font-weight: 800; letter-spacing: .04em; font-size: 1.15em; margin: 1.2em 0 .5em; color: var(--dim); text-transform: uppercase; }
+.cc-list { display: grid; gap: .3em; }
+.cc-opt { display: flex; align-items: center; gap: .8em; width: 100%; text-align: left; padding: .7em .9em; border-radius: .7em; cursor: pointer;
+  background: transparent; border: 1px solid transparent; color: var(--ink); font: inherit; font-weight: 600; }
+.cc-opt:hover { background: rgba(255,255,255,.06); }
+.cc-opt i { flex: none; width: 1.1em; height: 1.1em; border-radius: 50%; border: 2px solid var(--line-strong); }
+.cc-opt[aria-checked="true"] { background: color-mix(in srgb, var(--focus) 14%, transparent); border-color: color-mix(in srgb, var(--focus) 45%, transparent); }
+.cc-opt[aria-checked="true"] i { border-color: var(--focus); background: radial-gradient(circle, var(--focus) 0 40%, transparent 45%); }
+.cc-opt span { display: grid; gap: .1em; min-width: 0; }
+.cc-opt small { color: var(--dim); font-weight: 400; font-size: .82em; }
+.cc-note { color: var(--dim); line-height: 1.5; margin: .3em 0; }
+.cc-sample { display: grid; place-items: center; min-height: 6.5em; padding: 1em; margin-bottom: .8em; border-radius: .8em; overflow: hidden; border: 1px solid var(--line);
+  background: linear-gradient(135deg, #3b5a7a, #1b2a3e 55%, #6a4a2a); }
+.cc-sample span { padding: 0 .3em; text-align: center; max-width: 100%; }
+.cc-row { display: flex; align-items: center; justify-content: space-between; gap: .8em; flex-wrap: wrap; padding: .45em 0; }
+.cc-row > span { color: var(--dim); font-weight: 600; }
+.cc-row .seg button { padding: .45em .75em; }
+.cc-foot { color: var(--faint); font-size: .88em; line-height: 1.5; margin: 1.2em 0 0; }
+html.remote .cc-opt:focus-visible, html.remote .cc-sheet .seg button:focus-visible, html.remote .cc-sheet .icon-btn:focus-visible { outline: var(--ring) solid var(--focus); outline-offset: 2px; }
+html.tv .cc-sheet { top: var(--safe-y); bottom: var(--safe-y); right: var(--safe-x); width: min(44vw, calc(var(--u)*32)); }
+@media (max-width: 560px) {
+  .cc-sheet { left: 0; right: 0; bottom: 0; top: auto; width: auto; max-height: 78vh; border-radius: calc(var(--u)*1.2) calc(var(--u)*1.2) 0 0; }
+}

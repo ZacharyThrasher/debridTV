@@ -346,7 +346,7 @@ describe("player", () => {
     await closeQuietly(ctx);
   });
 
-  it("A picks another audio language and C turns captions on, in step with the picture, and both carry over (N-18a)", async (t) => {
+  it("A picks another audio language and the subtitles menu turns captions on, in step with the picture, and both carry over (N-18a)", async (t) => {
     if (skip) return t.skip(skip);
     if (!langs) return t.skip("the language test channel didn't go on air");
     // Start early in a program, so the whole check stays inside one file.
@@ -374,8 +374,17 @@ describe("player", () => {
     assert.equal((await prefs()).audioLang, "spa", "remembers the language");
     assert.match(await page.evaluate(() => document.getElementById("osd-num")!.textContent ?? ""), /Spanish/i);
 
+    // C opens the subtitles menu; it lists Off and the English track, with Off picked.
     await page.keyboard.press("c");
+    await page.waitForSelector('#captions:not([hidden]) [data-sub="0"]');
+    assert.equal(await page.locator('#captions [data-sub="off"]').getAttribute("aria-checked"), "true");
+    assert.match(await page.locator('#captions [data-sub="0"]').innerText(), /English/);
+    assert.match(await page.locator('#captions [data-audio="1"]').innerText(), /Spanish/, "the audio tracks are listed too");
+    await page.locator('#captions [data-sub="0"]').click();
     await page.waitForFunction(() => /&a=1&s=0/.test(document.getElementById("video")!.getAttribute("src") ?? ""));
+    await page.waitForSelector('#captions [data-sub="0"][aria-checked="true"]');
+    await page.keyboard.press("Escape");
+    await page.waitForSelector("#captions", { state: "hidden" });
     await playing(page);
     assert.equal((await prefs()).subLang, "eng");
     // The cue on screen is the one for this second of the file.
@@ -410,11 +419,26 @@ describe("player", () => {
     const next = await open({ audioLang: "spa", subLang: "eng" }, langs);
     await playing(next.page);
     assert.match(await next.page.evaluate(() => document.getElementById("video")!.getAttribute("src") ?? ""), /&a=1&s=0/);
-    // C past the last track turns captions off but keeps the Spanish sound.
-    await next.page.keyboard.press("c");
+    // The look settings apply to the captions on screen.
+    await next.page.waitForFunction(() => [...(document.getElementById("video") as HTMLVideoElement).textTracks].some((x) => (x.cues?.length ?? 0) > 0), null, { timeout: 15_000 });
+    await next.page.locator('[data-act="captions"]').dispatchEvent("click");
+    await next.page.waitForSelector('#captions:not([hidden]) [data-sub="0"][aria-checked="true"]');
+    await next.page.locator('#captions [data-cap="capColor"][data-v="yellow"]').click();
+    await next.page.locator('#captions [data-cap="capPos"][data-v="top"]').click();
+    assert.match(await next.page.evaluate(() => document.getElementById("caption-style")!.textContent ?? ""), /#ffe14d/);
+    const lines = await next.page.evaluate(() => [...(document.getElementById("video") as HTMLVideoElement).textTracks]
+      .flatMap((x) => [...(x.cues ?? [])].map((c) => (c as VTTCue).line)));
+    assert.ok(lines.length && lines.every((l: unknown) => l === 0), `cues moved to the top: ${JSON.stringify(lines)}`);
+    // Off turns captions off but keeps the Spanish sound.
+    await next.page.locator('#captions [data-sub="off"]').click();
     await next.page.waitForFunction(() => !/&s=/.test(document.getElementById("video")!.getAttribute("src") ?? "x&s="));
     assert.match(await next.page.evaluate(() => document.getElementById("video")!.getAttribute("src") ?? ""), /&a=1/);
     assert.equal(await next.page.evaluate(() => JSON.parse(localStorage.getItem("debridtv.prefs")!).subLang), "off");
+    // A remote's CC button turns them back on, in the language used last.
+    await next.page.keyboard.press("Escape");
+    await next.page.evaluate(() => dispatchEvent(new KeyboardEvent("keydown", { key: "Subtitle", bubbles: true })));
+    await next.page.waitForFunction(() => /&a=1&s=0/.test(document.getElementById("video")!.getAttribute("src") ?? ""));
+    assert.equal(await next.page.evaluate(() => JSON.parse(localStorage.getItem("debridtv.prefs")!).subLang), "eng");
     assert.deepEqual([...errors, ...next.errors], []);
     await closeQuietly(next.ctx);
   });

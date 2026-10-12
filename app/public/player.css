@@ -42,6 +42,8 @@ html.tv { --pb-icon: calc(var(--u) * 1.9); --pb-btn: calc(var(--u) * 3.1); --pb-
 body.pbar-on .pbar { opacity: 1; visibility: visible; transform: none; transition: opacity .15s ease, transform .2s var(--pb-ease), visibility 0s; }
 body.pbar-on { cursor: default; }
 body.guide-open .pbar, body.panel-open .pbar { display: none; }
+/* On a phone the subtitles sheet rises from the bottom, where the bar sits. */
+@media (max-width: 560px) { body.captions-open .pbar { display: none; } }
 
 /* The banner and the channel bug make room. */
 body.pbar-on .banner { transform: translateY(calc(-1 * var(--pb-h) + var(--u) * 1.6)); transition: transform .2s var(--pb-ease); }

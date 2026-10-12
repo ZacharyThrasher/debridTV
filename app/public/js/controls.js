@@ -275,6 +275,7 @@ function draw() {
 setInterval(draw, 250);
 for (const ev of ["play", "pause", "volumechange", "loadedmetadata"]) video.addEventListener(ev, draw);
 addEventListener("debridtv:ondemand", () => setTimeout(draw, 0));
+addEventListener("debridtv:captions", draw);
 document.addEventListener("fullscreenchange", draw);
 
 // ------------------------------------------------------------------ seeking
@@ -353,9 +354,15 @@ function captionsOn() {
   } catch {}
   return [...video.textTracks].some((t) => t.mode === "showing" && (t.cues?.length ?? 0) > 0);
 }
+function captionsLabel() {
+  try {
+    if (captionsMod?.captionsState) return captionsMod.captionsState().label;
+  } catch {}
+  return captionsOn() ? "On" : "Off";
+}
 function openCaptions() {
   if (captionsMod?.openCaptions) return captionsMod.openCaptions();
-  player.cycleCaptions?.();
+  player.toggleCaptions?.();
 }
 
 export function toggleMute() {
@@ -445,7 +452,7 @@ function rows() {
         ${row("speed", "Playback speed", offClock ? `${player.currentRate?.() ?? 1}×` : "Normal")}
         ${row("audio", "Audio track", audioLabel())}
         ${row("async", "Audio sync", signed(fx.audioDelay()))}
-        ${row("subs", "Subtitles", captionsOn() ? "On" : "Off")}
+        ${row("subs", "Subtitles", captionsLabel())}
         ${row("ssync", "Subtitle sync", signed(fx.subDelay()))}
         ${row("sound", "Sound", [fx.level() > 1 && `${Math.round(fx.level() * 100)}%`, pref("nightMode") && "Night mode"].filter(Boolean).join(" · ") || "Normal")}
         ${row("picture", "Picture", [SHAPES[pref("aspect") ?? "auto"], pictureChanged && "adjusted"].filter(Boolean).join(" · "))}
