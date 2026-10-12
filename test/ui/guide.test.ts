@@ -279,7 +279,7 @@ describe("themes (N-11b)", { skip }, () => {
     assert.equal(await js(page, `getComputedStyle(document.documentElement).getPropertyValue("--amber").trim()`), "#ff0066");
     assert.equal(await js(page, `document.documentElement.dataset.theme`), "custom");
     const opts = await js(page, `import("/js/theme.js").then((m) => m.themeOptions().map((o) => o.label))`);
-    assert.ok(opts.includes("Late Show") && opts.includes("Midnight"));
+    assert.ok(opts.includes("Late Show") && opts.includes("Night"));
     assert.deepEqual(errors, []);
     await closeQuietly(ctx);
   });
@@ -309,7 +309,7 @@ describe("themes (N-11b)", { skip }, () => {
     assert.equal(r.ok.colors.bg, "#000000");
     assert.equal(r.ok.colors.panel, "#112233");
     assert.equal(r.ok.colors.ink, "#ffffff");
-    assert.equal(r.ok.colors.accent, "#ffb547", "an invalid colour falls back, never reaches CSS");
+    assert.equal(r.ok.colors.accent, "#ff5b29", "an invalid colour falls back, never reaches CSS");
     assert.equal(r.ok.name, "bX/b");
     assert.equal(r.ok.cellStrength, 100);
     assert.match(r.bad, /something else/);

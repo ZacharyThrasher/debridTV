@@ -9,21 +9,18 @@
   <link rel="stylesheet" href="/fonts/fonts.css" />
   <style>
     :root {
-      --bg: #060816; --ink: #eef0ff; --dim: #98a1d4; --panel: #0e1230; --panel-2: #161c48;
-      --line: rgba(140, 160, 255, 0.18); --amber: #ffb547; --magenta: #ff5fa2; --ok: #6ff2a8; --bad: #ff6b6b;
-      --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+      --bg: #0c0b0a; --ink: #f1ece2; --dim: #b3ac9f; --panel: #131210; --panel-2: #1b1a17;
+      --line: rgba(241, 236, 226, 0.14); --amber: #f1ece2; --magenta: #f1ece2; --accent: #ff5b29; --ok: #8ccf9f; --bad: #ff7a66;
+      --display: "Instrument Serif", Georgia, serif;
       --body: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-      --mono: VT323, ui-monospace, Consolas, monospace;
+      --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
       --u: clamp(12px, min(1.6vw, 1.75vh), 26px);
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--body); }
     body {
       display: grid; place-items: center; padding: max(16px, 5vh) 16px;
-      background:
-        radial-gradient(120vmax 80vmax at 20% -10%, rgba(255, 95, 162, 0.16), transparent 60%),
-        radial-gradient(100vmax 70vmax at 110% 110%, rgba(79, 227, 255, 0.12), transparent 60%),
-        var(--bg);
+      background: var(--bg);
     }
     main {
       width: min(100%, calc(var(--u) * 34)); background: var(--panel); border: 1px solid var(--line);
@@ -31,7 +28,7 @@
       box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55); text-align: center;
     }
     .mark { width: calc(var(--u) * 3.2); height: calc(var(--u) * 3.2); }
-    h1 { font-family: var(--display); font-weight: 700; letter-spacing: 0.02em; font-size: calc(var(--u) * 2.6); margin: calc(var(--u) * 0.6) 0 calc(var(--u) * 0.3); }
+    h1 { font-family: var(--display); font-weight: 400; letter-spacing: 0.02em; font-size: calc(var(--u) * 2.6); margin: calc(var(--u) * 0.6) 0 calc(var(--u) * 0.3); }
     p { color: var(--dim); font-size: calc(var(--u) * 1.05); line-height: 1.45; margin: 0 0 calc(var(--u) * 1.2); }
     .slots { display: flex; justify-content: center; gap: calc(var(--u) * 0.55); margin: calc(var(--u) * 1.2) 0 calc(var(--u) * 0.6); }
     .slot {
@@ -39,7 +36,7 @@
       background: var(--panel-2); border: 2px solid var(--line); display: grid; place-items: center;
       font-family: var(--mono); font-size: calc(var(--u) * 3.6); color: var(--ink); transition: border-color .15s, transform .15s;
     }
-    .slot.next { border-color: var(--amber); box-shadow: 0 0 0 4px rgba(255, 181, 71, 0.18); }
+    .slot.next { border-color: var(--amber); box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--ink); }
     .slot.filled { transform: translateY(-2px); }
     .bad .slot { border-color: var(--bad); animation: shake .35s; }
     @keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
@@ -47,12 +44,12 @@
     #msg.err { color: var(--bad); } #msg.ok { color: var(--ok); }
     .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: calc(var(--u) * 0.5); width: min(100%, calc(var(--u) * 17)); margin: 0 auto; }
     .pad button {
-      font-family: var(--display); font-weight: 600; font-size: calc(var(--u) * 1.9); color: var(--ink);
+      font-family: var(--mono); font-weight: 500; font-size: calc(var(--u) * 1.6); color: var(--ink);
       background: var(--panel-2); border: 2px solid transparent; border-radius: calc(var(--u) * 0.55);
       padding: calc(var(--u) * 0.45) 0; cursor: pointer; outline: none;
     }
     .pad button:focus-visible, .pad button:focus, .pad button:hover { border-color: var(--amber); }
-    .pad button.go { background: linear-gradient(135deg, var(--amber), var(--magenta)); color: #1a0d1e; }
+    .pad button.go { background: var(--ink); color: var(--bg); }
     label { display: block; margin: calc(var(--u) * 1.4) auto 0; width: min(100%, calc(var(--u) * 17)); text-align: left; color: var(--dim); font-size: calc(var(--u) * 0.9); }
     input {
       width: 100%; margin-top: 6px; font: inherit; font-size: calc(var(--u) * 1.1); color: var(--ink);
@@ -66,7 +63,7 @@
 <body>
   <main>
     <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
-      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb547"/><stop offset="1" stop-color="#ff5fa2"/></linearGradient></defs>
+      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f1ece2"/><stop offset="1" stop-color="#f1ece2"/></linearGradient></defs>
       <rect x="6" y="12" width="52" height="38" rx="8" fill="none" stroke="url(#g)" stroke-width="5"/>
       <path d="M24 4l8 8 8-8" fill="none" stroke="url(#g)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M22 58h20" stroke="url(#g)" stroke-width="5" stroke-linecap="round"/>

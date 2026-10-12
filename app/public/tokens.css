@@ -48,7 +48,7 @@
 
   /* ---- guide cells (theme-tintable) */
   --cell: var(--surface-2);
-  --cell-now: #211f1b;
+  --cell-now: #292620;
 
   /* ---- type */
   --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
