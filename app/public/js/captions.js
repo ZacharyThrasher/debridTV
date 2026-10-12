@@ -1,6 +1,6 @@
 // The subtitles menu: one place to turn subtitles on or off, pick the language or
-// audio track, and set how captions look. Opened from the CC button on the dock
-// (mouse and touch), the guide's toolbar (a remote: Up from the top row), or the
+// audio track, and set how captions look. Opened from the CC button on the control
+// bar (controls.js, mouse and touch), the guide's toolbar (a remote: Up from the top row), or the
 // C key. It sits at the side, so the picture and its captions stay in view while
 // the style changes. Choices are prefs, so the next program and channel follow them.
 
@@ -116,7 +116,7 @@ addEventListener("keydown", (e) => {
 
 // A click on the picture outside the menu closes it, like any popover.
 addEventListener("pointerdown", (e) => {
-  if (!sheet.hidden && !sheet.contains(e.target) && !e.target.closest?.('[data-act="captions"], [data-gt="captions"]')) closeCaptions();
+  if (!sheet.hidden && !sheet.contains(e.target) && !e.target.closest?.('[data-act="captions"], [data-gt="captions"], [data-act="ccopen"]')) closeCaptions();
 }, true);
 
 // ------------------------------------------------------------------ state for other controls

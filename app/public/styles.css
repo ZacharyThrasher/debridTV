@@ -676,7 +676,7 @@ textarea.input { font-family: var(--font-mono); font-size: .9em; line-height: 1.
 .mix-row.off .mix-word { color: var(--ink-3); }
 .mix-why { grid-column: 2 / -1; justify-self: end; font-size: .82em; color: var(--ink-3); }
 .chips { display: flex; flex-wrap: wrap; gap: .35em; }
-.chip { border: 1px solid var(--rule-strong); background: none; color: var(--ink); border-radius: var(--r-pill); padding: .35em .85em; cursor: pointer; font-weight: 550; font-size: .88em; transition: background var(--dur-1); }
+.chip { border: 1px solid var(--rule-strong); background: none; color: var(--ink); border-radius: var(--r-1); padding: .35em .85em; cursor: pointer; font-weight: 550; font-size: .88em; transition: background var(--dur-1); }
 .chip:hover { background: var(--surface-3); }
 .chip[aria-pressed="true"] { background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: color-mix(in srgb, var(--bad) 50%, transparent); color: var(--bad);
   text-decoration: line-through; text-decoration-thickness: 1.5px; }
@@ -1306,8 +1306,27 @@ html.remote .od-ep:focus-visible, .od-ep:focus-visible { outline: none; box-shad
 .od-sheet-box { width: min(92vw, 34em); padding: calc(var(--u)*2) calc(var(--u)*2.2); border-radius: var(--r-3); background: var(--surface-1);
   border: 1px solid var(--rule-strong); box-shadow: var(--shadow-2); }
 .od-sheet-box .od-t { font-size: var(--fs-2xl); }
+/* As in the hero: the title first, what it is under it. */
+.od-sheet-box { display: flex; flex-direction: column; }
+.od-sheet-box > .od-t { order: 0; margin-top: 0; }
+.od-sheet-box > .od-kicker { order: 1; }
+.od-sheet-box > .od-kicker ~ :not(.od-t) { order: 2; }
 .od-sheet-acts { display: flex; gap: calc(var(--u)*.7); margin-top: calc(var(--u)*1.4); flex-wrap: wrap; }
 .od-sheet-acts .btn { font-size: var(--fs-md); }
+/* Fix this show (show identity): a sheet ruled like the settings sheet. */
+.od-fix { margin-left: auto; font-size: calc(var(--u)*.85); }
+.showfix { position: fixed; z-index: 60; }
+.showfix-box { width: min(94vw, 44em); max-height: 88vh; overflow: auto; }
+.showfix-box h4 { margin: calc(var(--u)*1.4) 0 calc(var(--u)*.4); font-size: var(--fs-md); font-weight: 700; color: var(--ink); }
+.showfix-row { display: flex; align-items: center; gap: calc(var(--u)*.6); margin-top: calc(var(--u)*.9); flex-wrap: wrap; }
+.showfix-row label { min-width: 7em; color: var(--ink-2); font-weight: 550; }
+.showfix-row .input { flex: 1; min-width: 12em; }
+.showfix-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
+.showfix-list li { display: flex; align-items: center; gap: calc(var(--u)*.6); padding: calc(var(--u)*.6) 0; border-bottom: 1px solid var(--rule); }
+.showfix-n { flex: 1; display: grid; gap: .15em; min-width: 0; }
+.showfix-n b { overflow-wrap: anywhere; font-weight: 600; }
+.showfix-n span { font-size: .85em; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) { .showfix-row label { min-width: 0; flex-basis: 100%; } .showfix-row .input, .showfix-row select { flex: 1 1 100%; } }
 
 /* On the picture: the banner while a pick plays. */
 .badge.od { color: var(--ink); border-color: var(--rule-strong); }

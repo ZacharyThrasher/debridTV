@@ -11,6 +11,7 @@ import { html, raw, fmtDur, fmtClock, toast, ago } from "./util.js";
 import * as player from "./player.js";
 import { artOf, artImg, formatChips } from "./ui.js";
 import { keepFocus } from "./spatial.js";
+import { openShowFix } from "./showfix.js";
 
 const MIN = 60_000;
 const root = document.createElement("section");
@@ -220,6 +221,7 @@ function renderShow() {
       <button class="od-crumb" data-home><span aria-hidden="true">‹</span> All shows</button>
       ${nx ? html`<button class="btn primary od-play" data-k="n:${nx.id}" data-play="${nx.id}" data-first>
         ▶ ${nx.resumeMs != null ? "Resume" : "Play"} ${nx.label ?? ""}${nx.subtitle ? html` · “${nx.subtitle}”` : ""}</button>` : html`<span class="od-alldone">✓ You've seen every episode</span>`}
+      <button class="btn od-fix" data-fixshow="${s.key}" title="Wrong name, or two shows mixed up? Fix it here">Fix this show</button>
     </div>
     ${s.seasons.length > 1 ? html`<div class="od-seasons" role="tablist" aria-label="Seasons">${s.seasons.map((x) => html`<button role="tab" data-season="${x.season}" aria-selected="${String(x.season === season?.season)}">Season ${x.season}</button>`)}</div>` : ""}
     <ol class="od-eps">${season?.episodes.map((e) => epRow(e)) ?? ""}</ol>
@@ -406,6 +408,13 @@ root.addEventListener("click", async (e) => {
     return;
   }
   if (t.dataset.show) return openShow(t.dataset.show);
+  if (t.dataset.fixshow) {
+    return openShowFix(t.dataset.fixshow, { host: root, onChange: async (key) => {
+      state.show = key;
+      await Promise.all([loadLists(), loadShow(key)]);
+      render();
+    } });
+  }
   if (t.dataset.play) {
     const it = find(t.dataset.play);
     if (it) {

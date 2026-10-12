@@ -497,3 +497,31 @@ cold link the tune would also pay ~370 ms for it; the pre-load resolves that ahe
 Shipped on by default with an off switch, only for the channel being watched, after 10 s
 settled and from 60 s before the next program. Browser test: nothing is asked for in the
 first seconds on a channel, and a channel change drops the request.
+
+### EXP-012 — A bigger reserve for the show being watched (ADR-0007) (2026-10-12)
+
+**Question.** Zachary asked whether pre-loading minutes would protect against later
+slowdowns. Grabbing minutes of the *next* show wouldn't (a mid-show stall happens past
+anything fetched ahead of the start); a reserve on the show being watched would. How far
+ahead does the player hold a show today, and what does a provider stall do?
+
+**Setup.** `experiments/exp012-stall.ts`: app server against the mock TorBox (LIVE-001
+shape) serving one 10-minute 6 Mb/s VP9/Opus WebM on its own channel. Chromium plays it
+60 s, then the mock host sends nothing for 60 s (new `stallMedia()` in the mock). Time
+frozen = picture not advancing while not paused. Cloud container, mocks only.
+Results: `results/exp012-{before,final}-stall60s.json`.
+
+| | held ahead at the stall | picture frozen in a 60 s stall |
+|---|---|---|
+| Before (browser's own read-ahead) | ~28 s | **27.3 s** (froze 33 s in) |
+| After (server reserve, ~60 s of the file) | ~87 s | **0 s** |
+
+Chromium's decoded buffer stays ~16 s either way; it held ~28 s of bytes. The server now
+keeps reading to about 60 s of the file (8–128 MiB) past what the player has taken, once
+the file has streamed to the viewer for 10 s, so surfing is unchanged (a just-opened
+stream is a plain pipe; `test/readahead.test.ts`). Chromium opened 9 range requests over
+the run; the 10 s wait counts per file, not per request (a first try counted per request
+and the reserve never formed).
+
+**Cost.** No extra requests. Leaving a show can waste up to the reserve (~45 MB at
+6 Mb/s, at most 128 MiB), shown in Meters as "unplayed when you left". Held in RAM.

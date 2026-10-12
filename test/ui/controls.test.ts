@@ -5,12 +5,13 @@
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, type ChildProcess } from "node:child_process";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { closeQuietly } from "./close.ts";
+import { startServer } from "./serve.ts";
 
 const require = createRequire(import.meta.url);
 let chromium: any = null;
@@ -22,8 +23,7 @@ for (const p of [process.env.PLAYWRIGHT, "playwright", "/opt/node22/lib/node_mod
   } catch {}
 }
 const EXE = process.env.CHROMIUM ?? "/opt/pw-browsers/chromium";
-const PORT = 7800 + (process.pid % 150);
-const BASE = `http://127.0.0.1:${PORT}`;
+let BASE = "";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let ffmpeg = true;
@@ -64,13 +64,10 @@ before(async () => {
     "-i", meta, "-map_metadata", "2", "-map", "0", "-map", "1", "-c:v", "libvpx-vp9", "-b:v", "120k", "-deadline", "realtime", "-cpu-used", "8", "-g", "24",
     "-c:a", "libopus", "-b:a", "32k", first]);
   for (let i = 2; i <= 8; i++) execFileSync("cp", [first, join(media, `Bar Test S01E0${i}.mkv`)]);
-  server = spawn(process.execPath, ["app/server.ts"], { env: { ...process.env, PORT: String(PORT), DEBRIDTV_HOME: home }, stdio: "ignore" });
-  for (let i = 0; i < 100; i++) {
-    try {
-      if ((await fetch(`${BASE}/api/bootstrap`)).ok) break;
-    } catch {}
-    await sleep(100);
-  }
+  // A letterboxed clip (2.39:1 picture in a 16:9 frame) for auto crop; served by the test, not the library.
+  execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x134:rate=24:duration=5", "-vf", "pad=320:180:0:23:black",
+    "-c:v", "libvpx-vp9", "-b:v", "120k", "-deadline", "realtime", "-cpu-used", "8", "-an", join(home, "letterbox.webm")]);
+  ({ server, base: BASE } = await startServer({ DEBRIDTV_HOME: home }));
   await post("/api/sources", { provider: "local", dirs: [media] });
   await post("/api/scan/start", { perMinute: 600 });
   for (let i = 0; i < 150 && !channel; i++) {
@@ -105,7 +102,7 @@ async function open(prefs: object = {}, viewport = { width: 1280, height: 720 })
   return { page, ctx, media, errors };
 }
 
-const timeline = (page: any) => page.evaluate(async () => (await import("/js/player.js")).timeline());
+const timeline = (page: any) => page.evaluate(async () => (await import(`/js/${"player.js"}`)).timeline());
 const showBar = async (page: any) => {
   await page.mouse.move(100, 200);
   await page.mouse.move(120, 210);
@@ -137,7 +134,7 @@ describe("control bar", () => {
     assert.equal(media.length, before, "hovering the scrubber opens no media");
     await page.mouse.click(box.x + box.width * 0.6, box.y + box.height / 2);
     await page.waitForFunction(async () => {
-      const t = (await import("/js/player.js")).timeline();
+      const t = (await import(`/js/${"player.js"}`)).timeline();
       return t && Math.abs(t.posMs - 54_000) < 2500;
     }, null, { timeout: 8000 });
     const tl = await timeline(page);
@@ -155,7 +152,7 @@ describe("control bar", () => {
     if (next == null) return void (await closeQuietly(ctx)); // already in the last chapter
     await page.keyboard.press("Shift+ArrowRight");
     await page.waitForFunction(async (n: number) => {
-      const t = (await import("/js/player.js")).timeline();
+      const t = (await import(`/js/${"player.js"}`)).timeline();
       return t && Math.abs(t.posMs - n) < 2500;
     }, next, { timeout: 8000 });
     await closeQuietly(ctx);
@@ -171,7 +168,7 @@ describe("control bar", () => {
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
     await page.keyboard.press("ArrowLeft"); // skip back 10 s: now behind live
-    await page.waitForFunction(async () => (await import("/js/player.js")).timeShift() < 0);
+    await page.waitForFunction(async () => (await import(`/js/${"player.js"}`)).timeShift() < 0);
     await page.waitForFunction(() => !(document.getElementById("video") as HTMLVideoElement).paused && (document.getElementById("video") as HTMLVideoElement).readyState >= 3);
     await showBar(page);
     await page.click('[data-act="menu"]');
@@ -190,7 +187,7 @@ describe("control bar", () => {
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
     await page.keyboard.press("l");
-    await page.waitForFunction(async () => (await import("/js/player.js")).timeShift() === 0);
+    await page.waitForFunction(async () => (await import(`/js/${"player.js"}`)).timeShift() === 0);
     await page.waitForFunction(() => (document.getElementById("video") as HTMLVideoElement).playbackRate !== 1.5, null, { timeout: 8000 });
     await closeQuietly(ctx);
   });
@@ -250,7 +247,7 @@ describe("control bar", () => {
   it("remote: Down after Left/Right reaches the bar, Left/Right move along it, Back leaves without changing channel", async (t) => {
     if (skip) return t.skip(skip);
     const { page, ctx } = await open({ tv: "on" });
-    const ch = await page.evaluate(async () => (await import("/js/player.js")).tv.current.id);
+    const ch = await page.evaluate(async () => (await import(`/js/${"player.js"}`)).tv.current.id);
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("ArrowDown");
     assert.equal(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.act), "play");
@@ -258,7 +255,39 @@ describe("control bar", () => {
     assert.equal(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.act), "prev");
     await page.keyboard.press("Escape");
     assert.equal(await page.evaluate(() => document.body.classList.contains("pbar-on")), false);
-    assert.equal(await page.evaluate(async () => (await import("/js/player.js")).tv.current.id), ch, "still the same channel");
+    assert.equal(await page.evaluate(async () => (await import(`/js/${"player.js"}`)).tv.current.id), ch, "still the same channel");
+    await closeQuietly(ctx);
+  });
+
+  it("crops: a ratio preset clips the picture, auto crop finds letterbox bars, Off restores it", async (t) => {
+    if (skip) return t.skip(skip);
+    const { page, ctx, errors } = await open();
+    const look = () => page.evaluate(() => {
+      const v = document.getElementById("video") as HTMLVideoElement;
+      return { clip: v.style.clipPath, fit: getComputedStyle(v).objectFit, w: Math.round(v.getBoundingClientRect().width) };
+    });
+    await showBar(page);
+    await page.click('[data-act="menu"]');
+    await page.click('[data-m="page:picture"]');
+    await page.click('[data-m="page:crop"]');
+    await page.click('[data-m="cropset:2.39"]');
+    const c = await look();
+    assert.match(c.clip, /^inset\(12\.\d+% 0%\)$/, c.clip); // 16:9 to 2.39:1 cuts ~12.8% off top and bottom
+    assert.equal(c.fit, "fill");
+    await page.click('[data-m="cropset:off"]');
+    await page.waitForFunction(() => !(document.getElementById("video") as HTMLVideoElement).style.clipPath);
+    assert.equal((await look()).fit, "contain");
+    await page.route("**/letterbox.webm", (r: any) => r.fulfill({ body: readFileSync(join(home, "letterbox.webm")), contentType: "video/webm" }));
+    await page.evaluate(async () => {
+      const v = document.getElementById("video") as HTMLVideoElement;
+      v.src = "/letterbox.webm";
+      await v.play();
+    });
+    await page.waitForFunction(() => (document.getElementById("video") as HTMLVideoElement).currentTime > 0.5);
+    const crop = await page.evaluate(async () => (await import(`/js/${"avfx.js"}`)).autoCrop());
+    assert.ok(Math.abs(crop.cropT - 0.128) < 0.015 && Math.abs(crop.cropB - 0.128) < 0.015, JSON.stringify(crop));
+    assert.equal(crop.cropL + crop.cropR, 0);
+    assert.deepEqual(errors, []);
     await closeQuietly(ctx);
   });
 

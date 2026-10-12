@@ -1,6 +1,8 @@
 // Settings. Every account action here is explicit and says what it will cost:
 // connecting reads your account status and library list, scanning reads a few KB
-// per file, and nothing ever adds, removes or downloads anything in your accounts.
+// per file, and nothing removes or downloads anything in your accounts. Adding
+// happens only in the Add tab (add.js): off until you allow it, then only when you
+// press Add or drop a file in your watched folder.
 // The Library tab shows where each file stands (listed, finished at the provider,
 // timed, playable, refused) without making any provider request.
 
@@ -9,6 +11,7 @@ import { html, raw, esc, fmtBytes, fmtDur, ago, pref, setPref, toast, fmtTime } 
 import { tv, applyVolume } from "./player.js";
 import { keepFocus } from "./spatial.js";
 import { onlineCard, onlinePrivacyLine } from "./online.js";
+import { addTab, initAdd } from "./add.js";
 
 const panel = document.getElementById("panel");
 const body = document.getElementById("panel-body");
@@ -29,6 +32,16 @@ export function initPanel(changed) {
     b.textContent = "Library";
     panel.querySelector('[data-tab="sources"]')?.after(b);
   }
+  // Add (search and add to your accounts) is PC only, like Sources.
+  if (!panel.querySelector('[data-tab="add"]')) {
+    const b = document.createElement("button");
+    b.setAttribute("role", "tab");
+    b.dataset.tab = "add";
+    b.textContent = "Add";
+    const tabs = panel.querySelectorAll("[data-tab]");
+    tabs[tabs.length - 1]?.after(b);
+  }
+  initAdd(body, render);
   panel.querySelectorAll("[data-tab]").forEach((b) => {
     b.addEventListener("click", () => showTab(b.dataset.tab));
     // A remote moving along the tabs shows each one, like a TV settings menu.
@@ -42,7 +55,7 @@ let tabTimer = 0;
 
 /** `section` picks a part of a tab: openPanel("library", "ratings") opens the age ratings and focuses its search. */
 export function openPanel(which = tab, section) {
-  if (which === "sources" && document.documentElement.dataset.where === "device") which = "look"; // Sources is PC only
+  if ((which === "sources" || which === "add") && document.documentElement.dataset.where === "device") which = "look"; // Sources and Add are PC only
   if (which === "library" && (section === "ratings" || section === "files")) lib = { ...lib, view: section };
   panel.hidden = false;
   document.body.classList.add("panel-open");
@@ -77,7 +90,7 @@ const editing = () => body.contains(document.activeElement) && document.activeEl
 
 async function render() {
   try {
-    const fn = { sources, library, channels, history, meters, look, privacy }[tab];
+    const fn = { sources, library, add: addTab, channels, history, meters, look, privacy }[tab];
     const out = await fn();
     if (out != null) {
       const y = body.scrollTop;
@@ -150,7 +163,7 @@ async function sources() {
     <p class="lead">A channel can only schedule a program once its exact running time is known. DebridTV learns it by reading a few kilobytes from the start of each file. It never downloads whole files, and it only runs when you start it.</p>
     <div class="src">
       ${sc.running
-        ? html`<div class="src-head"><b>${sc.pausedUntil ? "Paused: the provider asked DebridTV to slow down" : html`Scanning${sc.current ? html`: ${sc.current}` : ""}`}</b><span class="muted">${sc.done} / ${sc.total}</span></div>
+        ? html`<div class="src-head"><b>${sc.pausedUntil ? `Paused: ${sc.pausedReason ?? "the provider asked DebridTV to slow down"}` : html`Scanning${sc.current ? html`: ${sc.current}` : ""}`}</b><span class="muted">${sc.done} / ${sc.total}</span></div>
             <div class="progressbar"><i style="width:${pct}%"></i></div>
             <div class="row-actions"><button class="btn" data-scan-stop>Stop</button><span class="muted">${sc.pausedUntil ? `Resuming in ${Math.max(0, Math.ceil((sc.pausedUntil - Date.now()) / 1000))} s` : `Pace: ${sc.perMinute} files a minute`}</span></div>`
         : html`<div class="src-head"><b>${sc.needed ? `${sc.needed} files still need a running time` : "Every file has a running time"}</b></div>
@@ -544,6 +557,8 @@ async function meters() {
         <b>${fmtBytes(m.bytes.cached ?? 0)}</b><span>served from cache (${fmtBytes(m.cache.bytes)} in ${m.cache.files} files)</span></div>` : ""}
       ${m.preload?.started ? html`<div class="stat" title="Fetched a minute before the next show on the channel you were watching. Wasted means nobody played it (you changed channel or stopped).">
         <b>${fmtBytes(m.bytes.preload ?? 0)}</b><span>next shows readied: ${m.preload.used} played, ${m.preload.wasted} wasted (${fmtBytes(m.preload.wastedBytes)})</span></div>` : ""}
+      ${m.readAhead?.peakBytes ? html`<div class="stat" title="DebridTV reads up to about a minute ahead of the show you're watching, so a slow provider doesn't freeze the picture. Bytes left over when you change channel are wasted.">
+        <b>${fmtBytes(m.readAhead.peakBytes)}</b><span>most held ahead (${fmtBytes(m.readAhead.wastedBytes)} unplayed when you left)</span></div>` : ""}
       <div class="stat"><b>${m.tunes}</b><span>channel changes</span></div>
       <div class="stat"><b>${m.streamsOpened}</b><span>streams opened</span></div>
       <div class="stat"><b>${m.streamsCancelled}</b><span>cancelled</span></div>
@@ -899,7 +914,7 @@ async function libList() {
       f.playableAt ? `played OK ${ago(f.playableAt)}` : null,
       f.watched ? "watched" : f.seenMs ? `seen ${fmtDur(f.seenMs)}` : null,
     ].filter(Boolean).join(" · ");
-    const canCheck = ["ready", "needs-scan", "problem"].includes(f.status) && f.provider !== "local";
+    const canCheck = (["ready", "needs-scan", "problem"].includes(f.status) || f.nameBlocked) && f.provider !== "local";
     const pic = f.art?.thumb ?? f.art?.poster;
     return html`<div class="li x-file" style="grid-template-columns:${pic ? "auto " : ""}1fr auto">
       ${pic ? html`<img class="x-art" src="${pic}" alt="" loading="lazy" style="width:3.2em;height:4.6em;object-fit:cover;border-radius:6px;background:var(--line)" onerror="this.remove()">` : ""}

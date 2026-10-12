@@ -64,9 +64,9 @@ test("N-01c online: off with no key; a wrong key is refused; nothing but titles,
   mock.requests.length = 0;
   await om.sync(items);
   const urls = mock.requests.map((r) => decodeURIComponent(r.url.replace(/api_key=\w+/, "")));
-  // One search per title, the show's logo list, one season, then the pictures.
+  // One search per title, the show (seasons and logos), one season, then the pictures.
   assert.deepEqual(urls.map((u) => u.split("?")[0]).sort(), [
-    "/3/search/movie", "/3/search/tv", "/3/tv/4242/images", "/3/tv/4242/season/1",
+    "/3/search/movie", "/3/search/tv", "/3/tv/4242", "/3/tv/4242/season/1",
     "/img/w1280/owls-backdrop.jpg", "/img/w500/moon-poster.jpg", "/img/w500/owls-logo.png", "/img/w500/owls-poster.jpg",
   ]);
   for (const u of urls) assert.doesNotMatch(u, /1080p|BluRay|WEB|GRP|mkv|tb:|Sign\.On/i, `only titles and years: ${u}`);

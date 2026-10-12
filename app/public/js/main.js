@@ -40,6 +40,7 @@ async function bootstrap({ keepChannel = true } = {}) {
   tv.demo = boot.demo;
   document.body.classList.toggle("demo", boot.demo);
   if (wasDemo !== undefined && wasDemo !== boot.demo) toast(boot.demo ? "Showing the demo channels." : "Your library is on the air!");
+  else if (wasDemo === undefined && boot.waiting) toast(waitingText(boot.waiting));
   let target = keepChannel && before ? tv.channels.find((c) => c.id === before) : null;
   if (!target) {
     let saved = null;
@@ -53,6 +54,13 @@ async function bootstrap({ keepChannel = true } = {}) {
   }
   if (!tv.channels.length) return;
   if (!tv.current || tv.current.id !== target.id || wasDemo !== boot.demo) await tune(target);
+}
+
+/** Why the demo is still on although a source is connected. */
+function waitingText(w) {
+  if (w.scanning) return "Your library is connected and being scanned. These are demo channels; yours replace them as soon as the first one is ready.";
+  if (w.needed) return "Your library is connected, but its files need a scan before they can air. These are demo channels; start the scan in Settings.";
+  return "Your library is connected, but nothing in it can fill a channel yet. These are demo channels.";
 }
 
 /** Called after settings change the lineup (connect, scan, hide, new channel). */
@@ -273,7 +281,9 @@ function showWelcome() {
     <div class="brand">Debrid<i>TV</i></div>
     <h1>${demo ? "These are demo channels." : "Your channels are on."}</h1>
     <p>${demo
-      ? "Made-up shows play around the clock so you can try the guide and On Demand. Skip back or ahead any time. Connect TorBox, Real-Debrid or a folder and your own library takes their place."
+      ? boot.waiting
+        ? waitingText(boot.waiting)
+        : "Made-up shows play around the clock so you can try the guide and On Demand. Skip back or ahead any time. Connect TorBox, Real-Debrid or a folder and your own library takes their place."
       : "Your shows and films play around the clock. Open the guide to see what's on, pick something On Demand, or skip back and ahead any time."}</p>
     <div class="keys tv-only">
       <div><span class="kk"><kbd>▲</kbd><kbd>▼</kbd></span><span>change channel</span></div>
@@ -301,7 +311,7 @@ function showWelcome() {
       <div><span class="kk"><kbd>S</kbd></span><span>settings</span></div>
     </div>
     <button class="btn primary" data-start>Start watching</button>
-    ${demo ? html`<button class="btn" data-sources>Connect my library</button>` : ""}
+    ${demo ? html`<button class="btn" data-sources>${boot.waiting ? "See scan progress" : "Connect my library"}</button>` : ""}
   </div>`;
   el.hidden = false;
   el.querySelector("[data-start]").focus();

@@ -13,6 +13,7 @@
 // bytes to learn exact durations — each step metered, and the scan runs only when
 // the viewer starts it.
 
+import type { Indexer } from "../src/acquire/search.ts";
 import { createHash } from "node:crypto";
 import { readdirSync, statSync, openSync, readSync, closeSync, readFileSync } from "node:fs";
 import { join, relative, extname, dirname, basename } from "node:path";
@@ -22,8 +23,8 @@ import { parseNfo, withShow, type NfoMeta } from "../src/library/nfo.ts";
 import { RATINGS, type Rating } from "../src/clock/ratings.ts";
 import { probe, type RangeReader, type Track } from "../src/library/probe.ts";
 import { AUDIO_EXT, probeAudio, tagsFromPath, type AudioTags } from "../src/library/audio.ts";
-import { RealDebridClient, TorBoxClient } from "../src/providers/clients.ts";
-import { ProviderError, providerReady, type AccountInfo, type InventoryFile, type ProviderClient } from "../src/providers/types.ts";
+import { PackMismatchError, RealDebridClient, TorBoxClient } from "../src/providers/clients.ts";
+import { ProviderError, providerReady, rdRefusedTag, type AccountInfo, type InventoryFile, type ProviderClient } from "../src/providers/types.ts";
 import { GrantCache } from "../src/tuner/grants.ts";
 import { JsonFile } from "./store.ts";
 import type { Meters } from "./meters.ts";
@@ -61,6 +62,10 @@ export interface LibItem {
   goneAt?: number;
   /** RD torrent this file was expanded from (multi-file packs only). */
   packId?: string;
+  /** Real-Debrid file whose name carries a tag RD refuses to stream (e.g. "WEB-DL"): kept off the air without asking. */
+  nameBlocked?: string;
+  /** "Check now" got a link for a name-blocked file, so the name no longer keeps it off. */
+  nameCheckedOk?: number;
   /** Media host's ETag and full size as last seen (edition evidence, see ETag notes). */
   etag?: string;
   /** Times the host sent a different ETag for the same reference (observed, not acted on). */
@@ -112,7 +117,7 @@ interface LibraryState {
   items: Record<string, LibItem>;
   refreshedAt: Partial<Record<ProviderId, number>>;
   /** RD multi-file torrents not yet expanded into per-file entries. */
-  rdPacks: Record<string, { name: string; status: string }>;
+  rdPacks: Record<string, { name: string; status: string; problem?: string }>;
   accounts?: Partial<Record<RemoteProvider, AccountState>>;
   /** Age ratings the viewer set by hand; they win over .nfo ratings. */
   ratings?: ManualRatings;
@@ -127,13 +132,28 @@ export interface Config {
   torboxKey?: string;
   rdToken?: string;
   localDirs?: string[];
+  /** Pace for opening Real-Debrid packs (one small JSON request each), per minute. Default 120. */
+  packsPerMinute?: number;
   /** Duration-scan pace (items per minute). */
   scanPerMinute?: number;
   /** Daily settings backups to keep (0 = none). Default 14. */
   backupKeep?: number;
   /** Station breaks: slot padding and mid-program breaks. Off unless the viewer turns them on (ADR-0006). */
   breaks?: boolean;
+  /** The acquisition gate (Settings → Add): off unless the viewer turns it on. */
+  allowAdding?: boolean;
+  /** Where Add sends things by default. */
+  addTo?: "torbox" | "realdebrid";
+  /** A folder whose .torrent/.magnet/.nzb files are added (only while adding is allowed). */
+  watchDir?: string;
+  /** Search sources the viewer added themselves (Torznab/Newznab). Keys never leave this PC. */
+  indexers?: Indexer[];
+  /** Search the Internet Archive too. Default on. */
+  archiveSearch?: boolean;
 }
+
+/** Files timed before any pack is opened, so a first scan shows real channels early. */
+export const HEAD_START = 24;
 
 export interface ScanState {
   running: boolean;
@@ -142,8 +162,10 @@ export interface ScanState {
   current?: string;
   lastError?: string;
   stoppedReason?: string;
-  /** Set while the scan waits out a provider's "slow down". */
+  /** Set while the scan waits out a provider's "slow down", an outage, or playback that needs the provider. */
   pausedUntil?: number;
+  /** Why it is waiting, in plain words. */
+  pausedReason?: string;
 }
 
 export interface ProviderBases {
@@ -154,7 +176,27 @@ export interface ProviderBases {
 export const PROVIDER_NAMES: Record<ProviderId, string> = { torbox: "TorBox", realdebrid: "Real-Debrid", local: "This PC", demo: "Demo" };
 
 const VIDEO_EXT = new Set([".mkv", ".mp4", ".m4v", ".avi", ".mov", ".webm", ".ts", ".m2ts", ".wmv"]);
-const RATE_LIMIT_PAUSE_MS = 60_000;
+/**
+ * Opening a pack is one /torrents/info call: no link, no media bytes. RD publishes
+ * 250 calls a minute for its API; only adding torrents has the tight 30-a-minute
+ * budget (measured by Debrid Media Manager), and link requests have their own
+ * throttle. Half of 250 leaves room for someone watching while a scan runs.
+ */
+const PACKS_PER_MINUTE = 120;
+// How long the scan first waits when a provider pushes back; each further time in a row doubles it.
+// TorBox locks a key out for about five minutes after a 429, so a shorter wait lands inside the lockout.
+// Used when the provider sends no Retry-After. A TorBox 429 locks the key out for about 300 s; a
+// Real-Debrid 429 clears in about 10 s; a 5xx on a link request is given longer.
+const BACKOFF_MS: Record<RemoteProvider, { limited: number; down: number }> = {
+  torbox: { limited: 330_000, down: 330_000 },
+  realdebrid: { limited: 30_000, down: 120_000 },
+};
+/** This many files in a row refused with a coded 5xx reads as the provider, not the files. */
+const CODED_RUN = 5;
+/** Waits in a row before the scan gives up and says why. */
+const MAX_BACKOFFS = 3;
+/** A provider's Retry-After is honored up to this long; beyond it the scan stops instead of sleeping. */
+const MAX_WAIT_MS = 15 * 60_000;
 
 export class Library {
   private readonly file = new JsonFile<LibraryState>("library.json", () => ({ items: {}, refreshedAt: {}, rdPacks: {}, accounts: {} }));
@@ -168,7 +210,14 @@ export class Library {
   private readonly bases: ProviderBases;
   private changed: () => void;
   /** Exposed for tests: how long the scan waits after a 429. */
-  rateLimitPauseMs = RATE_LIMIT_PAUSE_MS;
+  rateLimitPauseMs: number | null = null;
+  /** Per provider: no scan requests before this time. Set when playback itself was pushed back. */
+  private holdUntil: Partial<Record<ProviderId, number>> = {};
+  /** What the provider answered the last time a link request failed on its side. */
+  private lastBusy = "";
+  private lastRetryAfterMs: number | undefined;
+  /** The last 5xx carried the provider's own error code: an answer about that file, which a retry won't change. */
+  private lastBusyCoded = false;
 
   constructor(config: () => Config, meters: Meters, onChange: () => void, bases?: Partial<ProviderBases>) {
     this.config = config;
@@ -190,7 +239,7 @@ export class Library {
   }
 
   pendingPacks(): number {
-    return Object.keys(this.file.get().rdPacks).length;
+    return Object.values(this.file.get().rdPacks).filter((p) => !p.problem).length;
   }
 
   account(provider: RemoteProvider): AccountState | undefined {
@@ -201,7 +250,7 @@ export class Library {
   accountUsable(provider: ProviderId): boolean {
     if (provider !== "torbox" && provider !== "realdebrid") return true;
     const a = this.account(provider);
-    return !(a && (a.premium === false || a.errorKind === "auth"));
+    return !(a && (a.premium === false || a.errorKind === "auth" || a.errorKind === "account"));
   }
 
   client(provider: ProviderId): ProviderClient | null {
@@ -225,7 +274,7 @@ export class Library {
       a = await client.account();
     } catch (e) {
       const kind = e instanceof ProviderError ? e.kind : "unknown";
-      a = { checkedAtMs: Date.now(), errorKind: kind, error: kind === "auth" ? `${PROVIDER_NAMES[provider]} no longer accepts this key` : plainError(e) };
+      a = { checkedAtMs: Date.now(), errorKind: kind, error: kind === "auth" ? `${PROVIDER_NAMES[provider]} no longer accepts this key` : kind === "account" ? `${PROVIDER_NAMES[provider]} refused the account (locked, or premium ended)` : plainError(e) };
       if (kind === "auth") {
         this.saveAccount(provider, a);
         throw e;
@@ -324,6 +373,7 @@ export class Library {
       it.availabilityReason = undefined;
       it.goneAt = undefined;
     }
+    if (f.provider === "realdebrid") this.applyNameBlock(it);
     // Same reference, different size: a different file now sits behind it. Its
     // running time must be learned again rather than assumed (gate D4).
     if (prev && prev.bytes !== f.bytes && prev.durationMs != null) {
@@ -333,6 +383,42 @@ export class Library {
     }
     state.items[id] = it;
     return { id, added: !prev };
+  }
+
+  /**
+   * Real-Debrid refuses to stream files whose names carry certain release tags.
+   * Such a file is marked refused from its name alone, with no request, so the
+   * scan skips it and another source's copy airs instead (N-01d). A file that has
+   * played before, or that "Check now" got a link for, isn't held back by its name.
+   * Re-applied on every list refresh, so a change to the list frees files again.
+   */
+  private applyNameBlock(it: LibItem): void {
+    const tag = rdRefusedTag(it.name);
+    const byName = it.availability === "policy-blocked" && !!it.nameBlocked && it.availabilityReason === nameReason(it.nameBlocked);
+    if (tag && !it.nameCheckedOk && !it.playableAt) {
+      if (it.availability !== "policy-blocked" || byName) {
+        it.availability = "policy-blocked";
+        it.availabilityReason = nameReason(tag);
+        it.availabilityAt ??= Date.now();
+      }
+      it.nameBlocked = tag;
+      return;
+    }
+    if (byName) {
+      it.availability = "listed";
+      it.availabilityReason = undefined;
+    }
+    delete it.nameBlocked;
+  }
+
+  /** "Check now" got a link for a file its name had kept off the air. */
+  clearNameBlock(id: string): void {
+    this.file.update((s) => {
+      const it = s.items[id];
+      if (!it) return;
+      it.nameCheckedOk = Date.now();
+      delete it.nameBlocked;
+    });
   }
 
   /** Walk local folders the viewer chose. No network. */
@@ -436,48 +522,146 @@ export class Library {
     this.scan = { running: true, done: 0, total: this.needsScan() };
     this.changed();
     try {
-      await this.expandPacks(gap);
+      // A head start: time a few files that are already listed before opening packs, so the
+      // first real channels are on the air within a minute instead of after every pack.
+      if (this.pendingPacks() && !(await this.probeQueue(this.scanQueue().slice(0, HEAD_START), gap))) return;
+      const packsPerMinute = Math.max(perMinute, Math.min(240, this.config().packsPerMinute ?? PACKS_PER_MINUTE));
+      await this.expandPacks(60_000 / packsPerMinute);
       const queue = this.scanQueue();
       this.scan.total = this.scan.done + queue.length;
-      let limitedInARow = 0;
-      for (let i = 0; i < queue.length; i++) {
-        const it = queue[i]!;
-        if (this.scanStop) break;
-        const t0 = Date.now();
-        this.scan.current = it.parsed.kind === "episode" ? it.parsed.show : it.parsed.kind === "movie" ? it.parsed.title : it.name;
-        const outcome = await this.probeOne(it);
-        if (outcome === "rate-limited") {
-          if (++limitedInARow >= 2) {
-            this.scan.stoppedReason = `${PROVIDER_NAMES[it.provider]} asked DebridTV to slow down twice. Try again later or pick a slower pace.`;
-            break;
-          }
-          this.scan.pausedUntil = Date.now() + this.rateLimitPauseMs;
-          this.meters.log("api", `${PROVIDER_NAMES[it.provider]} said slow down; pausing the scan for ${Math.round(this.rateLimitPauseMs / 1000)} s`);
-          this.changed();
-          await this.pause(this.rateLimitPauseMs);
-          this.scan.pausedUntil = undefined;
-          i--; // the same file, once more, after the pause
-          continue;
-        }
-        limitedInARow = 0;
-        if (outcome === "auth") {
-          this.scan.stoppedReason = `${PROVIDER_NAMES[it.provider]} rejected the key`;
-          break;
-        }
-        this.scan.done++;
-        this.changed();
-        if (this.scanStop) break;
-        if (it.provider !== "local") await this.pause(Math.max(0, gap - (Date.now() - t0)));
-      }
+      await this.probeQueue(queue, gap);
     } catch (e) {
       this.scan.lastError = plainError(e);
       if (e instanceof ProviderError && e.kind === "auth") this.scan.stoppedReason = "The provider rejected the key";
     } finally {
       this.scan.running = false;
       this.scan.current = undefined;
-      this.scan.pausedUntil = undefined;
+      this.scan.pausedUntil = this.scan.pausedReason = undefined;
       this.changed();
     }
+  }
+
+  /**
+   * Probe these files at the scan's pace. False when the scan must end (stopped, key rejected,
+   * or the provider kept pushing back). A provider that says "slow down" (429) or fails link
+   * requests (5xx) is left alone for a while, longer each time in a row, and the scan resumes
+   * by itself; after MAX_BACKOFFS waits with no success it stops and says why.
+   */
+  private async probeQueue(queue: LibItem[], gap: number): Promise<boolean> {
+    let busyRun = 0;
+    let codedRun = 0;
+    let retried: string | null = null;
+    /** Files given up on during the current run of failures; cleared again if the provider turns out to be the cause. */
+    let blamed: string[] = [];
+    const blame = (it: LibItem) => {
+      this.file.update((s) => {
+        const t = s.items[it.id];
+        if (t) t.probe = { at: Date.now(), bytes: 0, error: `The provider had a problem (${this.lastBusy})` };
+      });
+      blamed.push(it.id);
+      this.scan.done++;
+    };
+    for (let i = 0; i < queue.length; i++) {
+      const it = queue[i]!;
+      if (this.scanStop) return false;
+      if (it.provider !== "local") await this.waitForPlayback(it.provider);
+      if (this.scanStop) return false;
+      const t0 = Date.now();
+      this.scan.current = it.parsed.kind === "episode" ? it.parsed.show : it.parsed.kind === "movie" ? it.parsed.title : it.name;
+      const outcome = await this.probeOne(it);
+      if (outcome === "rate-limited" || outcome === "provider-down") {
+        const coded = outcome === "provider-down" && this.lastBusyCoded;
+        if (coded) {
+          // The provider's own answer about this file: noted, not retried. Only a run of them means the provider.
+          blame(it);
+          if (++codedRun < CODED_RUN) {
+            this.changed();
+            await this.pause(Math.max(0, gap - (Date.now() - t0)));
+            continue;
+          }
+          codedRun = 0;
+        }
+        const name = PROVIDER_NAMES[it.provider];
+        if (++busyRun > MAX_BACKOFFS) {
+          this.scan.stoppedReason = outcome === "rate-limited"
+            ? `${name} kept asking DebridTV to slow down. The scan stopped; start it again later or pick a slower pace.`
+            : `${name} kept failing link requests (${this.lastBusy}). The scan stopped so playback isn't held up; start it again later.`;
+          this.clearProbeErrors(blamed);
+          return false;
+        }
+        // Longer each time in a row, never sooner than the provider itself asked for, and slower afterwards.
+        const ms = Math.min(MAX_WAIT_MS, Math.max(this.backoffMs(it.provider as RemoteProvider, outcome) * 2 ** (busyRun - 1), this.lastRetryAfterMs ?? 0));
+        gap = Math.min(10_000, gap * 1.5);
+        this.scan.pausedUntil = Date.now() + ms;
+        this.scan.pausedReason = outcome === "rate-limited" ? `${name} asked DebridTV to slow down` : `${name} is having trouble`;
+        this.meters.log("api", `${this.scan.pausedReason}; pausing the scan for ${Math.round(ms / 1000)} s`);
+        this.changed();
+        await this.pause(ms);
+        this.scan.pausedUntil = this.scan.pausedReason = undefined;
+        if (coded) {
+          // A run of refusals was the provider after all: those files get another chance on the next scan.
+          this.clearProbeErrors(blamed);
+          blamed = [];
+        } else if (outcome === "provider-down" && retried === it.id) {
+          // Failed twice with a wait between: more likely this file than the provider. Note it and try the next one.
+          blame(it);
+        } else {
+          retried = it.id;
+          i--; // the same file, once more, after the wait
+        }
+        continue;
+      }
+      busyRun = codedRun = 0;
+      blamed = [];
+      if (outcome === "auth") {
+        this.scan.stoppedReason = `${PROVIDER_NAMES[it.provider]} rejected the key`;
+        return false;
+      }
+      if (outcome === "account") {
+        this.scan.stoppedReason = `${PROVIDER_NAMES[it.provider]} refused the account (locked, or premium ended). Signing in again won't help; check the account on its website.`;
+        void this.checkAccount(it.provider as RemoteProvider).catch(() => {});
+        return false;
+      }
+      this.scan.done++;
+      this.changed();
+      if (this.scanStop) return false;
+      if (it.provider !== "local") await this.pause(Math.max(0, gap - (Date.now() - t0)));
+    }
+    return true;
+  }
+
+  private backoffMs(provider: RemoteProvider, outcome: "rate-limited" | "provider-down"): number {
+    return this.rateLimitPauseMs ?? BACKOFF_MS[provider][outcome === "rate-limited" ? "limited" : "down"];
+  }
+
+  private clearProbeErrors(ids: string[]): void {
+    if (!ids.length) return;
+    this.file.update((s) => {
+      for (const id of ids) if (s.items[id]?.durationMs == null) s.items[id]!.probe = undefined;
+    });
+  }
+
+  /**
+   * Playback was pushed back by the provider (429 or 5xx on its link request): what the viewer is
+   * watching comes first, so the scan asks this provider for nothing until the wait is over.
+   */
+  playbackPushedBack(provider: RemoteProvider, outcome: "rate-limited" | "provider-down", retryAfterMs?: number): void {
+    const ms = Math.min(MAX_WAIT_MS, Math.max(this.backoffMs(provider, outcome), retryAfterMs ?? 0));
+    if ((this.holdUntil[provider] ?? 0) >= Date.now() + ms) return;
+    this.holdUntil[provider] = Date.now() + ms;
+    if (this.scan.running) this.meters.log("api", `${PROVIDER_NAMES[provider]} pushed back on playback; the scan is leaving it alone for ${Math.round(ms / 1000)} s`);
+  }
+
+  private async waitForPlayback(provider: ProviderId): Promise<void> {
+    const left = () => (this.holdUntil[provider] ?? 0) - Date.now();
+    if (left() <= 0) return;
+    while (left() > 0 && !this.scanStop) {
+      this.scan.pausedUntil = Date.now() + left();
+      this.scan.pausedReason = `playback comes first while ${PROVIDER_NAMES[provider]} is busy`;
+      this.changed();
+      await this.pause(left());
+    }
+    this.scan.pausedUntil = this.scan.pausedReason = undefined;
   }
 
   /** A sleep that Stop can cut short. */
@@ -500,8 +684,20 @@ export class Library {
     if (!rd || !this.accountUsable("realdebrid")) return;
     for (const [tid, pack] of Object.entries(state.rdPacks)) {
       if (this.scanStop) return;
+      if (pack.problem) continue;
       this.scan.current = pack.name;
-      const files = await rd.expand(tid);
+      let files;
+      try {
+        files = await rd.expand(tid);
+      } catch (e) {
+        if (!(e instanceof PackMismatchError)) throw e;
+        // Left unopened with the reason; a later library refresh lists it afresh.
+        pack.problem = e.message;
+        this.file.set(state);
+        this.meters.log("error", `${pack.name.slice(0, 40)}: ${e.message}`);
+        await this.pause(gap);
+        continue;
+      }
       for (const f of files) state.items[this.upsert(state, f).id]!.packId = tid;
       delete state.rdPacks[tid];
       this.file.set(state);
@@ -515,10 +711,10 @@ export class Library {
    * Read one file's header for its running time and codecs. Returns what happened
    * so the scan can pace itself; the item itself records the facts.
    */
-  async probeOne(it: LibItem): Promise<"ok" | "failed" | "policy" | "rate-limited" | "auth"> {
+  async probeOne(it: LibItem): Promise<"ok" | "failed" | "policy" | "rate-limited" | "provider-down" | "auth" | "account"> {
     const state = this.file.get();
     const target = state.items[it.id]!;
-    let outcome: "ok" | "failed" | "policy" | "rate-limited" | "auth" = "ok";
+    let outcome: "ok" | "failed" | "policy" | "rate-limited" | "provider-down" | "auth" | "account" = "ok";
     try {
       let read: RangeReader;
       if (it.provider === "local") {
@@ -579,8 +775,23 @@ export class Library {
         outcome = "policy";
       } else if (kind === "auth") {
         outcome = "auth";
+      } else if (kind === "account") {
+        outcome = "account";
+      } else if (kind === "gone") {
+        target.availability = "unavailable";
+        target.availabilityReason = `${PROVIDER_NAMES[it.provider]} no longer has this file`;
+        target.availabilityAt = Date.now();
+        target.probe = { at: Date.now(), bytes: 0, error: "gone" };
+        outcome = "failed";
       } else if (kind === "rate-limited") {
         outcome = "rate-limited"; // not the file's fault: nothing recorded against it
+        this.lastRetryAfterMs = (e as ProviderError).retryAfterMs;
+      } else if (kind === "transient") {
+        // A 5xx on the link request is usually the provider, not the file: the scan decides after a wait.
+        this.lastBusy = `HTTP ${(e as ProviderError).status}`;
+        this.lastRetryAfterMs = (e as ProviderError).retryAfterMs;
+        outcome = "provider-down";
+        this.lastBusyCoded = /"error_code"\s*:\s*\d/.test((e as ProviderError).message);
       } else if (kind === "not-ready") {
         target.ready = false;
         target.availabilityReason = `${PROVIDER_NAMES[it.provider]} says it isn't ready yet`;
@@ -719,9 +930,9 @@ export class Library {
   }
 
   /** Clock-facing view: identity, timing and age rating. Availability is not included on purpose. */
-  mediaItems(): MediaItem[] {
+  mediaItems(items: LibItem[] = this.items()): MediaItem[] {
     const manual = this.manualRatings();
-    return this.items().flatMap((i) => {
+    return items.flatMap((i) => {
       if (i.parsed.kind === "other" && !airsAsExtra(i)) return [];
       return [{
         id: i.id,
@@ -912,6 +1123,8 @@ export function breakpoints(i: { durationMs: number | null; chaptersMs?: number[
 export type FileStatus = "ready" | "needs-scan" | "not-ready" | "refused" | "gone" | "account" | "problem" | "excluded" | "other";
 
 /** Real-Debrid torrent states that mean "this won't finish by itself". */
+const nameReason = (tag: string) => `Real-Debrid won't stream files with "${tag}" in the name`;
+
 const FAILED_STATES = new Set(["magnet_error", "error", "virus", "dead"]);
 
 export const STATUS_ORDER: FileStatus[] = ["ready", "needs-scan", "not-ready", "refused", "account", "problem", "gone", "excluded", "other"];
@@ -925,6 +1138,8 @@ export function fileStatus(it: LibItem, account?: AccountState): { status: FileS
   const who = PROVIDER_NAMES[it.provider];
   if (!it.present)
     return { status: "gone", message: it.provider === "local" ? "No longer in your folders." : `No longer in your ${who} library. DebridTV keeps its history but won't schedule it.` };
+  if (it.availability === "policy-blocked" && it.nameBlocked)
+    return { status: "refused", message: `${who} won't stream files with "${it.nameBlocked}" in their name, so DebridTV skips this copy without asking. Another source's copy airs if you have one. "Check now" asks ${who} once.` };
   if (it.availability === "policy-blocked")
     return { status: "refused", message: `${who} refused this file. DebridTV won't retry it or fetch it from anywhere else.` };
   if (it.excluded) return { status: "excluded", message: "You kept this off the air." };
@@ -936,11 +1151,13 @@ export function fileStatus(it: LibItem, account?: AccountState): { status: FileS
         ? `${who} reports this one failed (it says "${it.providerState}"). DebridTV won't try to repair it.`
         : `${who} hasn't finished storing this (it says "${it.providerState}"). DebridTV never asks a provider to download anything.`,
     };
-  if (account && (account.premium === false || account.errorKind === "auth"))
+  if (account && (account.premium === false || account.errorKind === "auth" || account.errorKind === "account"))
     return {
       status: "account",
       message: account.errorKind === "auth"
         ? `${who} no longer accepts your key. Reconnect it in Sources.`
+        : account.errorKind === "account"
+        ? `${who} refused your account (locked, or premium ended). Check it on ${who}'s website; signing in again won't help.`
         : `Your ${who} premium ${account.premiumUntilMs ? `ended ${new Date(account.premiumUntilMs).toLocaleDateString()}` : "has ended"}. Links won't work until it's renewed.`,
     };
   if (it.availability === "unavailable" || (it.probe?.error && it.durationMs == null))

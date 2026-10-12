@@ -33,12 +33,16 @@ import { ORDERINGS } from "../src/clock/ordering.ts";
 import { demoItems } from "./demo.ts";
 import { backupIfDue, listBackups, readBackup } from "./backups.ts";
 import { EdgeCache, HEAD_BYTES, TAIL_BYTES } from "./edgecache.ts";
+import { pipeWithReadAhead, readAheadBytes, READ_AHEAD_AFTER_MS } from "./readahead.ts";
 import { PinLock } from "./pinlock.ts";
 import { OnlineMetadata } from "./metadata/tmdb.ts";
 import { allowedUnder } from "../src/clock/ratings.ts";
 import { SilenceJob, type SilenceTarget } from "./silence.ts";
+import { ShowIdentity, showRoutes } from "./shows.ts";
 import { browse as onDemandBrowse, continueWatching, show as onDemandShow, type OnDemandDeps } from "./ondemand.ts";
 import { LanAccess, type LanOptions } from "./lan/access.ts";
+import { showGaps } from "./missing.ts";
+import { acquireRoutes, type AcquireRouteDeps } from "./acquire-routes.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(HERE, "public");
@@ -57,8 +61,12 @@ export interface AppOptions {
   timers?: boolean;
   /** TMDB API and image bases; tests point these at a recorded mock. */
   tmdb?: { apiBase?: string; imageBase?: string; spacingMs?: number };
+  /** How long a stream stays open before it reads ahead (default READ_AHEAD_AFTER_MS); tests shorten it. */
+  readAheadAfterMs?: number;
   /** Home network access options (tests simulate a TV's address with `peer`). */
   lan?: Pick<LanOptions, "peer" | "addresses" | "listen" | "now">;
+  /** Settings → Add: the Internet Archive's address and shorter waits (tests). */
+  acquire?: Pick<AcquireRouteDeps, "archiveBase" | "timing">;
 }
 
 interface HistoryState {
@@ -85,6 +93,18 @@ const demo = demoItems();
 const pin = new PinLock();
 // Online posters and descriptions (off until the viewer enters a TMDB key). Reads its disk cache only, never waits on TMDB.
 const online = new OnlineMetadata({ ...opts.tmdb, log: (d) => meters.log("api", d) });
+/** One show, one name, whatever the files call it (show identity). */
+const shows = new ShowIdentity({ idsOf: (i) => idsOf(i), tmdbShow: (id) => online.show(id) });
+// Search and Add (off until the viewer allows adding; PC only).
+const acquire = acquireRoutes({
+  config,
+  bases: { realdebrid: "https://api.real-debrid.com", torbox: "https://api.torbox.app", ...opts.bases },
+  counter: meters.api,
+  log: (d) => meters.log("api", d),
+  onAdded: (provider) => void library.refresh(provider).then(() => scheduleRebuild(), (e) => meters.log("error", `After adding: ${plainError(e)}`)),
+  timers: opts.timers,
+  ...opts.acquire,
+});
 /** Which items only locked channels carry; recomputed after every rebuild or lock change. */
 let lockSets: { gen: number; locked: Set<string>; open: Set<string> } | null = null;
 let lockGen = 0;
@@ -109,7 +129,7 @@ function isConnected(provider: string): boolean {
 }
 /** Library items from sources that are still connected. A disconnected source leaves the air. */
 function liveLibrary(): LibItem[] {
-  return library.items().filter((i) => isConnected(i.provider));
+  return shows.apply(library.items().filter((i) => isConnected(i.provider)));
 }
 function isWatched(id: string, durationMs: number | null | undefined): boolean {
   const m = historyFile.get().manual?.[id];
@@ -148,7 +168,7 @@ function allItems(): LibItem[] {
   return isDemo() ? demo : liveLibrary();
 }
 function itemById(id: string): LibItem | undefined {
-  return id.startsWith("demo-") ? demo.find((d) => d.id === id) : library.get(id);
+  return id.startsWith("demo-") ? demo.find((d) => d.id === id) : shows.view(library.get(id));
 }
 function lineup(): Lineup {
   return isDemo() ? demoLineup : liveLineup;
@@ -171,7 +191,7 @@ function rebuild() {
   // Live channels are kept in sync even while the demo is showing, so the switch is seamless.
   const liveItems = liveLibrary();
   const ids = new Set(liveItems.map((i) => i.id));
-  const liveClock = new StationClock(library.mediaItems().filter((m) => ids.has(m.id)));
+  const liveClock = new StationClock(library.mediaItems(liveItems).filter((m) => ids.has(m.id)));
   // Edge cache keeps only files still in the library, present and not refused.
   edge.keepOnly((id) => {
     const it = library.get(id);
@@ -624,7 +644,21 @@ async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, i
       meters.cache = { bytes: edge.bytes(), files: edge.entries() };
     });
     body.on("error", () => {});
-    body.pipe(res);
+    // Hold up to about a minute of the file past what the player has taken, so a
+    // provider that goes quiet mid-show drains this first (EXP-012).
+    // The browser opens a new range request now and then while one show plays, so the
+    // 10 s wait counts from when this file started streaming, not from this request.
+    const t = Date.now();
+    const st = streaming.get(id);
+    const since = st && t - st.last < 30_000 ? st.since : t;
+    streaming.set(id, { since, last: t });
+    if (streaming.size > 20) streaming.delete(streaming.keys().next().value!);
+    pipeWithReadAhead(body, res, readAheadBytes(it.bytes, it.durationMs), (r) => {
+      meters.readAhead.wastedBytes += r.unsent;
+      const cur = streaming.get(id);
+      if (cur) cur.last = Date.now();
+    }, Math.max(0, since + (opts.readAheadAfterMs ?? READ_AHEAD_AFTER_MS) - t),
+    (n) => (meters.readAhead.peakBytes = Math.max(meters.readAhead.peakBytes, n)));
   } catch (e) {
     if (ac.signal.aborted) return;
     if (e instanceof ProviderError && e.kind === "policy") {
@@ -634,9 +668,10 @@ async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, i
       scheduleRebuild();
       return json(res, 451, { error: "policy", message: `${PROVIDER_NAMES[it.provider]} refused this file. DebridTV won't retry it or fetch it elsewhere.` });
     }
-    if (e instanceof ProviderError && e.kind === "auth") void library.checkAccount(it.provider as RemoteProvider).catch(() => {});
-    // A rate limit is about the account, not this file: don't mark the file.
-    if (!(e instanceof ProviderError && e.kind === "rate-limited")) library.markAvailability(id, "unavailable", plainError(e));
+    if (e instanceof ProviderError && (e.kind === "auth" || e.kind === "account")) void library.checkAccount(it.provider as RemoteProvider).catch(() => {});
+    // A rate limit or a provider outage is about the account, not this file: don't mark the file, and make the scan wait.
+    if (e instanceof ProviderError && (e.kind === "rate-limited" || e.kind === "transient")) library.playbackPushedBack(it.provider as RemoteProvider, e.kind === "rate-limited" ? "rate-limited" : "provider-down", e.retryAfterMs);
+    else library.markAvailability(id, "unavailable", plainError(e));
     meters.log("error", `${label}: ${plainError(e)}`);
     json(res, 502, { error: plainError(e) });
   }
@@ -881,6 +916,8 @@ function collectSubs(tok: string, stream: NodeJS.ReadableStream) {
 
 
 const liveStarts = new Map<string, number>();
+/** When each file started streaming to a viewer, and when it was last read (read-ahead waits 10 s from the start). */
+const streaming = new Map<string, { since: number; last: number }>();
 
 // ---------------------------------------------------------------- http
 
@@ -906,10 +943,16 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   const m = req.method ?? "GET";
   const body = m === "POST" || m === "PUT" ? await readJson(req) : {};
 
+  if (p.startsWith("/api/acquire/") || p === "/api/indexers" || p.startsWith("/api/indexers/")) {
+    const r = await acquire.handle(p, m, url, body);
+    if (r) return json(res, r.status, r.body);
+  }
   if (p === "/api/bootstrap") {
     return json(res, 200, {
       now: Date.now(),
       demo: isDemo(),
+      // Sources are connected but no channel exists yet: the demo is a stand-in while running times are learned.
+      waiting: isDemo() && Object.values(connected()).some(Boolean) ? { scanning: library.scan.running, needed: library.needsScan() } : null,
       channels: lineup().channels().map(channelView),
       ffmpeg: !!ffmpeg,
       breaks: !!config.get().breaks,
@@ -1083,6 +1126,17 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     const v = liveStarts.get(url.searchParams.get("tok") ?? "");
     return v == null ? json(res, 404, { pending: true }) : json(res, 200, { startMs: v });
   }
+  if (p === "/api/missing" && m === "GET") {
+    // What's missing / New this week for one show (TMDB air dates; information only, nothing is added).
+    const g = isDemo() ? null : await showGaps(url.searchParams.get("showKey") ?? "", {
+      items: liveLibrary(),
+      locked: lockedItem,
+      showOf: usableLibrary(liveLibrary(), idsOf).showOf,
+      online,
+      timeZone: stationTimeZone(),
+    });
+    return g ? json(res, 200, g) : json(res, 404, { error: "Missing episodes can't be checked for this show." });
+  }
   if (p === "/api/meters") return json(res, 200, meters.snapshot());
   if (p === "/api/metadata" && m === "GET") return json(res, 200, online.status());
   if (p === "/api/metadata" && m === "POST") {
@@ -1213,7 +1267,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       files: rows.slice(offset, offset + limit).map(({ it, status, message }) => ({
         id: it.id, title: displayTitle(it), name: it.name, provider: it.provider, status, message, art: artView(it),
         kind: it.parsed.kind, durationMs: it.durationMs, bytes: it.bytes, providerState: it.providerState,
-        container: it.container, video: it.video, audio: it.audio, excluded: !!it.excluded,
+        container: it.container, video: it.video, audio: it.audio, excluded: !!it.excluded, nameBlocked: it.nameBlocked ?? null,
         checkedAt: it.availabilityAt ?? null, playableAt: it.playableAt ?? null, goneAt: it.goneAt ?? null,
         etagChanges: it.etagChanges ?? 0, watched: isWatched(it.id, it.durationMs), seenMs: ledger.seenMs(it.id),
         ...(copies.has(it.id) ? { copies: copies.get(it.id) } : {}),
@@ -1229,7 +1283,8 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     const it = library.get(String(body.id ?? ""));
     if (!it || !isConnected(it.provider)) return json(res, 404, { error: "unknown item" });
     const st = fileStatus(it, accountOf(it.provider));
-    if (st.status === "refused") return json(res, 409, { error: "refused", message: st.message });
+    // A file kept off only by its name was never asked about, so one check is allowed.
+    if (st.status === "refused" && !it.nameBlocked) return json(res, 409, { error: "refused", message: st.message });
     if (st.status === "not-ready") return json(res, 409, { error: "not-ready", message: st.message });
     if (st.status === "gone") return json(res, 409, { error: "gone", message: st.message });
     if (it.provider === "local") {
@@ -1241,6 +1296,10 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     try {
       library.grants.invalidate(client, it.ref);
       await library.grants.get(client, it.ref);
+      if (it.nameBlocked) {
+        library.clearNameBlock(it.id);
+        scheduleRebuild();
+      }
       library.markAvailability(it.id, "playable");
       return json(res, 200, { ok: true, message: `${PROVIDER_NAMES[it.provider]} gave a playback link just now.` });
     } catch (e) {
@@ -1317,6 +1376,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     rebuild();
     return json(res, 200, { ok: true });
   }
+  if (showRoutes(shows, () => (isDemo() ? demo : library.items().filter((i) => isConnected(i.provider))), p, m, body, url.searchParams, guarded, (s, b) => json(res, s, b), scheduleRebuild)) return;
   if (p === "/api/ondemand" && m === "GET") {
     const k = url.searchParams.get("kind");
     return json(res, 200, onDemandBrowse(onDemandDeps(), url.searchParams.get("q") ?? "", k === "show" || k === "movie" ? k : "all"));
@@ -1712,6 +1772,7 @@ return {
     library.stopScan("Shutting down");
     silenceJob.halt();
     online.stop();
+    acquire.stop();
     return lan.stop().then(() => new Promise((r) => {
       server.closeAllConnections();
       server.close(() => r());

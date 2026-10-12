@@ -45,6 +45,8 @@ export interface OnlineTitle {
   images: Partial<Record<OnlineKind, string>>;
   /** TMDB paths not downloaded yet (a failed or interrupted fetch). */
   pending?: Partial<Record<OnlineKind, string>>;
+  /** A show's seasons as TMDB numbers them (names like "Stardust Crusaders", episode counts), for show identity. */
+  seasonList?: Array<{ season: number; name?: string; episodes?: number }>;
   /** Seasons fetched (episode names and overviews), or a time to try again. */
   seasons?: Record<string, { at: number; episodes: Record<string, { name?: string; overview?: string }> } | { at: number; missing: true }>;
   at: number;
@@ -54,6 +56,30 @@ interface CacheState {
   /** "tv|the office|2005" → TMDB id, or null when TMDB had nothing. */
   lookups: Record<string, { id: number | null; at: number }>;
   titles: Record<string, OnlineTitle>;
+  /** Air dates per TMDB show id, for "What's missing" (showSchedule). */
+  shows?: Record<string, ShowSchedule>;
+}
+/** How long a show's air dates are kept before asking TMDB again. */
+const SCHEDULE_TTL = 12 * 3_600_000;
+
+export interface AirEpisode {
+  season: number;
+  episode: number;
+  /** YYYY-MM-DD, as TMDB lists it. */
+  airDate: string;
+  name?: string;
+}
+/** What TMDB says has aired and is coming, for one show. */
+export interface ShowSchedule {
+  id: number;
+  name: string;
+  /** Every season TMDB lists (0 is specials), with its episode count so far. */
+  seasons: Array<{ season: number; episodeCount: number; airDate?: string }>;
+  lastAired: AirEpisode | null;
+  nextAir: AirEpisode | null;
+  /** Episode air dates and names, only for the season on the air now (and the one before, around a premiere). */
+  episodes: Record<string, Array<{ episode: number; airDate?: string; name?: string }>>;
+  at: number;
 }
 interface KeyState {
   key?: string;
@@ -175,6 +201,13 @@ export class OnlineMetadata {
     return t ? String(t.id) : undefined;
   }
 
+  /** A show's name and seasons from the cache, by TMDB id (show identity: arcs that are seasons). Reads the cache only. */
+  show(tmdbId: string): { name?: string; seasons?: Array<{ season: number; name?: string; episodes?: number }> } | undefined {
+    if (!this.keyFile.get().key) return undefined;
+    const t = this.cache.get().titles[`tv:${tmdbId}`];
+    return t ? { name: t.name, ...(t.seasonList ? { seasons: t.seasonList } : {}) } : undefined;
+  }
+
   /** Which picture kinds the cache has for an item. */
   kinds(it: LibItem | undefined): OnlineKind[] {
     const t = this.titleFor(it);
@@ -283,6 +316,8 @@ export class OnlineMetadata {
       let w = out.get(q.key);
       const add = () => (w ??= (out.set(q.key, { key: q.key, media: q.media, title: q.title, year: q.year, seasons: new Set() }), out.get(q.key)!));
       if (!hit || (hit.id == null && now - hit.at >= MISS_TTL) || (t && needsArt && t.pending && Object.keys(t.pending).length)) add();
+      // Shows matched before season lists were kept: one more request each.
+      if (t && q.media === "tv" && !t.seasonList) add();
       if (it.parsed.kind === "episode" && needsText) {
         const s = t?.seasons?.[String(it.parsed.season)];
         const retry = s && "missing" in s && now - s.at >= MISS_TTL;
@@ -353,14 +388,22 @@ export class OnlineMetadata {
         return false;
       }
       found = true;
-      if (w.media === "tv") {
-        // Clear logos for show channels and banners; English or language-free.
-        const imgs = await this.getJson<{ logos?: Array<{ file_path?: string; iso_639_1?: string | null }> }>(`/tv/${best.id}/images`, { include_image_language: `${this.language().slice(0, 2)},null` });
-        const logo = (imgs.logos ?? []).find((l) => l.file_path && /\.png$/i.test(l.file_path));
-        if (logo?.file_path) this.cache.update((s) => void (s.titles[`tv:${best.id}`]!.pending!.logo = logo.file_path!));
-      }
     }
     const key = `${w.media}:${hit.id}`;
+    if (w.media === "tv" && !this.cache.get().titles[key]?.seasonList) {
+      // One request: the show's seasons (names and episode counts) and its clear logos, English or language-free.
+      const d = await this.getJson<{ seasons?: Array<{ season_number?: number; name?: string; episode_count?: number }>; images?: { logos?: Array<{ file_path?: string }> } }>(
+        `/tv/${hit.id}`, { append_to_response: "images", include_image_language: `${this.language().slice(0, 2)},null` });
+      const logo = (d.images?.logos ?? []).find((l) => l.file_path && /\.png$/i.test(l.file_path));
+      const seasonList = (d.seasons ?? []).filter((x) => typeof x.season_number === "number")
+        .map((x) => ({ season: x.season_number!, ...(x.name ? { name: x.name } : {}), ...(x.episode_count ? { episodes: x.episode_count } : {}) }));
+      this.cache.update((st) => {
+        const tt = st.titles[key];
+        if (!tt) return;
+        tt.seasonList = seasonList;
+        if (logo?.file_path && !tt.images.logo) (tt.pending ??= {}).logo = logo.file_path;
+      });
+    }
     for (const season of w.seasons) {
       const t = this.cache.get().titles[key];
       const s = t?.seasons?.[String(season)];
@@ -456,6 +499,67 @@ export class OnlineMetadata {
     renameSync(tmp, join(this.imgDir, name));
     return name;
   }
+
+  /**
+   * Air dates for a show the cache already matched, for "What's missing". Sends only
+   * the TMDB id: one /tv/{id} request, plus the season on the air now (and the one
+   * before, around a premiere) for episode dates and names. Kept 12 hours; when TMDB
+   * can't be reached the last answer is used.
+   */
+  async showSchedule(tmdbId: number): Promise<ShowSchedule | null> {
+    if (!this.enabled() || this.stopped || !Number.isInteger(tmdbId) || tmdbId <= 0) return null;
+    const id = String(tmdbId);
+    const cached = this.cache.get().shows?.[id];
+    if (cached && Date.now() - cached.at < SCHEDULE_TTL) return cached;
+    type Ep = { season_number?: number; episode_number?: number; air_date?: string | null; name?: string } | null | undefined;
+    const ref = (e: Ep): AirEpisode | null =>
+      e?.season_number != null && e.episode_number != null && e.air_date
+        ? { season: e.season_number, episode: e.episode_number, airDate: e.air_date, ...(e.name ? { name: e.name } : {}) }
+        : null;
+    const before = this.requests;
+    try {
+      const d = await this.getJson<{
+        name?: string;
+        seasons?: Array<{ season_number?: number; episode_count?: number; air_date?: string | null }>;
+        last_episode_to_air?: Ep;
+        next_episode_to_air?: Ep;
+      } | null>(`/tv/${id}`, {}, true);
+      if (!d) return null;
+      const lastAired = ref(d.last_episode_to_air);
+      const nextAir = ref(d.next_episode_to_air);
+      // Only a show on the air now needs per-episode dates; an ended one is answered by the counts.
+      const want = new Set<number>();
+      if (nextAir) want.add(nextAir.season);
+      if (lastAired && (nextAir || Date.now() - Date.parse(lastAired.airDate) < 30 * DAY)) {
+        want.add(lastAired.season);
+        if (lastAired.episode === 1 && lastAired.season > 1) want.add(lastAired.season - 1);
+      }
+      const episodes: ShowSchedule["episodes"] = {};
+      for (const n of want) {
+        const r = await this.getJson<{ episodes?: Array<{ episode_number?: number; air_date?: string | null; name?: string }> } | null>(`/tv/${id}/season/${n}`, {}, true);
+        if (!r) continue;
+        episodes[String(n)] = (r.episodes ?? []).filter((e) => e.episode_number != null).map((e) => ({
+          episode: e.episode_number!, ...(e.air_date ? { airDate: e.air_date } : {}), ...(e.name ? { name: e.name } : {}),
+        }));
+      }
+      const out: ShowSchedule = {
+        id: tmdbId,
+        name: d.name ?? this.cache.get().titles[`tv:${id}`]?.name ?? "",
+        seasons: (d.seasons ?? []).filter((s) => s.season_number != null).map((s) => ({
+          season: s.season_number!, episodeCount: s.episode_count ?? 0, ...(s.air_date ? { airDate: s.air_date } : {}),
+        })),
+        lastAired, nextAir, episodes, at: Date.now(),
+      };
+      this.cache.update((st) => void ((st.shows ??= {})[id] = out));
+      const n = this.requests - before;
+      this.log(`TMDB: air dates for "${out.name}" (${n} request${n === 1 ? "" : "s"}; show id${want.size ? " and season" : ""} sent)`);
+      return out;
+    } catch (e) {
+      this.lastError = (e as Error).message;
+      if (cached) return cached;
+      throw e;
+    }
+  }
 }
 
 interface TmdbResult {
@@ -476,8 +580,10 @@ interface TmdbResult {
 export function queryFor(it: LibItem): { key: string; media: Media; title: string; year?: number } | undefined {
   const p = it.parsed;
   if (p.kind === "episode") {
-    const title = p.show;
-    return { key: `tv|${norm(title)}|${p.year ?? ""}`, media: "tv", title, ...(p.year ? { year: p.year } : {}) };
+    // Show identity's name for the show (no release noise, no arc), else the parsed one.
+    const title = p.searchAs?.show ?? p.show;
+    const year = p.searchAs ? p.searchAs.year : p.year;
+    return { key: `tv|${norm(title)}|${year ?? ""}`, media: "tv", title, ...(year ? { year } : {}) };
   }
   if (p.kind === "movie") {
     const nfo = it.meta?.kind === "movie" ? it.meta : undefined;

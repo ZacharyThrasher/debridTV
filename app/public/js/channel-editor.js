@@ -16,6 +16,7 @@
 // Until that endpoint exists, the editor runs on a local draft and says so.
 
 import { api } from "./api.js";
+import { openShowFix } from "./showfix.js";
 import { html, raw, toast, clamp, fmtTime } from "./util.js";
 import { tv } from "./player.js";
 import { lockStatus, setPin, withPin, PIN_MIN, PIN_MAX } from "./lock.js";
@@ -136,6 +137,8 @@ function identity() {
   const l = draft.logo ?? { kind: "badge" };
   return html`
     <div class="field"><label for="ced-name">Name</label><input id="ced-name" class="input" data-k="name" data-first value="${draft.name}" maxlength="40"></div>
+    ${ch.ruleKey?.startsWith("show:") ? html`<div class="opt"><div><div class="ol">The show's files</div><div class="od">Wrong name, two shows mixed up, or one show split in two? Fix how its files are grouped.</div></div>
+      <button class="btn" data-fixshow="${ch.ruleKey.slice(5)}">Fix this show</button></div>` : ""}
     <div class="ced-row">
       <div class="field"><label for="ced-num">Channel number</label>
         <input id="ced-num" class="input" data-k="number" type="number" min="1" max="999" value="${draft.number}">
@@ -223,7 +226,8 @@ function mix() {
     <div class="mix-refresh">
       <div><div class="ol">Fresh order</div><div class="od">Deal a new shuffle now. The program on now finishes first.</div></div>
       <button class="btn" data-refresh ${onAir ? "" : "disabled"}>↻ Reshuffle</button>
-    </div>`.html;
+    </div>
+    ${raw(missingSection())}`.html;
 }
 
 function schedule() {
@@ -392,6 +396,80 @@ function datesControl(key, label) {
 }
 
 /** What the server said about the saved season, while the dates are unchanged. */
+// ------------------------------------------------------------------ what's missing (show channels)
+// GET /api/missing?showKey= → { name, seasons: [{ season, have, aired, total, missing }],
+//   newThisWeek: [{ season, episode, name?, airDate, inLibrary }], nextAir?, checkedAt } (app/missing.ts),
+//   or 404 { error } when online artwork is off or TMDB doesn't know the show.
+// Information only: nothing here adds or downloads anything.
+
+let gaps = { key: null, state: "idle", data: null, note: "" };
+
+function missingSection() {
+  const key = ch?.kind === "show" && String(ch.ruleKey ?? "").startsWith("show:") ? ch.ruleKey.slice(5) : null;
+  if (!key) return "";
+  if (gaps.key !== key) void loadGaps(key);
+  return html`<h4>What's missing</h4><div class="ced-cover ced-missing" data-missing>${raw(missingBody())}</div>`.html;
+}
+
+async function loadGaps(key) {
+  gaps = { key, state: "loading", data: null, note: "" };
+  try {
+    gaps = { key, state: "ready", data: await api.get(`/api/missing?showKey=${encodeURIComponent(key)}`), note: "" };
+  } catch (e) {
+    let note = "Couldn't check right now.";
+    if (e.status === 404) {
+      const on = await api.get("/api/metadata").then((m) => !!m.enabled, () => false);
+      note = on ? "TMDB doesn't know this show yet, so missing episodes can't be checked." : "Turn on Online artwork in Settings → Sources to see missing episodes and what's new.";
+    }
+    if (gaps.key === key) gaps = { key, state: e.status === 404 ? "off" : "error", data: null, note };
+  }
+  // Fill the box in place, so focus and scrolling stay where they are.
+  const box = root.querySelector("[data-missing]");
+  if (!box || gaps.key !== key) return;
+  const hadFocus = box.contains(document.activeElement);
+  box.innerHTML = missingBody();
+  if (hadFocus) box.querySelector("button")?.focus();
+}
+
+function missingBody() {
+  const g = gaps.data;
+  const again = html`<button class="linkish" data-missing-again>Check again</button>`;
+  if (gaps.state === "loading" || gaps.state === "idle") return html`<div class="muted">Checking air dates…</div>`.html;
+  if (gaps.state === "off") return html`<div class="muted">${gaps.note}</div>`.html;
+  if (gaps.state === "error" || !g) return html`<div class="muted">${gaps.note || "Couldn't check right now."}</div>${again}`.html;
+  const code = (e) => `S${String(e.season).padStart(2, "0")}E${String(e.episode).padStart(2, "0")}`;
+  const list = (nums) => (nums.length > 8 ? `${nums.slice(0, 8).join(", ")} and ${nums.length - 8} more` : nums.join(", "));
+  const seasonLine = (s) => {
+    const label = s.season === 0 ? "Specials" : `Season ${s.season}`;
+    const count = `${s.have} of ${s.aired} aired episode${s.aired === 1 ? "" : "s"}`;
+    const gap = !s.aired ? "nothing aired yet" : !s.missing.length ? "all here" : !s.have ? "none in your library" : `missing ${list(s.missing)}`;
+    return html`<div>${label} · ${count} · ${gap}</div>`;
+  };
+  const fresh = g.newThisWeek ?? [];
+  const missingAny = (g.seasons ?? []).some((s) => s.missing.length);
+  return html`
+    ${g.seasons?.length ? g.seasons.map(seasonLine) : html`<div class="muted">Nothing has aired yet.</div>`}
+    ${g.seasons?.length && !missingAny ? html`<div>You have every episode that has aired.</div>` : ""}
+    ${fresh.map((e) => html`<div>New this week: ${code(e)}${e.name ? ` "${e.name}"` : ""} · ${airDay(e.airDate)} · ${e.inLibrary ? "in your library" : "not in your library"}</div>`)}
+    ${g.nextAir ? html`<div>Next: ${code(g.nextAir)}${g.nextAir.name ? ` "${g.nextAir.name}"` : ""} on ${airDay(g.nextAir.airDate)}</div>` : ""}
+    <div class="muted">Air dates from TMDB${g.checkedAt ? `, checked ${new Date(g.checkedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}. Nothing is added for you.</div>
+    ${again}`.html;
+}
+
+/** "2026-10-19" → "Oct 19", read as a calendar day (no time zone shift). */
+function airDay(d) {
+  const [y, m, day] = String(d).split("-").map(Number);
+  return y && m && day ? new Date(y, m - 1, day).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : String(d);
+}
+
+// The button stays put (and keeps the remote's focus) until the answer replaces it.
+root.addEventListener("click", (e) => {
+  const b = e.target.closest?.("[data-missing-again]");
+  if (!b || !gaps.key) return;
+  b.textContent = "Checking…";
+  void loadGaps(gaps.key);
+});
+
 function seasonStatus() {
   const s = info?.season;
   if (!s?.from || !draft.season || s.from !== draft.season.from || s.to !== draft.season.to) return "";
@@ -410,6 +488,7 @@ root.addEventListener("click", async (e) => {
   const d = b.dataset;
   if (d.close !== undefined) return closeChannelEditor();
   if (d.artLogo) return void useArtLogo(d.artLogo);
+  if (d.fixshow) return void openShowFix(d.fixshow, { host: root });
   if (d.tab) tab = d.tab;
   else if (d.logoKind) draft.logo = d.logoKind === "image" ? { ...draft.logo, kind: "image" } : { ...draft.logo, kind: d.logoKind, text: d.logoKind === "text" ? wordFrom(draft) : String(draft.number) };
   else if (d.logoStyle) draft.logo = { ...draft.logo, style: d.logoStyle };

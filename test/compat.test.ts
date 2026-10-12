@@ -49,7 +49,7 @@ async function post(path: string, body: unknown) {
 
 async function probeStreams(path: string): Promise<string[]> {
   const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type:stream_tags=language", "-of", "csv=p=0", path]);
-  return stdout.trim().split("\n");
+  return stdout.trim().split(/\r?\n/);
 }
 
 test("WebVTT blocks: times, and only <i>/<b> survive", () => {

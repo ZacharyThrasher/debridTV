@@ -22,6 +22,8 @@ export interface MockFile {
   etag?: string;
   /** Real-Debrid: files sharing a pack name are listed as one multi-file torrent. */
   pack?: string;
+  /** Real-Debrid pack member that /torrents/info lists without a link (files and links no longer pair). */
+  noLink?: boolean;
 }
 
 export interface MockAccount {
@@ -47,6 +49,25 @@ export interface MockOptions {
   tbPerMinutePerEndpoint?: number;
   /** Account facts and key check. Without it any key is accepted. */
   account?: MockAccount;
+  /** Real-Debrid: while this returns true, link requests answer 503 with no error code (as seen live under load). */
+  rdDown?: () => boolean;
+  /** Sent as Retry-After with those 503s. */
+  rdDownRetryAfterSec?: number;
+  /** Those 503s carry this Real-Debrid error code (an answer about the file, e.g. 19 hoster_unavailable). */
+  rdDownCode?: number;
+  /** Real-Debrid adds: while this returns true, adds answer 451 (RD pausing adds on the account). */
+  rdAddRefused?: () => boolean;
+  /** Files a newly added torrent turns out to hold. Default: one episode and a sample. */
+  addFiles?: Array<{ path: string; bytes: number }>;
+}
+
+/** One add the mock accepted (adds only change this list; the library stays as set). */
+export interface MockAdd {
+  provider: "realdebrid" | "torbox";
+  endpoint: string;
+  /** Magnet, link, or the uploaded file's name. */
+  detail: string;
+  bytes?: number;
 }
 
 export interface ServerCounters {
@@ -67,7 +88,11 @@ export interface MockProviders {
   setFiles(files: MockFile[]): void;
   /** Change account facts (e.g. premium expiry) between calls. */
   setAccount(account: MockAccount): void;
+  /** Adds accepted so far, oldest first. */
+  adds: MockAdd[];
   reset(): void;
+  /** The media host sends nothing for this long (a slow or hung CDN); open and new media requests wait it out. */
+  stallMedia(ms: number): void;
   close(): Promise<void>;
 }
 
@@ -86,6 +111,14 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
   const ttl = opts.grantTtlMs ?? 60 * 60_000;
   let seq = 0;
   let baseUrl = "";
+  const adds: MockAdd[] = [];
+  /** RD torrents added through the API: magnet_conversion, then waiting_files_selection, then downloaded. */
+  const rdAdded = new Map<string, { id: string; name: string; hash: string; status: string; reads: number; selected: number[] }>();
+  const addFiles = opts.addFiles ?? [{ path: "/Show.S01E01.1080p.mkv", bytes: 900_000_000 }, { path: "/Sample/sample.mkv", bytes: 9_000_000 }];
+  const formField = (body: string, name: string): string | null => {
+    const m = new RegExp(`name="${name}"(?:; filename="([^"]*)")?\\r\\n(?:[^\\r\\n]*\\r\\n)*\\r\\n([\\s\\S]*?)\\r\\n--`).exec(body);
+    return m ? (m[1] ?? m[2] ?? "") : null;
+  };
 
   const limited = (bucket: string, perMinute: number): boolean => {
     const now = Date.now();
@@ -151,13 +184,46 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
           links: t.status === "downloaded" ? t.files.map(rdLink) : [] }))),
       );
     }
+    if ((p === "/rd/rest/1.0/torrents/addMagnet" && req.method === "POST") || (p === "/rd/rest/1.0/torrents/addTorrent" && req.method === "PUT")) {
+      const magnet = p.endsWith("addMagnet");
+      return void api(req, res, magnet ? "rd.addMagnet" : "rd.addTorrent", "rd", rdLimit, (_u, body) => {
+        if (opts.rdAddRefused?.()) return json(res, 451, { error: "infringing_file", error_code: 35 });
+        const m = magnet ? new URLSearchParams(body).get("magnet") ?? "" : "";
+        if (magnet && !/^magnet:\?/.test(m)) return json(res, 400, { error: "parameter_invalid", error_code: 2 });
+        const id = `add${++seq}`;
+        const hash = (/btih:([0-9a-f]{40})/i.exec(m)?.[1] ?? "0".repeat(40)).toLowerCase();
+        rdAdded.set(id, { id, name: new URLSearchParams(m.replace(/^magnet:\?/, "")).get("dn") ?? "Added torrent", hash, status: "magnet_conversion", reads: 0, selected: [] });
+        adds.push({ provider: "realdebrid", endpoint: magnet ? "addMagnet" : "addTorrent", detail: magnet ? m : "file", bytes: body.length });
+        json(res, 201, { id, uri: `${baseUrl}/rd/rest/1.0/torrents/info/${id}` });
+      });
+    }
+    const select = /^\/rd\/rest\/1\.0\/torrents\/selectFiles\/(.+)$/.exec(p);
+    if (select && req.method === "POST") {
+      return void api(req, res, "rd.selectFiles", "rd", rdLimit, (_u, body) => {
+        const t = rdAdded.get(decodeURIComponent(select[1]!));
+        if (!t) return json(res, 404, { error: "unknown_ressource", error_code: 20 });
+        const f = new URLSearchParams(body).get("files") ?? "";
+        t.selected = f === "all" ? addFiles.map((_, i) => i + 1) : f.split(",").map(Number);
+        t.status = "downloaded";
+        res.writeHead(204);
+        res.end();
+      });
+    }
     const info = /^\/rd\/rest\/1\.0\/torrents\/info\/(.+)$/.exec(p);
     if (info) {
       return void api(req, res, "rd.torrents.info", "rd", rdLimit, () => {
+        const a = rdAdded.get(decodeURIComponent(info[1]!));
+        if (a) {
+          if (a.status === "magnet_conversion" && a.reads++ >= 1) a.status = "waiting_files_selection";
+          const ready = a.status !== "magnet_conversion";
+          return json(res, 200, { id: a.id, filename: a.name, hash: a.hash, status: a.status,
+            files: ready ? addFiles.map((f, i) => ({ id: i + 1, path: f.path, bytes: f.bytes, selected: a.selected.includes(i + 1) ? 1 : 0 })) : [],
+            links: a.status === "downloaded" ? a.selected.map((n) => `https://real-debrid.example/d/${a.id}-${n}`) : [] });
+        }
         const t = rdTorrents().find((x) => x.id === decodeURIComponent(info[1]!));
         if (!t) return json(res, 404, { error: "unknown_ressource", error_code: 20 });
         json(res, 200, { id: t.id, filename: t.name, status: t.status,
-          files: t.files.map((f, i) => ({ id: i + 1, path: `/${f.name}`, bytes: f.bytes, selected: 1 })), links: t.files.map(rdLink) });
+          files: t.files.map((f, i) => ({ id: i + 1, path: `/${f.name}`, bytes: f.bytes, selected: 1 })), links: t.files.filter((f) => !f.noLink).map(rdLink) });
       });
     }
     if (p === "/rd/rest/1.0/unrestrict/link" && req.method === "POST") {
@@ -167,6 +233,10 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
         const f = files.get(ref);
         if (!f) return json(res, 404, { error: "unknown_ressource", error_code: 20 });
         if (f.policy) return json(res, 503, { error: "infringing_file", error_code: 35 });
+        if (opts.rdDown?.()) {
+          if (opts.rdDownRetryAfterSec) res.setHeader("retry-after", String(opts.rdDownRetryAfterSec));
+          return json(res, 503, opts.rdDownCode ? { error: "hoster_unavailable", error_code: opts.rdDownCode } : { error: "service_unavailable" });
+        }
         json(res, 200, { id: f.ref, filename: f.name, filesize: f.bytes, download: issueGrant(ref) });
       });
     }
@@ -194,6 +264,19 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
         json(res, 200, { success: true, data: url });
       });
     }
+    const tbAdd = /^\/tb\/v1\/api\/(torrents\/createtorrent|webdl\/createwebdownload|usenet\/createusenetdownload)$/.exec(p);
+    if (tbAdd && req.method === "POST") {
+      const endpoint = tbAdd[1]!.split("/")[1]!;
+      return void api(req, res, `tb.${endpoint}`, `tb.${endpoint}`, tbLimit, (_u, body) => {
+        const detail = formField(body, "magnet") ?? formField(body, "link") ?? formField(body, "file");
+        if (!detail) return json(res, 200, { success: false, error: "NO_INPUT", detail: "Nothing to add." });
+        const id = ++seq;
+        adds.push({ provider: "torbox", endpoint, detail, bytes: body.length });
+        const key = endpoint === "createtorrent" ? "torrent_id" : endpoint === "createwebdownload" ? "webdownload_id" : "usenetdownload_id";
+        const hash = /btih:([0-9a-f]{40})/i.exec(detail)?.[1]?.toLowerCase();
+        json(res, 200, { success: true, error: null, detail: "Added.", data: { [key]: id, ...(hash ? { hash } : {}) } });
+      });
+    }
     if (p === "/rd/rest/1.0/user") {
       return void api(req, res, "rd.user", "rd", rdLimit, () => {
         const until = account.premiumUntilMs ?? null;
@@ -213,9 +296,10 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
     json(res, 404, { error: "no_route" });
   });
 
+  let stalledUntil = 0;
   const serveMedia = (req: http.IncomingMessage, res: http.ServerResponse, token: string) => {
     counters.mediaRequests++;
-    const ttfb = opts.mediaTtfbMs ?? 0;
+    const ttfb = Math.max(opts.mediaTtfbMs ?? 0, stalledUntil - Date.now());
     if (ttfb > 0) setTimeout(() => !res.destroyed && serveMediaNow(req, res, token), ttfb);
     else serveMediaNow(req, res, token);
   };
@@ -260,6 +344,7 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
     const tickMs = Math.max(1, Math.round((CHUNK / pace) * 1000));
     const pump = () => {
       if (res.destroyed || done) return finish(true);
+      if (Date.now() < stalledUntil) return void setTimeout(pump, stalledUntil - Date.now());
       if (remaining <= 0) {
         res.end();
         return finish(false);
@@ -281,12 +366,16 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
   return {
     baseUrl,
     counters,
+    adds,
     setFiles(next) {
       list = next.slice();
       files = new Map(list.map((f) => [f.ref, f]));
     },
     setAccount(next) {
       account = next;
+    },
+    stallMedia(ms) {
+      stalledUntil = Date.now() + ms;
     },
     reset() {
       Object.assign(counters, freshCounters(), { activeMedia: counters.activeMedia });

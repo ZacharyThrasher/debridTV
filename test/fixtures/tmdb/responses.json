@@ -5,7 +5,7 @@
     { "id": 9101, "name": "Night Owls Revisited", "original_name": "Night Owls Revisited", "first_air_date": "2011-01-01", "overview": "Not this one.", "poster_path": "/wrong.jpg", "backdrop_path": null, "genre_ids": [35], "popularity": 9.1 },
     { "id": 4242, "name": "Night Owls", "original_name": "Night Owls", "first_air_date": "1994-09-12", "overview": "A late-night radio crew keeps a sleepy town company.", "poster_path": "/owls-poster.jpg", "backdrop_path": "/owls-backdrop.jpg", "genre_ids": [35], "popularity": 4.2 }
   ] },
-  "/tv/4242/images": { "id": 4242, "backdrops": [], "posters": [], "logos": [ { "file_path": "/owls-logo.svg", "iso_639_1": "en" }, { "file_path": "/owls-logo.png", "iso_639_1": "en", "aspect_ratio": 3.2 } ] },
+  "/tv/4242": { "id": 4242, "name": "Night Owls", "seasons": [ { "season_number": 0, "name": "Specials", "episode_count": 2 }, { "season_number": 1, "name": "Season 1", "episode_count": 10 } ], "images": { "backdrops": [], "posters": [], "logos": [ { "file_path": "/owls-logo.svg", "iso_639_1": "en" }, { "file_path": "/owls-logo.png", "iso_639_1": "en", "aspect_ratio": 3.2 } ] } },
   "/tv/4242/season/1": { "id": 55001, "season_number": 1, "name": "Season 1", "episodes": [
     { "episode_number": 1, "season_number": 1, "name": "Sign On", "overview": "Wendy takes the graveyard shift." },
     { "episode_number": 2, "season_number": 1, "name": "Dead Air", "overview": "The transmitter goes quiet at 3 a.m." }
