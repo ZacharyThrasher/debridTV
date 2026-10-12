@@ -3,13 +3,17 @@
 // provider, so a cancelled stream still shows what it actually pulled.
 
 import { CallCounter } from "../src/providers/clients.ts";
+import { PreloadLedger } from "./preload.ts";
 
-/** playback and probe are fetched from a host; cached was answered from the edge cache, no host involved. */
-export type ByteKind = "playback" | "probe" | "cached";
+/**
+ * playback and probe are fetched from a host; cached was answered from the edge cache, no host involved;
+ * preload was fetched from a host ahead of the next show on the channel being watched (ADR-0006).
+ */
+export type ByteKind = "playback" | "probe" | "cached" | "preload";
 
 export interface MeterEvent {
   at: number;
-  kind: "tune" | "stream-open" | "stream-close" | "cancel" | "api" | "error" | "probe" | "backup" | "cache" | "lock" | "silence";
+  kind: "tune" | "stream-open" | "stream-close" | "cancel" | "api" | "error" | "probe" | "backup" | "cache" | "lock" | "silence" | "preload";
   detail: string;
 }
 
@@ -45,7 +49,9 @@ class RateCounter extends CallCounter {
 
 export class Meters {
   readonly api = new RateCounter();
-  readonly bytes: Record<ByteKind, number> = { playback: 0, probe: 0, cached: 0 };
+  readonly bytes: Record<ByteKind, number> = { playback: 0, probe: 0, cached: 0, preload: 0 };
+  /** Next-show pre-loads: what they fetched, and whether it was played or wasted. */
+  readonly preload = new PreloadLedger();
   /** Edge cache size on disk, set by the server. */
   cache = { bytes: 0, files: 0 };
   streamsOpened = 0;
@@ -91,6 +97,7 @@ export class Meters {
       }),
       bytes: { ...this.bytes },
       cache: { ...this.cache },
+      preload: this.preload.snapshot(),
       streamsOpened: this.streamsOpened,
       streamsCancelled: this.streamsCancelled,
       activeStreams: this.activeStreams,

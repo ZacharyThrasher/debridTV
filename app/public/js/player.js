@@ -14,6 +14,7 @@ import * as cards from "./cards.js"; // lockedCard comes from workstream B
 import { osd, osdHide, bug, setBanner, showBanner } from "./ui.js";
 import { initSignOff, signedOff } from "./signoff.js";
 import { musicShow, musicHide } from "./music.js";
+import { planPreload, cancelPreload } from "./preload.js";
 import { tracksFor, selectionFor, needsCompat, selectionQuery, audioTracks, subTracks, defaultAudio, isText, trackLabel, Captions } from "./tracks.js";
 
 const video = document.getElementById("video");
@@ -55,6 +56,7 @@ export function byNumber(n) {
 export async function tune(ch, { silent = false } = {}) {
   if (!ch || signedOff()) return;
   const my = ++token;
+  if (!silent) cancelPreload();
   endOnDemand();
   clearTimeout(boundary);
   clearTimeout(stallTimer);
@@ -149,6 +151,7 @@ function render(ch, info, my, silent, hold = 0) {
   }
   hideCard();
   scheduleBoundary(ch, seg ? seg.end : a ? a.end : now() + 60_000);
+  planPreload(ch, info); // ADR-0006: the next program's opening bytes, late in this one
 
   if (info.offAir || !a) {
     tv.route = "card";
@@ -450,7 +453,7 @@ function stopMedia() {
 }
 
 function setPaused(p, { quiet = false } = {}) {
-  if (p) flushWatch(true);
+  if (p) flushWatch(true), cancelPreload();
   tv.paused = p;
   pausedEl.hidden = !p;
   if (p) {
@@ -525,6 +528,7 @@ function odInfo(item, fromMs) {
 export async function playOnDemand(itemId, { fromMs = 0, item: listed = null } = {}) {
   if (!itemId || signedOff()) return;
   const my = ++token;
+  cancelPreload();
   clearTimeout(boundary);
   clearTimeout(stallTimer);
   flushWatch(true);
@@ -713,6 +717,7 @@ function isLocked(ch, info) {
 }
 
 function showLocked(ch, info) {
+  cancelPreload();
   tv.route = "card";
   stopMedia();
   synthStop();
@@ -812,6 +817,7 @@ initSignOff({
   // Drop every stream and timer: nothing is fetched until the viewer is back.
   stop() {
     token++;
+    cancelPreload();
     endOnDemand();
     clearTimeout(boundary);
     clearTimeout(stallTimer);

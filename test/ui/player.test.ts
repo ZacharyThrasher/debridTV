@@ -490,4 +490,36 @@ describe("player", () => {
     assert.equal(await page.evaluate(() => !(document.getElementById("video") as HTMLVideoElement).paused), true, "still playing");
     await closeQuietly(ctx);
   });
+
+  it("readies the next show only after settling on a channel, and drops it on a channel change (ADR-0006)", async (t) => {
+    if (skip) return t.skip(skip);
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    await ctx.addInitScript(`localStorage.setItem("debridtv.prefs", ${JSON.stringify(JSON.stringify({ welcomed: true, startup: `ch:${direct!.id}` }))})`);
+    // The test files are local, which is never pre-loaded; make the next program a provider file starting in 30 s.
+    await ctx.route("**/api/now?*", async (r: any) => {
+      const res = await r.fetch();
+      const body = await res.json();
+      if (body.airing && body.next) body.next = { ...body.next, itemId: "remote-next", provider: "torbox", availability: "ok", start: body.now + 30_000 };
+      await r.fulfill({ response: res, json: body });
+    });
+    const asked: Array<{ at: number; itemId: string }> = [];
+    const dropped: number[] = [];
+    // Hold the pre-load open, as a slow provider would.
+    await ctx.route("**/api/preload", (r: any) => asked.push({ at: Date.now(), itemId: JSON.parse(r.request().postData()).itemId }));
+    const page = await ctx.newPage();
+    page.on("requestfailed", (r: any) => new URL(r.url()).pathname === "/api/preload" && dropped.push(Date.now()));
+    const t0 = Date.now();
+    await page.goto(BASE + "/");
+    await playing(page);
+    await sleep(6000);
+    assert.equal(asked.length, 0, "nothing fetched ahead in the first seconds on a channel");
+    for (let i = 0; i < 60 && !asked.length; i++) await sleep(250);
+    assert.equal(asked.length, 1, "one pre-load once settled");
+    assert.equal(asked[0]!.itemId, "remote-next");
+    assert.ok(asked[0]!.at - t0 >= 9000, `waited for the viewer to settle (${asked[0]!.at - t0} ms)`);
+    await page.keyboard.press("ArrowUp");
+    for (let i = 0; i < 20 && !dropped.length; i++) await sleep(100);
+    assert.equal(dropped.length, 1, "changing channel drops the pre-load request");
+    await closeQuietly(ctx);
+  });
 });
