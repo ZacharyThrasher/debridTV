@@ -128,6 +128,11 @@ try {
   const b0 = await get("/api/bootstrap");
   check("A01", ["N-02a"], "demo lineup on air with no source", b0.demo && b0.channels.length >= 5,
     { demo: b0.demo, channels: b0.channels.map((c) => `${c.number} ${c.name}`) });
+  // ADR-0006: station breaks are opt-in. Out of the box, programs run back to back.
+  const g0 = await get(`/api/guide?from=${Date.now()}&to=${Date.now() + 6 * 60 * MIN}`);
+  const breaks0 = g0.rows.flatMap((r) => r.airings.flatMap((a) => a.segments.filter((s) => s.kind === "break")));
+  check("A29", ["N-21", "N-22a", "N-22b"], "station breaks are off by default: no padding or mid-program breaks in 6 h of guide",
+    b0.breaks === false && breaks0.length === 0, { breaks: b0.breaks, breakSegments: breaks0.length });
 
   browser = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required", "--no-proxy-server"] });
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
@@ -239,6 +244,8 @@ try {
 
   // ---------- local library ----------
   makeMedia(media);
+  // A16/A17 check the opt-in station breaks (ADR-0006); turned on before the channels exist.
+  await post("/api/station", { breaks: true });
   const src = await post("/api/sources", { provider: "local", dirs: [media, join(media, "copy")] });
   await post("/api/scan/start", { perMinute: 120 });
   for (let i = 0; i < 60; i++) {
@@ -262,14 +269,15 @@ try {
   const g = await get(`/api/guide?from=${Date.now()}&to=${Date.now() + 60 * MIN}`);
   const showRow = g.rows.find((r) => r.channel.name === "Audit Show");
   const segs = showRow?.airings?.[0]?.segments ?? [];
-  check("A16", ["N-22a"], "slot padding: programs start on the quarter hour, the rest is a break",
+  check("A16", ["N-22a"], "slot padding (breaks on): programs start on the quarter hour, the rest is a break",
     segs.some((s) => s.kind === "break" && s.reason === "padding") && showRow.airings.every((a) => new Date(a.start).getMinutes() % 15 === 0),
     segs.map((s) => `${s.kind}${s.reason ? ":" + s.reason : ""}`).join(","));
   const day = await get(`/api/guide?from=${Date.now()}&to=${Date.now() + 24 * 60 * MIN}`);
   const midAiring = day.rows.flatMap((r) => r.airings.map((a) => ({ ch: r.channel.name, a }))).find(({ a }) => a.segments.some((s) => s.reason === "mid"));
   const anyMid = !!midAiring;
-  check("A17", ["N-22b"], "files with chapters get mid-program breaks on a slotted channel", anyMid,
+  check("A17", ["N-22b"], "files with chapters get mid-program breaks on a slotted channel (breaks on)", anyMid,
     anyMid ? `${midAiring.ch}: ${midAiring.a.episode} ` + midAiring.a.segments.map((s) => `${s.kind}${s.reason ? ":" + s.reason : ""}`).join(",") : "no mid break in 24 h (episode 8 has a chapter at 4:00)");
+  await post("/api/station", { breaks: false }); // back to the default for the rest of the run
 
   // Custom channels: back to back, numbered 50+, then a compat-only channel.
   const lib = await get("/api/library");
@@ -328,8 +336,13 @@ try {
   await page2.keyboard.press(" ");
   await page2.waitForTimeout(2500);
   const d2 = await drift(direct.id);
-  check("A21", ["N-35"], "pause for 5 s, resume returns to live (not where you paused)", pausedShown && Math.abs(d2.driftMs) < 1500 && d2.item === pausedAt.item && d2.videoMs - pausedAt.videoMs > 4000,
-    { pausedShown, pausedAtMs: pausedAt.videoMs, ...d2 });
+  const pill = await page2.locator("#live-pill").isVisible();
+  await page2.keyboard.press("l");
+  await page2.waitForTimeout(2500);
+  const d3 = await drift(direct.id);
+  check("A21", ["N-35"], "pause for 5 s, resume plays on from where you paused (ADR-0006), and L goes back to live",
+    pausedShown && d2.driftMs < -3500 && d2.driftMs > -8000 && d2.item === pausedAt.item && pill && Math.abs(d3.driftMs) < 1500,
+    { pausedShown, pausedAtMs: pausedAt.videoMs, resumed: d2, pill, live: d3 });
 
   // Watch history: what the page reported for real playback.
   await page2.waitForTimeout(16_000); // flush interval is 15 s

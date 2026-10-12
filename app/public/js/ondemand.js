@@ -127,7 +127,7 @@ function render() {
   root.innerHTML = html`
     <div class="od-backdrop" data-art-box></div>
     <header class="od-head">
-      <div class="brand"><span class="brand-mark"></span>DebridTV</div>
+      <div class="brand">Debrid<i>TV</i></div>
       <h1 class="od-name">On Demand</h1>
       <label class="od-search"><span aria-hidden="true">⌕</span><input type="search" id="od-q" placeholder="Search shows, films, episodes" value="${state.q}" autocomplete="off" spellcheck="false" aria-label="Search the library"></label>
       <div class="od-filter" role="tablist" aria-label="Show">

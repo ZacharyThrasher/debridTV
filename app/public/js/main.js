@@ -2,19 +2,21 @@
 // guide and settings, and keeps the clock ticking.
 
 import "./spatial.js"; // first, so the remote's keys reach it before any other handler
+import "./controls.js"; // second: the control bar's keys (it replaces the old dock)
 import { api, whereAmI } from "./api.js";
 import { html, raw, pref, setPref, applyPrefs, syncClock, toast } from "./util.js";
 import { tv, tune, channelStep, lastChannel, byNumber, togglePause, applyVolume } from "./player.js";
 import * as player from "./player.js"; // applyAspect comes from workstream A
 import { openGuide, closeGuide, guideOpen, guideKey } from "./guide.js";
 import { initPanel, openPanel, closePanel, panelOpen } from "./panel.js";
-import { toggleBanner, tickBanner, osd, liveAiring } from "./ui.js";
+import { toggleBanner, showBanner, tickBanner, osd, liveAiring } from "./ui.js";
 import { tickCard, pinPromptOpen, pinKey } from "./cards.js";
 import { unlockAudio } from "./static.js";
 import { editorOpen, exclusionsOpen } from "./channel-editor.js";
 import { themeEditorOpen } from "./theme.js";
 import { openOnDemand, onDemandOpen, watchFilm } from "./ondemand.js";
 import { groupsOpen } from "./groups.js";
+import { openCaptions, captionsOpen } from "./captions.js";
 import "./bezel.js";
 
 applyPrefs();
@@ -22,7 +24,7 @@ applyPrefs();
 whereAmI().then((w) => (document.documentElement.dataset.where = w));
 applyVolume();
 // The demo picture draws text on a canvas, which only uses fonts already loaded.
-for (const f of ['800 20px "Barlow Condensed"', "20px VT323", "600 20px Inter"]) document.fonts?.load(f).catch(() => {});
+for (const f of ['700 20px "Archivo"', '600 20px "Archivo"']) document.fonts?.load(f).catch(() => {});
 
 let boot = null;
 
@@ -34,6 +36,7 @@ async function bootstrap({ keepChannel = true } = {}) {
   const wasDemo = tv.demo;
   tv.channels = boot.channels;
   tv.ffmpeg = boot.ffmpeg;
+  tv.breaks = !!boot.breaks;
   tv.demo = boot.demo;
   document.body.classList.toggle("demo", boot.demo);
   if (wasDemo !== undefined && wasDemo !== boot.demo) toast(boot.demo ? "Showing the demo channels." : "Your library is on the air!");
@@ -89,7 +92,7 @@ addEventListener("keydown", (e) => {
     if (e.key === "Escape") e.target.blur();
     return;
   }
-  if (e.ctrlKey || e.metaKey || e.altKey || editorOpen() || exclusionsOpen() || themeEditorOpen() || onDemandOpen() || groupsOpen()) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || editorOpen() || exclusionsOpen() || themeEditorOpen() || onDemandOpen() || groupsOpen() || captionsOpen()) return;
   const k = e.key;
   if (!document.getElementById("welcome").hidden) {
     if (k === "Enter" || k === "Escape" || k === " ") closeWelcome();
@@ -118,6 +121,8 @@ addEventListener("keydown", (e) => {
   if (chipKey(e)) return void e.preventDefault();
   // Watching from On Demand: Left/Right skip, Back returns to the live channel.
   if (tv.onDemand && onDemandKey(k)) return void e.preventDefault();
+  // Any channel: skip back and ahead, jump between programs, and Back to live (ADR-0006).
+  if (timeKey(e)) return void e.preventDefault();
   switch (k) {
     case "ArrowUp": case "PageUp": case "+": case "=": case "ChannelUp": channelStep(1); break;
     case "ArrowDown": case "PageDown": case "-": case "_": case "ChannelDown": channelStep(-1); break;
@@ -126,14 +131,15 @@ addEventListener("keydown", (e) => {
     case "o": case "O": case "MediaTopMenu": case "VOD": openOnDemand(); break;
     case "i": case "I": case "Info": toggleBanner(); break;
     case "w": case "W": if (!watchFilm(liveAiring())) return; break; // a trailer's film, when it's in the library
-    case "ArrowRight": case "ArrowLeft": if (!focusChips(k)) toggleBanner(); break;
+    case "ArrowRight": case "ArrowLeft": if (!focusChips(k)) seekLive(k === "ArrowLeft" ? -10_000 : 30_000); break;
     case "Backspace": case "l": case "L": case "LastChannel": lastChannel(); break;
     case " ": case "k": case "K": case "MediaPlayPause": case "MediaPlay": case "MediaPause": case "Pause": case "Play": togglePause(); break;
     case "m": case "M": toggleMute(); break;
     case "f": case "F": toggleFull(); break;
     case "z": case "Z": cycleAspect(); break;
     case "a": case "A": player.cycleAudio?.(); break; // audio track (workstream A shows the OSD)
-    case "c": case "C": player.cycleCaptions?.(); break; // captions
+    case "c": case "C": openCaptions(); break; // the subtitles menu (captions.js)
+    case "Subtitle": case "ClosedCaptionToggle": player.toggleCaptions(); break; // a remote's CC button: on ⇄ off
     case "?": showWelcome(); break;
     default:
       if (/^[0-9]$/.test(k)) enterDigit(k);
@@ -172,6 +178,33 @@ function chipKey(e) {
   return false;
 }
 
+/** Time-shift keys on a channel. Plain Left/Right are in the switch (chips on a card come first). */
+function timeKey(e) {
+  const k = e.key;
+  if (k === "MediaRewind" || k === "MediaFastForward") return seekLive(k === "MediaRewind" ? -10_000 : 30_000), true;
+  if ((e.shiftKey && (k === "ArrowLeft" || k === "ArrowRight")) || k === "[" || k === "]" || k === "MediaTrackPrevious" || k === "MediaTrackNext") {
+    const dir = k === "ArrowRight" || k === "]" || k === "MediaTrackNext" ? 1 : -1;
+    player.skipProgram?.(dir);
+    osd(dir > 0 ? "▶▶|" : "|◀◀", dir > 0 ? "Next program" : "Previous program", 1200);
+    showBanner();
+    return true;
+  }
+  // Back (or L) goes back to live first when the viewer has skipped around; again, last channel.
+  if ((k === "Backspace" || k === "l" || k === "L" || k === "LastChannel" || k === "End") && player.timeShift?.()) {
+    player.backToLive?.();
+    osd("LIVE", "", 1200);
+    return true;
+  }
+  return false;
+}
+
+function seekLive(d) {
+  if (typeof player.seekBy !== "function" || !tv.current) return;
+  player.seekBy(d);
+  osd(d < 0 ? "◀◀ 10 s" : "30 s ▶▶", "", 900);
+  showBanner();
+}
+
 function onDemandKey(k) {
   if (k === "ArrowLeft" || k === "ArrowRight" || k === "MediaRewind" || k === "MediaFastForward") {
     const d = k === "ArrowLeft" || k === "MediaRewind" ? -10_000 : 30_000;
@@ -191,7 +224,6 @@ function toggleMute() {
   setPref("muted", !pref("muted"));
   applyVolume();
   osd(pref("muted") ? "MUTE" : `VOL ${Math.round(pref("volume") * 100)}`, "", 1500);
-  document.querySelector('[data-act="mute"]').textContent = pref("muted") ? "🔇" : "🔊";
 }
 
 // Picture shape (parity N-12): Z cycles; player.js applies it to the video.
@@ -220,10 +252,6 @@ addEventListener("pointerdown", () => {
   unlockAudio();
   applyVolume();
 });
-document.getElementById("dock").addEventListener("click", (e) => {
-  const act = e.target.closest("[data-act]")?.dataset.act;
-  ({ up: () => channelStep(1), down: () => channelStep(-1), guide: openGuide, ondemand: () => openOnDemand(), settings: () => openPanel(), mute: toggleMute, full: toggleFull })[act]?.();
-});
 document.getElementById("stage").addEventListener("click", (e) => {
   if (e.target.closest("#card, #video, #synth, #crt, #static")) toggleBanner();
 });
@@ -242,23 +270,26 @@ function showWelcome() {
   const el = document.getElementById("welcome");
   const demo = boot?.demo;
   el.innerHTML = html`<div class="welcome-card">
-    <div class="brand" style="justify-content:center"><span class="brand-mark"></span>DebridTV</div>
-    <h1>Your library,<br><span>always on the air.</span></h1>
-    <p>Channels play around the clock, like cable. Flip around, check the guide, and drop into whatever's on.
-      ${demo ? "You're watching demo channels with made-up shows. Connect TorBox, Real-Debrid or a folder in Settings to put your own library on the air." : ""}</p>
+    <div class="brand">Debrid<i>TV</i></div>
+    <h1>${demo ? "These are demo channels." : "Your channels are on."}</h1>
+    <p>${demo
+      ? "Made-up shows play around the clock so you can try the guide and On Demand. Skip back or ahead any time. Connect TorBox, Real-Debrid or a folder and your own library takes their place."
+      : "Your shows and films play around the clock. Open the guide to see what's on, pick something On Demand, or skip back and ahead any time."}</p>
     <div class="keys tv-only">
       <div><span class="kk"><kbd>▲</kbd><kbd>▼</kbd></span><span>change channel</span></div>
       <div><span class="kk"><kbd>OK</kbd></span><span>program guide</span></div>
       <div><span class="kk"><kbd>0-9</kbd></span><span>go to a number</span></div>
-      <div><span class="kk"><kbd>◀</kbd><kbd>▶</kbd></span><span>what's on</span></div>
+      <div><span class="kk"><kbd>◀</kbd><kbd>▶</kbd></span><span>skip back / ahead</span></div>
       <div><span class="kk"><kbd>Back</kbd></span><span>last channel</span></div>
-      <div><span class="kk"><kbd>▲</kbd></span><span>in the guide: On Demand, settings</span></div>
+      <div><span class="kk"><kbd>▲</kbd></span><span>in the guide: On Demand, subtitles, settings</span></div>
     </div>
     <div class="keys kb-only">
       <div><span class="kk"><kbd>↑</kbd><kbd>↓</kbd></span><span>change channel</span></div>
       <div><span class="kk"><kbd>G</kbd></span><span>program guide</span></div>
       <div><span class="kk"><kbd>0-9</kbd></span><span>go to a number</span></div>
       <div><span class="kk"><kbd>I</kbd></span><span>what's on</span></div>
+      <div><span class="kk"><kbd>←</kbd><kbd>→</kbd></span><span>skip back 10 s / ahead 30 s</span></div>
+      <div><span class="kk"><kbd>[</kbd><kbd>]</kbd></span><span>previous / next program</span></div>
       <div><span class="kk"><kbd>L</kbd></span><span>last channel</span></div>
       <div><span class="kk"><kbd>O</kbd></span><span>On Demand</span></div>
       <div><span class="kk"><kbd>Space</kbd></span><span>pause</span></div>
@@ -266,11 +297,11 @@ function showWelcome() {
       <div><span class="kk"><kbd>F</kbd></span><span>full screen</span></div>
       ${typeof player.applyAspect === "function" ? raw('<div><span class="kk"><kbd>Z</kbd></span><span>picture shape</span></div>') : ""}
       ${typeof player.cycleAudio === "function" ? raw('<div><span class="kk"><kbd>A</kbd></span><span>audio track</span></div>') : ""}
-      ${typeof player.cycleCaptions === "function" ? raw('<div><span class="kk"><kbd>C</kbd></span><span>captions</span></div>') : ""}
+      <div><span class="kk"><kbd>C</kbd></span><span>subtitles</span></div>
       <div><span class="kk"><kbd>S</kbd></span><span>settings</span></div>
     </div>
     <button class="btn primary" data-start>Start watching</button>
-    ${demo ? html`<button class="btn" data-sources style="margin-left:.5em">Connect my library</button>` : ""}
+    ${demo ? html`<button class="btn" data-sources>Connect my library</button>` : ""}
   </div>`;
   el.hidden = false;
   el.querySelector("[data-start]").focus();

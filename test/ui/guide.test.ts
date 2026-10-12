@@ -220,7 +220,13 @@ describe("guide", { skip }, () => {
   });
 });
 
+const station = (breaks: boolean) =>
+  fetch(`${BASE}/api/station`, { method: "POST", headers: { "content-type": "application/json", origin: BASE }, body: JSON.stringify({ breaks }) });
+
 describe("station breaks", { skip }, () => {
+  // Breaks are opt-in (ADR-0006); these tests turn them on and back off.
+  before(async () => void (await station(true)));
+  after(async () => void (await station(false)));
   it("a long break rotates through what's on, from the local clock only", async () => {
     const brk = await findLongBreak();
     assert.ok(brk, "demo lineup should have a long break in the next 12 hours");
@@ -279,7 +285,7 @@ describe("themes (N-11b)", { skip }, () => {
     assert.equal(await js(page, `getComputedStyle(document.documentElement).getPropertyValue("--amber").trim()`), "#ff0066");
     assert.equal(await js(page, `document.documentElement.dataset.theme`), "custom");
     const opts = await js(page, `import("/js/theme.js").then((m) => m.themeOptions().map((o) => o.label))`);
-    assert.ok(opts.includes("Late Show") && opts.includes("Midnight"));
+    assert.ok(opts.includes("Late Show") && opts.includes("Night"));
     assert.deepEqual(errors, []);
     await closeQuietly(ctx);
   });
@@ -309,7 +315,7 @@ describe("themes (N-11b)", { skip }, () => {
     assert.equal(r.ok.colors.bg, "#000000");
     assert.equal(r.ok.colors.panel, "#112233");
     assert.equal(r.ok.colors.ink, "#ffffff");
-    assert.equal(r.ok.colors.accent, "#ffb547", "an invalid colour falls back, never reaches CSS");
+    assert.equal(r.ok.colors.accent, "#f0402f", "an invalid colour falls back, never reaches CSS");
     assert.equal(r.ok.name, "bX/b");
     assert.equal(r.ok.cellStrength, 100);
     assert.match(r.bad, /something else/);
