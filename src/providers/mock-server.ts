@@ -68,6 +68,8 @@ export interface MockProviders {
   /** Change account facts (e.g. premium expiry) between calls. */
   setAccount(account: MockAccount): void;
   reset(): void;
+  /** The media host sends nothing for this long (a slow or hung CDN); open and new media requests wait it out. */
+  stallMedia(ms: number): void;
   close(): Promise<void>;
 }
 
@@ -213,9 +215,10 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
     json(res, 404, { error: "no_route" });
   });
 
+  let stalledUntil = 0;
   const serveMedia = (req: http.IncomingMessage, res: http.ServerResponse, token: string) => {
     counters.mediaRequests++;
-    const ttfb = opts.mediaTtfbMs ?? 0;
+    const ttfb = Math.max(opts.mediaTtfbMs ?? 0, stalledUntil - Date.now());
     if (ttfb > 0) setTimeout(() => !res.destroyed && serveMediaNow(req, res, token), ttfb);
     else serveMediaNow(req, res, token);
   };
@@ -260,6 +263,7 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
     const tickMs = Math.max(1, Math.round((CHUNK / pace) * 1000));
     const pump = () => {
       if (res.destroyed || done) return finish(true);
+      if (Date.now() < stalledUntil) return void setTimeout(pump, stalledUntil - Date.now());
       if (remaining <= 0) {
         res.end();
         return finish(false);
@@ -287,6 +291,9 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
     },
     setAccount(next) {
       account = next;
+    },
+    stallMedia(ms) {
+      stalledUntil = Date.now() + ms;
     },
     reset() {
       Object.assign(counters, freshCounters(), { activeMedia: counters.activeMedia });

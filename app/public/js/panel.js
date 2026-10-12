@@ -544,6 +544,8 @@ async function meters() {
         <b>${fmtBytes(m.bytes.cached ?? 0)}</b><span>served from cache (${fmtBytes(m.cache.bytes)} in ${m.cache.files} files)</span></div>` : ""}
       ${m.preload?.started ? html`<div class="stat" title="Fetched a minute before the next show on the channel you were watching. Wasted means nobody played it (you changed channel or stopped).">
         <b>${fmtBytes(m.bytes.preload ?? 0)}</b><span>next shows readied: ${m.preload.used} played, ${m.preload.wasted} wasted (${fmtBytes(m.preload.wastedBytes)})</span></div>` : ""}
+      ${m.readAhead?.peakBytes ? html`<div class="stat" title="DebridTV reads up to about a minute ahead of the show you're watching, so a slow provider doesn't freeze the picture. Bytes left over when you change channel are wasted.">
+        <b>${fmtBytes(m.readAhead.peakBytes)}</b><span>most held ahead (${fmtBytes(m.readAhead.wastedBytes)} unplayed when you left)</span></div>` : ""}
       <div class="stat"><b>${m.tunes}</b><span>channel changes</span></div>
       <div class="stat"><b>${m.streamsOpened}</b><span>streams opened</span></div>
       <div class="stat"><b>${m.streamsCancelled}</b><span>cancelled</span></div>

@@ -52,6 +52,8 @@ export class Meters {
   readonly bytes: Record<ByteKind, number> = { playback: 0, probe: 0, cached: 0, preload: 0 };
   /** Next-show pre-loads: what they fetched, and whether it was played or wasted. */
   readonly preload = new PreloadLedger();
+  /** Read-ahead on the stream being watched: most held at once, and bytes fetched but never played because the viewer left. */
+  readonly readAhead = { peakBytes: 0, wastedBytes: 0 };
   /** Edge cache size on disk, set by the server. */
   cache = { bytes: 0, files: 0 };
   streamsOpened = 0;
@@ -98,6 +100,7 @@ export class Meters {
       bytes: { ...this.bytes },
       cache: { ...this.cache },
       preload: this.preload.snapshot(),
+      readAhead: { ...this.readAhead },
       streamsOpened: this.streamsOpened,
       streamsCancelled: this.streamsCancelled,
       activeStreams: this.activeStreams,

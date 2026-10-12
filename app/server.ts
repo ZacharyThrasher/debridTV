@@ -33,6 +33,7 @@ import { ORDERINGS } from "../src/clock/ordering.ts";
 import { demoItems } from "./demo.ts";
 import { backupIfDue, listBackups, readBackup } from "./backups.ts";
 import { EdgeCache, HEAD_BYTES, TAIL_BYTES } from "./edgecache.ts";
+import { pipeWithReadAhead, readAheadBytes, READ_AHEAD_AFTER_MS } from "./readahead.ts";
 import { PinLock } from "./pinlock.ts";
 import { OnlineMetadata } from "./metadata/tmdb.ts";
 import { allowedUnder } from "../src/clock/ratings.ts";
@@ -57,6 +58,8 @@ export interface AppOptions {
   timers?: boolean;
   /** TMDB API and image bases; tests point these at a recorded mock. */
   tmdb?: { apiBase?: string; imageBase?: string; spacingMs?: number };
+  /** How long a stream stays open before it reads ahead (default READ_AHEAD_AFTER_MS); tests shorten it. */
+  readAheadAfterMs?: number;
   /** Home network access options (tests simulate a TV's address with `peer`). */
   lan?: Pick<LanOptions, "peer" | "addresses" | "listen" | "now">;
 }
@@ -624,7 +627,21 @@ async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, i
       meters.cache = { bytes: edge.bytes(), files: edge.entries() };
     });
     body.on("error", () => {});
-    body.pipe(res);
+    // Hold up to about a minute of the file past what the player has taken, so a
+    // provider that goes quiet mid-show drains this first (EXP-012).
+    // The browser opens a new range request now and then while one show plays, so the
+    // 10 s wait counts from when this file started streaming, not from this request.
+    const t = Date.now();
+    const st = streaming.get(id);
+    const since = st && t - st.last < 30_000 ? st.since : t;
+    streaming.set(id, { since, last: t });
+    if (streaming.size > 20) streaming.delete(streaming.keys().next().value!);
+    pipeWithReadAhead(body, res, readAheadBytes(it.bytes, it.durationMs), (r) => {
+      meters.readAhead.wastedBytes += r.unsent;
+      const cur = streaming.get(id);
+      if (cur) cur.last = Date.now();
+    }, Math.max(0, since + (opts.readAheadAfterMs ?? READ_AHEAD_AFTER_MS) - t),
+    (n) => (meters.readAhead.peakBytes = Math.max(meters.readAhead.peakBytes, n)));
   } catch (e) {
     if (ac.signal.aborted) return;
     if (e instanceof ProviderError && e.kind === "policy") {
@@ -881,6 +898,8 @@ function collectSubs(tok: string, stream: NodeJS.ReadableStream) {
 
 
 const liveStarts = new Map<string, number>();
+/** When each file started streaming to a viewer, and when it was last read (read-ahead waits 10 s from the start). */
+const streaming = new Map<string, { since: number; last: number }>();
 
 // ---------------------------------------------------------------- http
 
