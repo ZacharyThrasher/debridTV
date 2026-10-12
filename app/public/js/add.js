@@ -3,7 +3,8 @@
 // Also: paste magnets, hashes and links, upload a .torrent or .nzb, and a
 // watched folder. Nothing reaches an account until "Allow adding" is on and you
 // press Add (or drop a file in the watched folder). DebridTV ships no indexers.
-// Styles use the design tokens only (styles.css belongs to the redesign).
+// Styles use the redesign tokens only (styles.css and tokens.css belong to it; see
+// docs/design/ai-tells.md: one face, 2 to 4 px corners, red only for live).
 
 import { api } from "./api.js";
 import { html, raw, fmtBytes, ago, toast } from "./util.js";
@@ -13,26 +14,27 @@ let state = { q: "", type: "search", results: null, sources: [], searching: fals
 let rerender = () => {};
 let jobTimer = 0;
 
+// tokens.css names (the redesign), with the older names as fallbacks until it lands.
 const STYLE = `
-.acq-gate{display:flex;gap:calc(var(--u)*.8);align-items:flex-start;padding:calc(var(--u)*.9);border:1px solid var(--line-strong);border-radius:var(--radius);margin-bottom:calc(var(--u)*1)}
-.acq-gate.on{border-color:var(--ok)}
+.acq-gate{display:flex;gap:var(--sp-3,calc(var(--u)*.75));align-items:flex-start;padding:var(--sp-3,calc(var(--u)*.75)) var(--sp-4,var(--u));border:1px solid var(--rule-strong,var(--line-strong));border-radius:var(--r-2,3px);margin-bottom:var(--sp-4,var(--u))}
+.acq-gate.on{border-left:3px solid var(--ok)}
 .acq-gate .ol{font-weight:600}
-.acq-search{display:flex;gap:calc(var(--u)*.5);flex-wrap:wrap}
+.acq-search{display:flex;gap:var(--sp-2,calc(var(--u)*.5));flex-wrap:wrap}
 .acq-search .input{flex:1 1 14em;min-width:0}
-.acq-res{display:grid;gap:calc(var(--u)*.35);margin-top:calc(var(--u)*.7)}
-.acq-row{display:grid;grid-template-columns:1fr auto;gap:calc(var(--u)*.6);align-items:center;padding:calc(var(--u)*.55) calc(var(--u)*.7);border:1px solid var(--line);border-radius:var(--radius)}
-.acq-row .t{overflow-wrap:anywhere}
-.acq-row .m{color:var(--dim);font-size:.85em;margin-top:.2em}
+.acq-res{display:grid;margin-top:var(--sp-3,calc(var(--u)*.75));border-top:1px solid var(--rule,var(--line))}
+.acq-row{display:grid;grid-template-columns:1fr auto;gap:var(--sp-3,calc(var(--u)*.75));align-items:center;padding:var(--sp-2,calc(var(--u)*.5)) 0;border-bottom:1px solid var(--rule,var(--line))}
+.acq-row .t{overflow-wrap:anywhere;font-weight:600}
+.acq-row .m{color:var(--ink-2,var(--dim));font-size:var(--fs-sm,.85em);margin-top:.2em;font-variant-numeric:tabular-nums}
 .acq-row .m b{color:var(--ok);font-weight:600}
-.acq-row .m b.zero{color:var(--faint)}
-.acq-acts{display:flex;gap:calc(var(--u)*.35);flex-wrap:wrap;justify-content:flex-end}
-.acq-src{color:var(--faint);font-size:.85em;margin-top:calc(var(--u)*.4)}
+.acq-row .m b.zero{color:var(--ink-3,var(--faint))}
+.acq-acts{display:flex;gap:var(--sp-1,calc(var(--u)*.25));flex-wrap:wrap;justify-content:flex-end}
+.acq-src{color:var(--ink-3,var(--faint));font-size:var(--fs-sm,.85em);margin-top:var(--sp-2,calc(var(--u)*.5))}
 .acq-src .bad{color:var(--bad)}
-.acq-paste{width:100%;min-height:6em;resize:vertical;font-family:var(--mono)}
-.acq-job{display:grid;grid-template-columns:auto 1fr;gap:calc(var(--u)*.6);align-items:start;padding:calc(var(--u)*.45) 0;border-bottom:1px solid var(--line)}
-.acq-dot{width:.7em;height:.7em;border-radius:50%;margin-top:.35em;background:var(--faint)}
+.acq-paste{width:100%;min-height:6em;resize:vertical;font-family:var(--font-ui,inherit)}
+.acq-job{display:grid;grid-template-columns:auto 1fr;gap:var(--sp-3,calc(var(--u)*.75));align-items:start;padding:var(--sp-2,calc(var(--u)*.5)) 0;border-bottom:1px solid var(--rule,var(--line))}
+.acq-dot{width:.6em;height:.6em;border-radius:var(--r-pill,999px);margin-top:.45em;background:var(--ink-3,var(--faint))}
 .acq-dot.added{background:var(--ok)}.acq-dot.failed{background:var(--bad)}.acq-dot.adding,.acq-dot.waiting{background:var(--warn)}
-.acq-ix{display:grid;grid-template-columns:1fr auto;gap:calc(var(--u)*.5);align-items:center;padding:calc(var(--u)*.45) 0;border-bottom:1px solid var(--line)}
+.acq-ix{display:grid;grid-template-columns:1fr auto;gap:var(--sp-2,calc(var(--u)*.5));align-items:center;padding:var(--sp-2,calc(var(--u)*.5)) 0;border-bottom:1px solid var(--rule,var(--line))}
 html[data-where="device"] #panel [data-tab="add"]{display:none}
 @media (max-width:600px){.acq-row{grid-template-columns:1fr}.acq-acts{justify-content:flex-start}}
 `;
@@ -149,8 +151,8 @@ function jobsHtml(jobs) {
 function indexersHtml(s) {
   const archive = html`<div class="acq-ix"><div><div>Internet Archive</div><div class="muted">Public-domain and freely licensed films and TV, seeded by the Archive itself.</div></div>
     <button class="btn" data-acq-archive="${s.archiveSearch ? "0" : "1"}">${s.archiveSearch ? "Turn off" : "Turn on"}</button></div>`;
-  const list = s.indexers.map((ix) => html`<div class="acq-ix"><div><div>${ix.name} <span class="badge">${ix.kind === "newznab" ? "Newznab" : "Torznab"}</span>${ix.enabled ? "" : html` <span class="badge">off</span>`}</div>
-      <div class="muted">${ix.url}${ix.hasKey ? " · key saved on this PC" : ""}</div></div>
+  const list = s.indexers.map((ix) => html`<div class="acq-ix"><div><div>${ix.name}</div>
+      <div class="muted">${ix.kind === "newznab" ? "Newznab" : "Torznab"}${ix.enabled ? "" : " · off"} · ${ix.url}${ix.hasKey ? " · key saved on this PC" : ""}</div></div>
     <div class="acq-acts"><button class="btn" data-acq-ix-test="${ix.id}">Test</button><button class="btn" data-acq-ix-remove="${ix.id}">Remove</button></div></div>`).join("");
   const form = state.showIndexerForm
     ? html`<div class="src">
