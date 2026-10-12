@@ -919,9 +919,9 @@ export class Library {
   }
 
   /** Clock-facing view: identity, timing and age rating. Availability is not included on purpose. */
-  mediaItems(): MediaItem[] {
+  mediaItems(items: LibItem[] = this.items()): MediaItem[] {
     const manual = this.manualRatings();
-    return this.items().flatMap((i) => {
+    return items.flatMap((i) => {
       if (i.parsed.kind === "other" && !airsAsExtra(i)) return [];
       return [{
         id: i.id,

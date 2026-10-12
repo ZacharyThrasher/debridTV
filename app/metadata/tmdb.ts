@@ -45,6 +45,8 @@ export interface OnlineTitle {
   images: Partial<Record<OnlineKind, string>>;
   /** TMDB paths not downloaded yet (a failed or interrupted fetch). */
   pending?: Partial<Record<OnlineKind, string>>;
+  /** A show's seasons as TMDB numbers them (names like "Stardust Crusaders", episode counts), for show identity. */
+  seasonList?: Array<{ season: number; name?: string; episodes?: number }>;
   /** Seasons fetched (episode names and overviews), or a time to try again. */
   seasons?: Record<string, { at: number; episodes: Record<string, { name?: string; overview?: string }> } | { at: number; missing: true }>;
   at: number;
@@ -175,6 +177,13 @@ export class OnlineMetadata {
     return t ? String(t.id) : undefined;
   }
 
+  /** A show's name and seasons from the cache, by TMDB id (show identity: arcs that are seasons). Reads the cache only. */
+  show(tmdbId: string): { name?: string; seasons?: Array<{ season: number; name?: string; episodes?: number }> } | undefined {
+    if (!this.keyFile.get().key) return undefined;
+    const t = this.cache.get().titles[`tv:${tmdbId}`];
+    return t ? { name: t.name, ...(t.seasonList ? { seasons: t.seasonList } : {}) } : undefined;
+  }
+
   /** Which picture kinds the cache has for an item. */
   kinds(it: LibItem | undefined): OnlineKind[] {
     const t = this.titleFor(it);
@@ -283,6 +292,8 @@ export class OnlineMetadata {
       let w = out.get(q.key);
       const add = () => (w ??= (out.set(q.key, { key: q.key, media: q.media, title: q.title, year: q.year, seasons: new Set() }), out.get(q.key)!));
       if (!hit || (hit.id == null && now - hit.at >= MISS_TTL) || (t && needsArt && t.pending && Object.keys(t.pending).length)) add();
+      // Shows matched before season lists were kept: one more request each.
+      if (t && q.media === "tv" && !t.seasonList) add();
       if (it.parsed.kind === "episode" && needsText) {
         const s = t?.seasons?.[String(it.parsed.season)];
         const retry = s && "missing" in s && now - s.at >= MISS_TTL;
@@ -353,14 +364,22 @@ export class OnlineMetadata {
         return false;
       }
       found = true;
-      if (w.media === "tv") {
-        // Clear logos for show channels and banners; English or language-free.
-        const imgs = await this.getJson<{ logos?: Array<{ file_path?: string; iso_639_1?: string | null }> }>(`/tv/${best.id}/images`, { include_image_language: `${this.language().slice(0, 2)},null` });
-        const logo = (imgs.logos ?? []).find((l) => l.file_path && /\.png$/i.test(l.file_path));
-        if (logo?.file_path) this.cache.update((s) => void (s.titles[`tv:${best.id}`]!.pending!.logo = logo.file_path!));
-      }
     }
     const key = `${w.media}:${hit.id}`;
+    if (w.media === "tv" && !this.cache.get().titles[key]?.seasonList) {
+      // One request: the show's seasons (names and episode counts) and its clear logos, English or language-free.
+      const d = await this.getJson<{ seasons?: Array<{ season_number?: number; name?: string; episode_count?: number }>; images?: { logos?: Array<{ file_path?: string }> } }>(
+        `/tv/${hit.id}`, { append_to_response: "images", include_image_language: `${this.language().slice(0, 2)},null` });
+      const logo = (d.images?.logos ?? []).find((l) => l.file_path && /\.png$/i.test(l.file_path));
+      const seasonList = (d.seasons ?? []).filter((x) => typeof x.season_number === "number")
+        .map((x) => ({ season: x.season_number!, ...(x.name ? { name: x.name } : {}), ...(x.episode_count ? { episodes: x.episode_count } : {}) }));
+      this.cache.update((st) => {
+        const tt = st.titles[key];
+        if (!tt) return;
+        tt.seasonList = seasonList;
+        if (logo?.file_path && !tt.images.logo) (tt.pending ??= {}).logo = logo.file_path;
+      });
+    }
     for (const season of w.seasons) {
       const t = this.cache.get().titles[key];
       const s = t?.seasons?.[String(season)];
@@ -476,8 +495,10 @@ interface TmdbResult {
 export function queryFor(it: LibItem): { key: string; media: Media; title: string; year?: number } | undefined {
   const p = it.parsed;
   if (p.kind === "episode") {
-    const title = p.show;
-    return { key: `tv|${norm(title)}|${p.year ?? ""}`, media: "tv", title, ...(p.year ? { year: p.year } : {}) };
+    // Show identity's name for the show (no release noise, no arc), else the parsed one.
+    const title = p.searchAs?.show ?? p.show;
+    const year = p.searchAs ? p.searchAs.year : p.year;
+    return { key: `tv|${norm(title)}|${year ?? ""}`, media: "tv", title, ...(year ? { year } : {}) };
   }
   if (p.kind === "movie") {
     const nfo = it.meta?.kind === "movie" ? it.meta : undefined;

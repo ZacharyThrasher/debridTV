@@ -16,6 +16,7 @@
 // Until that endpoint exists, the editor runs on a local draft and says so.
 
 import { api } from "./api.js";
+import { openShowFix } from "./showfix.js";
 import { html, raw, toast, clamp, fmtTime } from "./util.js";
 import { tv } from "./player.js";
 import { lockStatus, setPin, withPin, PIN_MIN, PIN_MAX } from "./lock.js";
@@ -136,6 +137,8 @@ function identity() {
   const l = draft.logo ?? { kind: "badge" };
   return html`
     <div class="field"><label for="ced-name">Name</label><input id="ced-name" class="input" data-k="name" data-first value="${draft.name}" maxlength="40"></div>
+    ${ch.ruleKey?.startsWith("show:") ? html`<div class="opt"><div><div class="ol">The show's files</div><div class="od">Wrong name, two shows mixed up, or one show split in two? Fix how its files are grouped.</div></div>
+      <button class="btn" data-fixshow="${ch.ruleKey.slice(5)}">Fix this show</button></div>` : ""}
     <div class="ced-row">
       <div class="field"><label for="ced-num">Channel number</label>
         <input id="ced-num" class="input" data-k="number" type="number" min="1" max="999" value="${draft.number}">
@@ -410,6 +413,7 @@ root.addEventListener("click", async (e) => {
   const d = b.dataset;
   if (d.close !== undefined) return closeChannelEditor();
   if (d.artLogo) return void useArtLogo(d.artLogo);
+  if (d.fixshow) return void openShowFix(d.fixshow, { host: root });
   if (d.tab) tab = d.tab;
   else if (d.logoKind) draft.logo = d.logoKind === "image" ? { ...draft.logo, kind: "image" } : { ...draft.logo, kind: d.logoKind, text: d.logoKind === "text" ? wordFrom(draft) : String(draft.number) };
   else if (d.logoStyle) draft.logo = { ...draft.logo, style: d.logoStyle };

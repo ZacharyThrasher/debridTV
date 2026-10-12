@@ -1299,6 +1299,19 @@ html.remote .od-ep:focus-visible { outline-offset: 2px; transform: scale(1.015);
 .od-sheet-box .od-t { font-size: calc(var(--u)*2.4); }
 .od-sheet-acts { display: flex; gap: calc(var(--u)*.7); margin-top: calc(var(--u)*1.4); flex-wrap: wrap; }
 .od-sheet-acts .btn { font-size: calc(var(--u)*1); }
+/* Fix this show (show identity). Plain on purpose; the redesign's tokens win where present. */
+.od-fix { margin-left: auto; font-size: calc(var(--u)*.85); }
+.showfix { position: fixed; z-index: 60; }
+.showfix-box { width: min(94vw, 44em); max-height: 88vh; overflow: auto; background: var(--surface-2, var(--panel-solid)); color: var(--ink, inherit); }
+.showfix-box h4 { margin: calc(var(--u)*1.2) 0 calc(var(--u)*.4); font-size: calc(var(--u)*.85); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2, var(--dim)); }
+.showfix-row { display: flex; align-items: center; gap: calc(var(--u)*.6); margin-top: calc(var(--u)*.8); flex-wrap: wrap; }
+.showfix-row label { min-width: 7em; color: var(--ink-2, var(--dim)); }
+.showfix-row .input { flex: 1; min-width: 12em; }
+.showfix-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule, rgba(255,255,255,.1)); }
+.showfix-list li { display: flex; align-items: center; gap: calc(var(--u)*.6); padding: calc(var(--u)*.5) 0; border-bottom: 1px solid var(--rule, rgba(255,255,255,.1)); }
+.showfix-n { flex: 1; display: grid; gap: 2px; min-width: 0; }
+.showfix-n b { overflow-wrap: anywhere; font-weight: 600; }
+.showfix-n span { font-size: .85em; color: var(--ink-3, var(--faint)); }
 
 /* On the picture: the banner while a pick plays. */
 .badge.od { color: #fff; background: linear-gradient(90deg, #7b3cff, #d23aa8); border-color: transparent; letter-spacing: .08em; }

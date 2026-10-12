@@ -3,6 +3,7 @@
 // pack, an expired account toggle. No real provider is contacted.
 //
 //   npm run dev:mock            then open http://127.0.0.1:7338
+//   DEBRIDTV_MOCK_SHOWS=1 npm run dev:mock   adds shows under many spellings (show identity)
 //   keys: TorBox "mock-torbox-key-0000000000", Real-Debrid "mock-rd-key-00000000000000"
 //
 // The data folder is a fresh temp folder each run unless DEBRIDTV_HOME is set.
@@ -34,6 +35,10 @@ const files = [
   { ref: "rd:m6", name: "Lighthouse.Radio.1998.mkv", bytes: 2.1e9, state: "magnet_error" as const },
   { ref: "tb:95:1", name: "Readme.txt.mkv", bytes: 1200 },
 ];
+if (process.env.DEBRIDTV_MOCK_SHOWS === "1") {
+  const { MOCK_SHOW_FILES } = await import("../test/fixtures/show-names.ts");
+  files.push(...MOCK_SHOW_FILES.map((name, i) => ({ ref: `tb:${200 + i}:1`, name, bytes: mkv.byteLength, content: mkv })));
+}
 
 const mock = await startMockProviders({
   files,
