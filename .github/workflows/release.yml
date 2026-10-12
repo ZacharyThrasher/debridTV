@@ -62,14 +62,19 @@ jobs:
           # Act like a PC without ffmpeg, so the automatic download is what's tested.
           $env:DEBRIDTV_IGNORE_PATH_FFMPEG = "1"
           $exe = "unzipped\DebridTV\DebridTV.exe"
+          # An older copy (like `npm start` from a checkout) already holds the port: the exe must replace it.
+          Set-Content old.js 'require("http").createServer((q, r) => r.end(JSON.stringify({ channels: [], version: "0.0.9" }))).listen(7337, "127.0.0.1")'
+          $old = Start-Process node -ArgumentList "old.js" -PassThru
+          Start-Sleep 2
           $p = Start-Process $exe -ArgumentList "--no-browser" -PassThru -RedirectStandardOutput out.log -RedirectStandardError err.log
           $base = "http://127.0.0.1:7337"
           $up = $false
           for ($i = 0; $i -lt 60 -and -not $up; $i++) {
-            try { $b = Invoke-RestMethod "$base/api/bootstrap"; $up = $true } catch { Start-Sleep 1 }
+            try { $b = Invoke-RestMethod "$base/api/bootstrap"; if ($b.build) { $up = $true } else { Start-Sleep 1 } } catch { Start-Sleep 1 }
           }
-          if (-not $up) { Get-Content out.log, err.log; throw "DebridTV didn't start" }
-          Write-Host "Started: version $($b.version), demo $($b.demo), $($b.channels.Count) channels"
+          if (-not $up) { Get-Content out.log, err.log; throw "DebridTV didn't start, or didn't replace the older copy on the port" }
+          Write-Host "Started: version $($b.version), build $($b.build), demo $($b.demo), $($b.channels.Count) channels"
+          if (-not $old.HasExited) { throw "the older copy is still running" }
           $page = Invoke-WebRequest "$base/" -UseBasicParsing
           if ($page.Content -notmatch "DebridTV") { throw "the guide page didn't load" }
           Invoke-WebRequest "$base/styles.css" -UseBasicParsing | Out-Null
