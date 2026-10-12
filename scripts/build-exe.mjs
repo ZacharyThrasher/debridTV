@@ -61,6 +61,14 @@ for (const name of readdirSync(join(ROOT, "app/lan"))) if (name.endsWith(".html"
   assets[`lan/${name}`] = join(ROOT, "app/lan", name);
   files.push(`lan/${name}`);
 }
+// The app window (desktop/, built on Windows with cargo). Release builds must carry
+// it; a local build without it still works and opens the browser instead.
+const windowExe = process.env.DEBRIDTV_WINDOW_EXE ?? join(DIST, "debridtv-window.exe");
+if (existsSync(windowExe)) {
+  assets["window/debridtv-window.exe"] = windowExe;
+  files.push("window/debridtv-window.exe");
+} else if (process.env.DEBRIDTV_REQUIRE_WINDOW === "1") throw new Error(`the app window isn't built (${windowExe})`);
+else console.log("Note: no debridtv-window.exe, so this build opens the browser instead of DebridTV's own window.");
 const hash = createHash("sha256");
 for (const f of files.sort()) hash.update(f).update(readFileSync(assets[f]));
 const manifest = join(WORK, "manifest.json");
@@ -118,6 +126,7 @@ if (!host) {
   copyFileSync(exe, join(stage, "DebridTV.exe"));
   copyFileSync(join(ROOT, "packaging/README.txt"), join(stage, "README.txt"));
   copyFileSync(join(CACHE, `node-${nodeVersion}-win-x64`, "LICENSE"), join(stage, "LICENSE-node.txt"));
+  copyFileSync(join(ROOT, "packaging/THIRD-PARTY.txt"), join(stage, "THIRD-PARTY.txt"));
   const out = join(DIST, `DebridTV-v${version}-win-x64.zip`);
   rmSync(out, { force: true });
   execFileSync("zip", ["-q", "-r", "-9", out, "DebridTV"], { cwd: join(WORK, "zip") });
