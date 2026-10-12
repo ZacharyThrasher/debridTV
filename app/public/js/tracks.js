@@ -175,7 +175,7 @@ export const CAPTION_STYLE = {
 export const capPref = (k) => (pref(k) in CAPTION_STYLE[k].opts ? pref(k) : CAPTION_STYLE[k].def);
 
 const SIZES = { s: "clamp(15px, 3.3vh, 42px)", m: "clamp(20px, 4.4vh, 56px)", l: "clamp(24px, 5.8vh, 74px)", xl: "clamp(30px, 7.4vh, 96px)" };
-const FONTS = { classic: "VT323, ui-monospace, Consolas, monospace", clean: "Inter, system-ui, sans-serif" };
+const FONTS = { classic: "VT323, ui-monospace, Consolas, monospace", clean: "Archivo, system-ui, sans-serif" };
 const OUTLINE = "0 0 4px #000, 0 0 2px #000, 1px 1px 2px #000, -1px -1px 2px #000";
 
 // The menu's sample is a small box, so it shows the sizes relative to each other.

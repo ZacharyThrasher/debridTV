@@ -5,8 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>DebridTV</title>
   <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0b0c0d" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="fonts/fonts.css" />
+  <link rel="stylesheet" href="tokens.css" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="player.css" />
 </head>
@@ -34,17 +36,17 @@
       <div id="guide-details" class="guide-details"></div>
     </header>
     <div class="guide-bar">
-      <div class="brand"><span class="brand-mark"></span>DebridTV</div>
+      <div class="brand">Debrid<i>TV</i></div>
       <div id="guide-date" class="guide-date"></div>
       <div class="guide-hints">
         <span class="hint-browse"><kbd>↑↓←→</kbd> browse</span><span><kbd>OK</kbd> watch</span><span><kbd>0–9</kbd> jump</span><span class="kb-only"><kbd>G</kbd> close</span><span class="tv-only"><kbd>Back</kbd> close</span>
       </div>
       <div id="guide-jump" class="guide-jump" aria-live="assertive"></div>
       <div class="guide-tools" role="toolbar" aria-label="Guide">
-        <button data-gt="now" aria-label="Now" title="Back to now (Home)"><span aria-hidden="true">◷</span><b>Now</b></button>
-        <button data-gt="ondemand" aria-label="On Demand" title="On Demand (O)"><span aria-hidden="true">▶</span><b>On Demand</b></button>
+        <button data-gt="now" aria-label="Now" title="Back to now (Home)"><b>Now</b></button>
+        <button data-gt="ondemand" aria-label="On Demand" title="On Demand (O)"><b>On Demand</b></button>
         <button data-gt="captions" aria-label="Subtitles" title="Subtitles and audio (C)"><span aria-hidden="true" class="cc-glyph">CC</span><b>Subtitles</b></button>
-        <button data-gt="settings" aria-label="Settings" title="Settings (S)"><span aria-hidden="true">⚙</span><b>Settings</b></button>
+        <button data-gt="settings" aria-label="Settings" title="Settings (S)"><b>Settings</b></button>
       </div>
       <div id="guide-clock" class="guide-clock"></div>
     </div>
@@ -53,7 +55,7 @@
 
   <aside id="panel" class="panel" hidden aria-label="Settings">
     <header class="panel-head">
-      <div class="brand"><span class="brand-mark"></span>DebridTV</div>
+      <div class="brand">Debrid<i>TV</i></div>
       <button class="icon-btn" data-close aria-label="Close settings">✕</button>
     </header>
     <nav class="tabs" role="tablist">

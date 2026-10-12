@@ -58,7 +58,7 @@ const P = {
   check: "M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z",
 };
 const icon = (d, extra = "") => raw(`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/>${extra}</svg>`);
-const num = (n) => `<text x="12" y="16.2" text-anchor="middle" font-size="6.6" font-weight="700" font-family="Inter, system-ui, sans-serif">${n}</text>`;
+const num = (n) => `<text x="12" y="16.2" text-anchor="middle" font-size="6.6" font-weight="700" font-family="Archivo, system-ui, sans-serif">${n}</text>`;
 
 // ------------------------------------------------------------------ markup
 

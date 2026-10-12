@@ -24,7 +24,7 @@ applyPrefs();
 whereAmI().then((w) => (document.documentElement.dataset.where = w));
 applyVolume();
 // The demo picture draws text on a canvas, which only uses fonts already loaded.
-for (const f of ['800 20px "Barlow Condensed"', "20px VT323", "600 20px Inter"]) document.fonts?.load(f).catch(() => {});
+for (const f of ['700 20px "Archivo"', '600 20px "Archivo"']) document.fonts?.load(f).catch(() => {});
 
 let boot = null;
 
@@ -278,10 +278,13 @@ function showWelcome() {
   const el = document.getElementById("welcome");
   const demo = boot?.demo;
   el.innerHTML = html`<div class="welcome-card">
-    <div class="brand" style="justify-content:center"><span class="brand-mark"></span>DebridTV</div>
-    <h1>Your library,<br><span>always on the air.</span></h1>
-    <p>Channels play around the clock from your own library. Flip around, check the guide, and drop into whatever's on. Skip back or ahead any time.
-      ${demo ? (boot.waiting ? waitingText(boot.waiting) : "You're watching demo channels with made-up shows. Connect TorBox, Real-Debrid or a folder in Settings to put your own library on the air.") : ""}</p>
+    <div class="brand">Debrid<i>TV</i></div>
+    <h1>${demo ? "These are demo channels." : "Your channels are on."}</h1>
+    <p>${demo
+      ? boot.waiting
+        ? waitingText(boot.waiting)
+        : "Made-up shows play around the clock so you can try the guide and On Demand. Skip back or ahead any time. Connect TorBox, Real-Debrid or a folder and your own library takes their place."
+      : "Your shows and films play around the clock. Open the guide to see what's on, pick something On Demand, or skip back and ahead any time."}</p>
     <div class="keys tv-only">
       <div><span class="kk"><kbd>▲</kbd><kbd>▼</kbd></span><span>change channel</span></div>
       <div><span class="kk"><kbd>OK</kbd></span><span>program guide</span></div>
@@ -308,7 +311,7 @@ function showWelcome() {
       <div><span class="kk"><kbd>S</kbd></span><span>settings</span></div>
     </div>
     <button class="btn primary" data-start>Start watching</button>
-    ${demo ? html`<button class="btn" data-sources style="margin-left:.5em">${boot.waiting ? "See scan progress" : "Connect my library"}</button>` : ""}
+    ${demo ? html`<button class="btn" data-sources>${boot.waiting ? "See scan progress" : "Connect my library"}</button>` : ""}
   </div>`;
   el.hidden = false;
   el.querySelector("[data-start]").focus();
