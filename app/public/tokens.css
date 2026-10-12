@@ -1,0 +1,161 @@
+/* DebridTV design tokens. Direction "Listings": the printed TV-listings page brought
+   to a screen. Warm ink, paper-white type, one signal colour for what's live, hairline
+   rules instead of boxes, and type doing the work: a serif for titles, a sans for the
+   interface, a mono for times and channel numbers. No gradients, glows or glass; the
+   artwork brings the colour. See docs/design/README.md.
+
+   Everything sizes from --u (one unit), which grows with the viewport and grows again
+   on a TV (html.tv), so one set of numbers reads on a phone, a laptop and at 10 feet.
+
+   Themes (theme.js and the [data-theme] blocks below) set only the colour tokens. */
+
+:root {
+  /* ---- colour: surfaces, darkest to lightest */
+  --bg: #0c0b0a;            /* the room behind everything */
+  --surface-1: #131210;     /* guide, settings, sheets */
+  --surface-2: #1b1a17;     /* a raised thing on surface-1: a cell, a card, a field */
+  --surface-3: #262420;     /* hover, pressed, selected */
+  --scrim: rgba(8, 7, 6, .78); /* over the picture */
+
+  /* ---- colour: type */
+  --ink: #f1ece2;           /* paper white: titles, body */
+  --ink-2: #b3ac9f;         /* secondary: metadata, descriptions */
+  --ink-3: #8a8378;         /* tertiary: hints, captions (4.6:1 on surface-1) */
+
+  /* ---- colour: rules (hairlines are the main structure) */
+  --rule: rgba(241, 236, 226, .085);
+  --rule-strong: rgba(241, 236, 226, .17);
+
+  /* ---- colour: signal. One accent, used for "now": the now line, live, progress, the current row. */
+  --accent: #ff5b29;
+  --accent-ink: #160803;    /* text on --accent */
+  --accent-soft: rgba(255, 91, 41, .14);
+  --accent-2: #e9c46a;      /* a second, rare accent: favourites, stars */
+  --link: #f1ece2;          /* links and small highlights (underlined, so colour isn't the only cue) */
+
+  /* ---- colour: focus. Focus inverts: paper on ink, so it reads from the couch. */
+  --focus: #f1ece2;
+  --focus-ink: #0c0b0a;
+  --ring: 3px;
+
+  /* ---- colour: status */
+  --ok: #8ccf9f;
+  --warn: #e9c46a;
+  --bad: #ff7a66;
+
+  /* ---- colour: the channel number shown on a channel change */
+  --osd: #f1ece2;
+
+  /* ---- guide cells (theme-tintable) */
+  --cell: var(--surface-2);
+  --cell-now: #211f1b;
+
+  /* ---- type */
+  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  --u: clamp(12px, 1.05vw, 22px);
+  --fs-xs: calc(var(--u) * .72);
+  --fs-sm: calc(var(--u) * .84);
+  --fs-md: calc(var(--u) * 1);
+  --fs-lg: calc(var(--u) * 1.22);
+  --fs-xl: calc(var(--u) * 1.6);
+  --fs-2xl: calc(var(--u) * 2.3);
+  --fs-3xl: calc(var(--u) * 3.4);
+  --fs-4xl: calc(var(--u) * 5);
+  --track-caps: .14em;      /* letter-spacing for small caps labels */
+
+  /* ---- space (a 4-step rhythm on the unit) */
+  --sp-1: calc(var(--u) * .25);
+  --sp-2: calc(var(--u) * .5);
+  --sp-3: calc(var(--u) * .75);
+  --sp-4: calc(var(--u) * 1);
+  --sp-5: calc(var(--u) * 1.5);
+  --sp-6: calc(var(--u) * 2);
+  --sp-7: calc(var(--u) * 3);
+  --sp-8: calc(var(--u) * 4);
+
+  /* ---- shape */
+  --r-1: calc(var(--u) * .2);   /* chips, cells, fields */
+  --r-2: calc(var(--u) * .4);   /* cards, buttons */
+  --r-3: calc(var(--u) * .8);   /* sheets */
+  --r-pill: 999px;
+
+  /* ---- depth: used only where something floats over the picture */
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, .03) inset, 0 8px 24px rgba(0, 0, 0, .35);
+  --shadow-2: 0 24px 64px rgba(0, 0, 0, .55);
+
+  /* ---- motion */
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --ease-in-out: cubic-bezier(.6, 0, .2, 1);
+  --dur-1: .12s;  /* focus, hover */
+  --dur-2: .22s;  /* small moves */
+  --dur-3: .36s;  /* sheets, the guide */
+
+  /* ---- legacy names (older rules and other threads' code still use these) */
+  --panel-solid: var(--surface-1);
+  --panel: color-mix(in srgb, var(--surface-1) 96%, transparent);
+  --panel-2: var(--surface-2);
+  --dim: var(--ink-2);
+  --faint: var(--ink-3);
+  --line: var(--rule);
+  --line-strong: var(--rule-strong);
+  --amber: var(--accent);
+  --magenta: var(--accent);
+  --cyan: var(--link);
+  --display: var(--font-display);
+  --body: var(--font-ui);
+  --mono: var(--font-mono);
+  --radius: var(--r-2);
+}
+
+/* Paper: the listings page itself. */
+[data-theme="daylight"] {
+  --bg: #e9e4d8;
+  --surface-1: #f6f2e9;
+  --surface-2: #ece7db;
+  --surface-3: #e0d9ca;
+  --scrim: rgba(18, 16, 13, .72);
+  --ink: #1a1815;
+  --ink-2: #4f4a42;
+  --ink-3: #6d675d;
+  --rule: rgba(26, 24, 21, .1);
+  --rule-strong: rgba(26, 24, 21, .2);
+  --accent: #c63d0f;
+  --accent-ink: #fff7f0;
+  --accent-soft: rgba(198, 61, 15, .1);
+  --accent-2: #8a6a12;
+  --link: #1a1815;
+  --focus: #1a1815;
+  --focus-ink: #f6f2e9;
+  --ok: #2f7a45;
+  --warn: #8a6a12;
+  --bad: #b3261e;
+  --osd: #f1ece2;
+  --cell: var(--surface-2);
+  --cell-now: #e3ddcf;
+}
+
+/* Cable '92: the blue of a 90s listings channel, kept flat. */
+[data-theme="cable92"] {
+  --bg: #04164d;
+  --surface-1: #071d63;
+  --surface-2: #0d2a85;
+  --surface-3: #1638a3;
+  --ink: #ffffff;
+  --ink-2: #c8d4ff;
+  --ink-3: #9fb0ea;
+  --rule: rgba(255, 255, 255, .16);
+  --rule-strong: rgba(255, 255, 255, .34);
+  --accent: #ffe14d;
+  --accent-ink: #1a1400;
+  --accent-soft: rgba(255, 225, 77, .16);
+  --accent-2: #ffe14d;
+  --link: #c8d4ff;
+  --focus: #ffe14d;
+  --focus-ink: #071d63;
+  --osd: #ffffff;
+  --cell: #0d2a85;
+  --cell-now: #1336a6;
+}

@@ -19,17 +19,18 @@ const SLOTS = [
   ["bg", "Backdrop", "Behind everything"],
   ["panel", "Panels", "Menus, guide, cards"],
   ["ink", "Text", "Titles and body"],
-  ["accent", "Accent", "Focus, buttons, now line"],
-  ["highlight", "Highlight", "Links, times, meters"],
-  ["accent2", "Second accent", "Gradients, favorites"],
+  ["accent", "Signal", "Now line, live, progress"],
+  ["highlight", "Links", "Links and small highlights"],
+  ["accent2", "Second accent", "Favorites and stars"],
   ["cell", "Guide cells", "Program cell tint"],
   ["osd", "Channel no.", "On channel change"],
 ];
 
 const BUILTIN = {
-  midnight: { name: "Midnight", colors: { bg: "#060816", panel: "#0e1230", ink: "#eef0ff", accent: "#ffb547", highlight: "#4fe3ff", accent2: "#ff5fa2", cell: "#788cff", osd: "#7dff9a" }, cellStrength: 12 },
-  cable92: { name: "Cable '92", colors: { bg: "#001a5c", panel: "#001c6e", ink: "#ffffff", accent: "#ffe14d", highlight: "#9be7ff", accent2: "#ff8ac5", cell: "#2850c8", osd: "#7dff9a" }, cellStrength: 85 },
-  daylight: { name: "Daylight", colors: { bg: "#e9ecf7", panel: "#f8f9ff", ink: "#12152b", accent: "#c2410c", highlight: "#0369a1", accent2: "#be185d", cell: "#1e285a", osd: "#7dff9a" }, cellStrength: 7 },
+  // The ids stay as they were so saved prefs keep working; tokens.css draws them.
+  midnight: { name: "Night", colors: { bg: "#0c0b0a", panel: "#131210", ink: "#f1ece2", accent: "#ff5b29", highlight: "#f1ece2", accent2: "#e9c46a", cell: "#f1ece2", osd: "#f1ece2" }, cellStrength: 6 },
+  daylight: { name: "Paper", colors: { bg: "#e9e4d8", panel: "#f6f2e9", ink: "#1a1815", accent: "#c63d0f", highlight: "#1a1815", accent2: "#8a6a12", cell: "#1a1815", osd: "#f1ece2" }, cellStrength: 6 },
+  cable92: { name: "Cable '92", colors: { bg: "#04164d", panel: "#071d63", ink: "#ffffff", accent: "#ffe14d", highlight: "#c8d4ff", accent2: "#ffe14d", cell: "#2850c8", osd: "#ffffff" }, cellStrength: 60 },
 };
 
 /** Starting points that aren't full built-ins. */
@@ -110,35 +111,39 @@ function exportJson(t) {
 
 // ------------------------------------------------------------------ applying
 
-const VARS = ["--bg", "--ink", "--dim", "--faint", "--panel", "--panel-solid", "--panel-2", "--line", "--line-strong", "--amber", "--cyan", "--magenta",
-  "--focus", "--osd", "--cell", "--cell-now", "--ok", "--warn", "--bad"];
+const VARS = ["--bg", "--surface-1", "--surface-2", "--surface-3", "--ink", "--ink-2", "--ink-3", "--rule", "--rule-strong",
+  "--accent", "--accent-ink", "--accent-soft", "--accent-2", "--link", "--focus", "--focus-ink", "--osd", "--cell", "--cell-now", "--ok", "--warn", "--bad"];
 
-/** CSS variables for a theme. Derived shades mix the picks, so they follow any palette. */
+/** CSS variables for a theme (tokens.css names). Derived shades mix the picks, so they follow any palette. */
 export function themeVars(t) {
   const c = t.colors;
   const light = isLight(t);
   const s = t.cellStrength;
   const mix = (a, pct, b) => `color-mix(in srgb, ${a} ${pct}%, ${b})`;
+  const onAccent = contrast(c.accent, "#000000") >= contrast(c.accent, "#ffffff") ? "#000000" : "#ffffff";
   return {
     "--bg": c.bg,
+    "--surface-1": c.panel,
+    "--surface-2": mix(c.ink, light ? 6 : 7, c.panel),
+    "--surface-3": mix(c.ink, light ? 12 : 13, c.panel),
     "--ink": c.ink,
-    "--dim": mix(c.ink, 74, c.panel),
-    "--faint": mix(c.ink, 58, c.panel),
-    "--panel": mix(c.panel, 95, "transparent"),
-    "--panel-solid": c.panel,
-    "--panel-2": mix(c.ink, light ? 7 : 9, c.panel),
-    "--line": mix(c.ink, light ? 13 : 15, "transparent"),
-    "--line-strong": mix(c.ink, light ? 26 : 30, "transparent"),
-    "--amber": c.accent,
-    "--cyan": c.highlight,
-    "--magenta": c.accent2,
-    "--focus": c.accent,
+    "--ink-2": mix(c.ink, 74, c.panel),
+    "--ink-3": mix(c.ink, 58, c.panel),
+    "--rule": mix(c.ink, light ? 11 : 10, "transparent"),
+    "--rule-strong": mix(c.ink, light ? 22 : 20, "transparent"),
+    "--accent": c.accent,
+    "--accent-ink": onAccent,
+    "--accent-soft": mix(c.accent, 15, "transparent"),
+    "--accent-2": c.accent2,
+    "--link": c.highlight,
+    "--focus": c.ink,
+    "--focus-ink": c.panel,
     "--osd": c.osd,
-    "--cell": mix(c.cell, s, "transparent"),
-    "--cell-now": mix(c.cell, Math.min(100, Math.round(s * 1.7 + 4)), "transparent"),
-    "--ok": light ? "#15803d" : "#6ff2a8",
-    "--warn": light ? "#a16207" : "#ffd166",
-    "--bad": light ? "#b91c1c" : "#ff6b6b",
+    "--cell": mix(c.cell, s, c.panel),
+    "--cell-now": mix(c.cell, Math.min(100, Math.round(s * 1.7 + 4)), c.panel),
+    "--ok": light ? "#2f7a45" : "#8ccf9f",
+    "--warn": light ? "#8a6a12" : "#e9c46a",
+    "--bad": light ? "#b3261e" : "#ff7a66",
   };
 }
 
