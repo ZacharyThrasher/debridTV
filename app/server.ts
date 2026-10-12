@@ -66,7 +66,7 @@ export interface AppOptions {
   /** Home network access options (tests simulate a TV's address with `peer`). */
   lan?: Pick<LanOptions, "peer" | "addresses" | "listen" | "now">;
   /** Settings → Add: the Internet Archive's address and shorter waits (tests). */
-  acquire?: Pick<AcquireRouteDeps, "archiveBase" | "timing">;
+  acquire?: Pick<AcquireRouteDeps, "archiveBase" | "timing" | "imdbLookup">;
 }
 
 interface HistoryState {
@@ -102,6 +102,8 @@ const acquire = acquireRoutes({
   counter: meters.api,
   log: (d) => meters.log("api", d),
   onAdded: (provider) => void library.refresh(provider).then(() => scheduleRebuild(), (e) => meters.log("error", `After adding: ${plainError(e)}`)),
+  // Stremio addon search: a typed title becomes an IMDb id through TMDB, only when the viewer turned TMDB on.
+  imdbLookup: (title, media) => online.imdbFor(title, media),
   timers: opts.timers,
   ...opts.acquire,
 });

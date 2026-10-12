@@ -18,7 +18,8 @@ export interface Indexer {
   /** The API endpoint, e.g. https://host/api or a Prowlarr ".../1/api" URL. */
   url: string;
   apiKey?: string;
-  kind: "torznab" | "newznab";
+  /** "stremio": a Stremio addon address (src/acquire/stremio.ts); the whole address is kept secret. */
+  kind: "torznab" | "newznab" | "stremio";
   enabled?: boolean;
 }
 
@@ -212,7 +213,7 @@ async function getText(ix: Indexer, params: Record<string, string>, o: FetchOpts
   return text;
 }
 
-async function doFetch(url: string, o: FetchOpts, who: string): Promise<Response> {
+export async function doFetch(url: string, o: FetchOpts, who: string): Promise<Response> {
   const ms = o.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const signals = [AbortSignal.timeout(ms)];
   if (o.signal) signals.push(o.signal);

@@ -58,6 +58,15 @@ interface CacheState {
   titles: Record<string, OnlineTitle>;
   /** Air dates per TMDB show id, for "What's missing" (showSchedule). */
   shows?: Record<string, ShowSchedule>;
+  /** "movie|alien|1979" or "any|alien|" → the IMDb id TMDB lists, for Stremio addon search (imdbFor). */
+  imdb?: Record<string, { found: ImdbMatch | null; at: number }>;
+}
+/** A title matched for a Stremio addon search. */
+export interface ImdbMatch {
+  imdbId: string;
+  media: Media;
+  name: string;
+  year?: number;
 }
 /** How long a show's air dates are kept before asking TMDB again. */
 const SCHEDULE_TTL = 12 * 3_600_000;
@@ -506,6 +515,37 @@ export class OnlineMetadata {
    * before, around a premiere) for episode dates and names. Kept 12 hours; when TMDB
    * can't be reached the last answer is used.
    */
+  /**
+   * The IMDb id of a film or show, for searching a Stremio addon the viewer added
+   * (Settings → Add). Sends TMDB the typed title (and year, if typed): one search,
+   * then one request for the match's ids. Kept on disk; a miss is asked again
+   * after 30 days. Null when TMDB is off or has no match.
+   */
+  async imdbFor(title: string, media?: Media, year?: number): Promise<ImdbMatch | null> {
+    if (!this.enabled() || this.stopped || !title.trim()) return null;
+    const key = `${media ?? "any"}|${norm(title)}|${year ?? ""}`;
+    const hit = this.cache.get().imdb?.[key];
+    if (hit && (hit.found || Date.now() - hit.at < MISS_TTL)) return hit.found;
+    const params: Record<string, string> = { query: title.trim().slice(0, 200), include_adult: "false" };
+    if (year && media) params[media === "tv" ? "first_air_date_year" : "year"] = String(year);
+    const r = await this.getJson<{ results?: TmdbResult[] }>(`/search/${media ?? "multi"}`, params);
+    const results = (r.results ?? []).filter((x) => !media ? x.media_type === "tv" || x.media_type === "movie" : true);
+    const best = pick(results, { title, year });
+    let found: ImdbMatch | null = null;
+    if (best) {
+      const m: Media = media ?? (best.media_type === "tv" ? "tv" : "movie");
+      const ids = await this.getJson<{ imdb_id?: string | null }>(`/${m}/${best.id}/external_ids`, {});
+      const date = best.first_air_date || best.release_date;
+      if (ids.imdb_id && /^tt\d+$/.test(ids.imdb_id))
+        found = { imdbId: ids.imdb_id, media: m, name: best.name ?? best.title ?? title, ...(date && /^\d{4}/.test(date) ? { year: Number(date.slice(0, 4)) } : {}) };
+    }
+    this.cache.update((s) => {
+      (s.imdb ??= {})[key] = { found, at: Date.now() };
+    });
+    this.log(`TMDB: ${found ? `IMDb id for "${found.name}"` : `no IMDb id for "${title}"`} (for addon search; title sent)`);
+    return found;
+  }
+
   async showSchedule(tmdbId: number): Promise<ShowSchedule | null> {
     if (!this.enabled() || this.stopped || !Number.isInteger(tmdbId) || tmdbId <= 0) return null;
     const id = String(tmdbId);
@@ -574,6 +614,8 @@ interface TmdbResult {
   poster_path?: string | null;
   backdrop_path?: string | null;
   popularity?: number;
+  /** Only on /search/multi answers. */
+  media_type?: string;
 }
 
 /** The search key for an item: a show by its name (and year if the file names carry one), a film by title and year. */

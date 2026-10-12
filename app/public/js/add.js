@@ -3,6 +3,8 @@
 // Also: paste magnets, hashes and links, upload a .torrent or .nzb, and a
 // watched folder. Nothing reaches an account until "Allow adding" is on and you
 // press Add (or drop a file in the watched folder). DebridTV ships no indexers.
+// A Stremio addon the viewer adds is searched by IMDb id and only its torrents are
+// listed; DebridTV never opens an addon's own play links.
 // Styles use the redesign tokens only (styles.css and tokens.css belong to it; see
 // docs/design/ai-tells.md: one face, 2 to 4 px corners, red only for live).
 
@@ -10,6 +12,7 @@ import { api } from "./api.js";
 import { html, raw, fmtBytes, ago, toast } from "./util.js";
 
 const NAMES = { torbox: "TorBox", realdebrid: "Real-Debrid" };
+const KINDS = { torznab: "Torznab", newznab: "Newznab", stremio: "Stremio addon" };
 let state = { q: "", type: "search", results: null, sources: [], searching: false, error: "", showIndexerForm: false };
 let rerender = () => {};
 let jobTimer = 0;
@@ -100,8 +103,9 @@ export async function addTab() {
 
 function searchBox(s) {
   const has = s.indexers.some((i) => i.enabled) || s.archiveSearch;
+  const addon = s.indexers.some((i) => i.enabled && i.kind === "stremio");
   return html`<form id="acq-search-form" class="acq-search" role="search">
-      <input class="input" id="acq-q" type="search" placeholder="${has ? "Title, show or film" : "Add a search source below first"}" value="${state.q}" ${has ? "" : "disabled"}>
+      <input class="input" id="acq-q" type="search" placeholder="${has ? (addon ? "Title, show or film. S2E5 for an episode" : "Title, show or film") : "Add a search source below first"}" value="${state.q}" ${has ? "" : "disabled"}>
       <select class="input" id="acq-type" aria-label="What kind" style="flex:0 0 auto;width:auto">
         <option value="search" ${state.type === "search" ? "selected" : ""}>Anything</option>
         <option value="tvsearch" ${state.type === "tvsearch" ? "selected" : ""}>TV</option>
@@ -114,7 +118,7 @@ function searchBox(s) {
 function resultsHtml(s) {
   if (state.error) return html`<p class="muted">${state.error}</p>`;
   if (!state.results) return "";
-  const src = state.sources.map((x) => x.error ? html`<span class="bad">${x.source}: ${x.error}</span>` : html`${x.source}: ${x.count}`).join(" · ");
+  const src = state.sources.map((x) => x.error ? html`<span class="bad">${x.source}: ${x.error}</span>` : html`${x.source}: ${x.count}${x.note ? ` (${x.note})` : ""}`).join(" · ");
   if (!state.results.length) return html`<p class="muted">Nothing found for “${state.q}”.</p><div class="acq-src">${raw(src)}</div>`;
   const canAdd = s.allowAdding && s.targets.length;
   const rows = state.results.slice(0, 80).map((r, i) => {
@@ -152,15 +156,16 @@ function indexersHtml(s) {
   const archive = html`<div class="acq-ix"><div><div>Internet Archive</div><div class="muted">Public-domain and freely licensed films and TV, seeded by the Archive itself.</div></div>
     <button class="btn" data-acq-archive="${s.archiveSearch ? "0" : "1"}">${s.archiveSearch ? "Turn off" : "Turn on"}</button></div>`;
   const list = s.indexers.map((ix) => html`<div class="acq-ix"><div><div>${ix.name}</div>
-      <div class="muted">${ix.kind === "newznab" ? "Newznab" : "Torznab"}${ix.enabled ? "" : " · off"} · ${ix.url}${ix.hasKey ? " · key saved on this PC" : ""}</div></div>
+      <div class="muted">${KINDS[ix.kind] ?? "Torznab"}${ix.enabled ? "" : " · off"} · ${ix.url}${ix.hasKey ? " · key saved on this PC" : ""}</div></div>
     <div class="acq-acts"><button class="btn" data-acq-ix-test="${ix.id}">Test</button><button class="btn" data-acq-ix-remove="${ix.id}">Remove</button></div></div>`).join("");
   const form = state.showIndexerForm
     ? html`<div class="src">
-        <p class="muted">Any Torznab or Newznab address works, for example from Prowlarr or Jackett running on this PC, or a Usenet indexer. DebridTV doesn't come with any. You choose what to search and what to add.</p>
+        <p class="muted">Any Torznab or Newznab address works, for example from Prowlarr or Jackett running on this PC, or a Usenet indexer. So does a Stremio addon that lists streams. DebridTV doesn't come with any. You choose what to search and what to add.</p>
+        <div class="field"><label for="acq-ix-kind">Kind</label><select class="input" id="acq-ix-kind"><option value="torznab">Torznab (torrents)</option><option value="newznab">Newznab (Usenet)</option><option value="stremio">Stremio addon</option></select></div>
         <div class="field"><label for="acq-ix-name">Name</label><input class="input" id="acq-ix-name" placeholder="My indexer"></div>
-        <div class="field"><label for="acq-ix-url">Torznab / Newznab address</label><input class="input" id="acq-ix-url" spellcheck="false" placeholder="http://127.0.0.1:9696/1/api"></div>
-        <div class="field"><label for="acq-ix-key">API key (kept only on this PC)</label><input class="input" id="acq-ix-key" type="password" autocomplete="off" spellcheck="false"></div>
-        <div class="field"><label for="acq-ix-kind">Kind</label><select class="input" id="acq-ix-kind"><option value="torznab">Torznab (torrents)</option><option value="newznab">Newznab (Usenet)</option></select></div>
+        <div class="field"><label for="acq-ix-url">Address</label><input class="input" id="acq-ix-url" spellcheck="false" placeholder="http://127.0.0.1:9696/1/api"></div>
+        <p class="muted" id="acq-ix-addon-note" hidden>Paste the addon's manifest.json link. These links often carry your addon settings and keys, so DebridTV keeps the whole link on this PC. It only reads the addon's list of torrents and never opens its play links, so nothing reaches your account until you press Add.</p>
+        <div class="field" id="acq-ix-key-field"><label for="acq-ix-key">API key (kept only on this PC)</label><input class="input" id="acq-ix-key" type="password" autocomplete="off" spellcheck="false"></div>
         <div class="row-actions"><button class="btn primary" data-acq-ix-save>Test and save</button><button class="btn" data-acq-ix-form="0">Cancel</button></div>
       </div>`
     : html`<div class="row-actions"><button class="btn" data-acq-ix-form="1">Add a search source…</button></div>`;
@@ -219,11 +224,12 @@ async function onClick(e) {
     } else if ("acqIxSave" in d) {
       b.disabled = true;
       b.textContent = "Testing…";
+      const kind = document.getElementById("acq-ix-kind").value;
       const r = await api.post("/api/indexers", {
         name: document.getElementById("acq-ix-name").value,
         url: document.getElementById("acq-ix-url").value,
-        apiKey: document.getElementById("acq-ix-key").value,
-        kind: document.getElementById("acq-ix-kind").value,
+        ...(kind === "stremio" ? {} : { apiKey: document.getElementById("acq-ix-key").value }),
+        kind,
       });
       state.showIndexerForm = false;
       toast(r.test.ok ? `${r.indexer.name} answered${r.test.title ? ` (${r.test.title})` : ""}. Saved.` : `Saved, but it didn't answer the test: ${r.test.error}`);
@@ -242,6 +248,15 @@ async function onClick(e) {
 }
 
 async function onChange(e) {
+  if (e.target.id === "acq-ix-kind") {
+    const addon = e.target.value === "stremio";
+    document.getElementById("acq-ix-key-field").hidden = addon;
+    document.getElementById("acq-ix-addon-note").hidden = !addon;
+    const url = document.getElementById("acq-ix-url");
+    url.placeholder = addon ? "https://…/manifest.json" : "http://127.0.0.1:9696/1/api";
+    document.getElementById("acq-ix-name").placeholder = addon ? "Leave empty to use the addon's name" : "My indexer";
+    return;
+  }
   if (e.target.id === "acq-to") {
     await api.post("/api/acquire/settings", { addTo: e.target.value }).catch((err) => toast(err.message));
     return rerender();
