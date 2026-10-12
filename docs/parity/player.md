@@ -63,6 +63,7 @@ inside the stream, so a seek restarts it at the new point.
 |---|---|---|---|
 | Aspect: auto / stretch / 4:3 / zoom-crop | Y (Z key) | Y | Z key, and in the menu. |
 | Zoom | N | Y | Menu: 100–200%, centred. Pan isn't built. |
+| Crop (VLC Video → Crop, mpv `video-crop`) | N | Y | Picture → Crop: presets 16:9, 4:3, 1.85:1, 2.39:1, per-edge trims (1% steps, up to 40%), and Auto, which finds black bars in the frame on screen (like mpv's autocrop) without fetching anything. Saved per device; Off restores the picture. Demo channels aren't cropped. |
 | Rotate 90° / flip | N | Y | CSS transform; for phone-filmed or mirrored files. |
 | Brightness / contrast / saturation | N | Y | CSS filters (VLC "Adjustments"). |
 | Deinterlace | N | L | Browsers don't deinterlace; compat mode could (`yadif`) at a CPU cost. Not built until a real file needs it. |

@@ -143,11 +143,21 @@ const playing = (page: any, timeout = 15_000) =>
 
 /** Picture position minus station position, for the channel on screen. */
 async function drift(page: any, ch = direct!) {
-  const [vt, n] = await Promise.all([
-    page.evaluate(() => (document.getElementById("video") as HTMLVideoElement).currentTime * 1000),
-    get(`/api/now?channel=${ch.id}`),
-  ]);
-  return { driftMs: Math.round(vt - n.fileOffsetMs), item: n.airing?.itemId };
+  // Measured against the program on screen. Within a moment of a program change the
+  // picture can still be on the last frames of the old file while the station has
+  // moved on (a one-program-length "drift"), so a sample across a boundary is retaken.
+  let out = { driftMs: NaN, item: undefined as string | undefined };
+  for (let i = 0; i < 8; i++) {
+    const [vt, n] = await Promise.all([
+      page.evaluate(() => (document.getElementById("video") as HTMLVideoElement).currentTime * 1000),
+      get(`/api/now?channel=${ch.id}`),
+    ]);
+    out = { driftMs: Math.round(vt - n.fileOffsetMs), item: n.airing?.itemId };
+    const nearBoundary = n.segment?.kind === "program" && (n.fileOffsetMs < 2000 || n.airing.end - n.now < 2000);
+    if (!nearBoundary) break;
+    await sleep(700);
+  }
+  return out;
 }
 
 /** Wait until the program on screen is at least `inMs` in, with at least `leftMs` to go. */

@@ -106,7 +106,7 @@ function shiftSoon() {
  * Picture adjustments on top of the shape (Z): zoom 1–2, rotate 0/90/180/270, flip,
  * brightness/contrast/saturation 0.5–1.5 (1 = as filmed). The demo canvas gets them too.
  */
-export const PICTURE = { zoom: 1, rotate: 0, flip: false, brightness: 1, contrast: 1, saturation: 1 };
+export const PICTURE = { zoom: 1, rotate: 0, flip: false, brightness: 1, contrast: 1, saturation: 1, cropT: 0, cropR: 0, cropB: 0, cropL: 0 };
 export const picture = () => ({ ...PICTURE, ...(pref("picture") ?? {}) });
 export function setPicture(patch) {
   const p = { ...picture(), ...patch };
@@ -128,8 +128,99 @@ export function applyPicture() {
     el.style.transform = t;
     el.style.filter = f;
   }
+  applyCrop(p, W, H);
 }
-addEventListener("resize", () => picture().rotate % 180 && applyPicture());
+addEventListener("resize", () => {
+  const p = picture();
+  if (p.rotate % 180 || cropOn(p)) applyPicture();
+});
+video.addEventListener("loadedmetadata", () => cropOn(picture()) && applyPicture());
+
+// ------------------------------------------------------------------ crop
+
+// Crop (VLC's Video → Crop, mpv's video-crop): cut fractions off each edge of the
+// file's picture (cropT/R/B/L, 0–0.4), then fit what's left to the screen. The video
+// element is sized so the whole frame keeps its shape, placed so the kept part is
+// centred, and clipped to it. The demo picture isn't cropped.
+let cropApplied = false;
+export const cropOn = (p = picture()) => p.cropT > 0 || p.cropR > 0 || p.cropB > 0 || p.cropL > 0;
+function applyCrop(p, W, H) {
+  const s = video.style;
+  if (!cropOn(p)) {
+    if (cropApplied) {
+      cropApplied = false;
+      Object.assign(s, { clipPath: "", transformOrigin: "", objectFit: "" });
+      player.applyAspect?.(); // back to the picture shape's own box
+    }
+    return;
+  }
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return;
+  const kw = 1 - p.cropL - p.cropR, kh = 1 - p.cropT - p.cropB;
+  const scale = Math.min(W / (vw * kw), H / (vh * kh));
+  const ew = vw * scale, eh = vh * scale;
+  Object.assign(s, {
+    objectFit: "fill", width: `${ew}px`, height: `${eh}px`, right: "auto", bottom: "auto",
+    left: `${(W - ew * kw) / 2 - p.cropL * ew}px`, top: `${(H - eh * kh) / 2 - p.cropT * eh}px`,
+    clipPath: `inset(${p.cropT * 100}% ${p.cropR * 100}% ${p.cropB * 100}% ${p.cropL * 100}%)`,
+    transformOrigin: `${(p.cropL + kw / 2) * 100}% ${(p.cropT + kh / 2) * 100}%`, // zoom and turn around the kept part
+  });
+  cropApplied = true;
+}
+
+/** Crop to an aspect ratio (e.g. 2.39) from the centre: the sides or top and bottom, whichever is too long. */
+export function cropToRatio(ratio) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return toast("Crop needs a playing program."), false;
+  const src = vw / vh;
+  const e = src > ratio ? (1 - (ratio * vh) / vw) / 2 : (1 - vw / ratio / vh) / 2;
+  const v = Math.round(clamp(e, 0, 0.4) * 1000) / 1000;
+  setPicture(src > ratio ? { cropL: v, cropR: v, cropT: 0, cropB: 0 } : { cropT: v, cropB: v, cropL: 0, cropR: 0 });
+  return true;
+}
+
+/**
+ * Find black bars in the frame on screen (like mpv's autocrop) and crop them off.
+ * Reads one frame of what is already playing; nothing is fetched.
+ */
+export function autoCrop() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh || video.readyState < 2) return toast("Auto crop needs a playing program."), null;
+  const w = 192, h = Math.max(2, Math.round((w * vh) / vw));
+  const c = Object.assign(document.createElement("canvas"), { width: w, height: h });
+  const g = c.getContext("2d", { willReadFrequently: true });
+  let d;
+  try {
+    g.drawImage(video, 0, 0, w, h);
+    d = g.getImageData(0, 0, w, h).data;
+  } catch {
+    return toast("This picture can't be measured."), null;
+  }
+  const lum = (x, y) => {
+    const i = (y * w + x) * 4;
+    return 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+  };
+  const dark = (n, len, at) => {
+    for (let k = 0; k < len; k++) if (at(n, k) > 28) return false;
+    return true;
+  };
+  const scan = (len, across, at) => {
+    let n = 0;
+    while (n < len * 0.4 && dark(n, across, at)) n++;
+    return n / len;
+  };
+  const crop = {
+    cropT: scan(h, w, (y, x) => lum(x, y)),
+    cropB: scan(h, w, (y, x) => lum(x, h - 1 - y)),
+    cropL: scan(w, h, (x, y) => lum(x, y)),
+    cropR: scan(w, h, (x, y) => lum(w - 1 - x, y)),
+  };
+  // A whole black frame (a fade) isn't letterboxing.
+  if (crop.cropT + crop.cropB > 0.78 || crop.cropL + crop.cropR > 0.78) return toast("The picture is dark right now; try again in a moment."), null;
+  for (const k of Object.keys(crop)) crop[k] = Math.round(crop[k] * 1000) / 1000;
+  setPicture(crop);
+  return crop;
+}
 
 // ------------------------------------------------------------------ subtitle delay
 
