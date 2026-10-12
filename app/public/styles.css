@@ -409,7 +409,7 @@ body.guide-open { background: var(--bg); }
 .brand-mark { width: 1.2em; height: .85em; border-radius: .22em; background: linear-gradient(135deg, var(--amber), var(--magenta)); box-shadow: 0 0 .8em rgba(255,95,162,.35); }
 .guide-date { color: var(--dim); font-weight: 600; font-size: calc(var(--u)*.95); }
 .guide-hints { display: flex; gap: calc(var(--u)*1.2); justify-content: flex-end; color: var(--dim); font-size: calc(var(--u)*.8); }
-.guide-clock { font-family: var(--mono); font-size: calc(var(--u)*2); color: var(--ink); line-height: 1; }
+.guide-clock { font-family: var(--mono); font-size: calc(var(--u)*2); color: var(--ink); line-height: 1; white-space: nowrap; }
 
 .grid { touch-action: none; position: relative; overflow: hidden; background: var(--panel-solid); min-height: 0; --label: calc(var(--u)*15); --row: calc(var(--u)*3.6); }
 .grid-times { position: sticky; top: 0; z-index: 3; height: calc(var(--u)*2); margin-left: var(--label); position: relative; border-bottom: 1px solid var(--line); background: var(--panel-solid); }
@@ -1088,7 +1088,9 @@ html.remote :is(.panel, .ced) select:focus-visible {
 }
 .guide-tools button:hover, .guide-tools button:focus-visible { color: var(--ink); background: color-mix(in srgb, var(--focus) 16%, transparent); border-color: var(--focus); }
 .guide-tools button span { font-size: 1.15em; line-height: 1; }
-.guide-tools b { font-weight: inherit; }
+.guide-tools b { font-weight: inherit; white-space: nowrap; }
+/* The CC box says "subtitles" on its own; a fourth label would crowd the bar on a TV. */
+.guide-tools [data-gt="captions"] b { display: none; }
 .guide.in-tools .cell.focus { outline-color: var(--line-strong); box-shadow: none; --fill: var(--cell-now); }
 .guide-jump {
   font-family: var(--mono); font-size: calc(var(--u)*2); line-height: 1; color: var(--osd); min-width: 0;

@@ -195,11 +195,53 @@ export function captionCss({ sample = false } = {}) {
   ].join("; ");
 }
 
-/** Which line a cue sits on: the browser's default (bottom), three lines up (clear of the banner), or the top. */
+/**
+ * Where a cue sits: the browser's default line at the bottom, a fifth of the way up,
+ * or the top line. While the info banner is up, captions at the bottom move above it
+ * instead of hiding under it.
+ */
 function placeCue(cue) {
   const p = capPref("capPos");
-  cue.line = p === "top" ? 0 : p === "raised" ? -4 : "auto";
+  let lift = p === "raised" ? 20 : 0; // percent of the picture's height
+  if (p !== "top" && document.body.classList.contains("banner-open")) lift = Math.max(lift, bannerLift());
+  if (p === "top" || !lift) {
+    cue.snapToLines = true;
+    cue.line = p === "top" ? 0 : "auto";
+  } else {
+    cue.snapToLines = false;
+    cue.line = 100 - lift;
+    cue.lineAlign = "end";
+  }
+  // With the subtitles menu open at the side, captions keep to the picture beside it,
+  // so a change of look shows on them right away.
+  const free = besideMenu();
+  if (free) {
+    cue.size = free - 4;
+    cue.position = free / 2;
+    cue.positionAlign = "center";
+  } else {
+    cue.size = 100;
+    cue.position = "auto";
+    cue.positionAlign = "auto";
+  }
   return cue;
+}
+
+/** The share of the picture's width left of the open subtitles menu (percent), or 0. */
+function besideMenu() {
+  if (!document.body.classList.contains("captions-open")) return 0;
+  const v = document.getElementById("video")?.getBoundingClientRect();
+  const m = document.getElementById("captions")?.getBoundingClientRect();
+  if (!v?.width || !m?.width || m.left - v.left < v.width * 0.3) return 0; // a bottom sheet on a phone
+  return Math.min(100, ((m.left - v.left) / v.width) * 100);
+}
+
+/** How far up the banner's text reaches, as a percent of the picture's height. */
+function bannerLift() {
+  const v = document.getElementById("video")?.getBoundingClientRect();
+  const kids = [...(document.getElementById("banner")?.children ?? [])].map((k) => k.getBoundingClientRect().top).filter((t) => t > 0);
+  if (!v?.height || !kids.length) return 0;
+  return Math.min(60, Math.max(0, ((v.bottom - Math.min(...kids)) / v.height) * 100 + 2));
 }
 
 let styleEl = null;
@@ -216,3 +258,14 @@ export function applyCaptionStyle() {
   for (const t of video?.textTracks ?? []) for (const c of [...(t.cues ?? [])]) placeCue(c);
 }
 onPrefsApplied(applyCaptionStyle);
+// The banner or the subtitles menu coming and going moves the captions (placeCue).
+let layout = "";
+new MutationObserver(() => {
+  const now = ["banner-open", "captions-open"].map((c) => document.body.classList.contains(c)).join();
+  if (now === layout) return;
+  layout = now;
+  // After the banner has laid out, so its height is known.
+  requestAnimationFrame(() => {
+    for (const t of document.getElementById("video")?.textTracks ?? []) for (const c of [...(t.cues ?? [])]) placeCue(c);
+  });
+}).observe(document.body, { attributes: true, attributeFilter: ["class"] });
