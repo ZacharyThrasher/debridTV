@@ -6,7 +6,9 @@
 // cancels it, and dropping the request stops the provider fetch at once.
 // Pref preloadNext: false turns it off.
 
-import { now, pref } from "./util.js";
+import * as util from "./util.js";
+
+const { now, pref } = util;
 
 /** How long before the next program starts to fetch its opening bytes. */
 export const LEAD_MS = 60_000;
@@ -33,7 +35,8 @@ export function cancelPreload() {
  * boundaries re-render without restarting anything).
  */
 export function planPreload(ch, info) {
-  if (!ch || !info || info.onDemand) return cancelPreload();
+  // Time-shifted (the seeking work's util.shift): nothing is readied until Back to live.
+  if (!ch || !info || info.onDemand || util.shift?.ms) return cancelPreload();
   if (settled.channelId !== ch.id) settled = { channelId: ch.id, since: now() };
   const a = info.airing;
   const n = info.next;
@@ -60,3 +63,6 @@ function run(p) {
     .catch(() => {})
     .finally(() => ctl === c && (ctl = null));
 }
+
+// An in-place seek off live doesn't go through tune(); drop anything planned.
+addEventListener("debridtv:timeshift", (e) => e.detail?.shiftMs && cancelPreload());
