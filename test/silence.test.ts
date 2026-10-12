@@ -60,6 +60,7 @@ test("N-22c: the job finds the silence in local episodes and the channel gets a 
   const get = async (p: string) => (await fetch(base + p)).json() as Promise<any>;
   try {
     await post("/api/sources", { provider: "local", dirs: [root] });
+    await post("/api/station", { breaks: true }); // breaks are opt-in (ADR-0006)
     await post("/api/scan/start", { perMinute: 600 });
     let ch: any;
     for (let t = 0; t < 100 && !ch; t++) {

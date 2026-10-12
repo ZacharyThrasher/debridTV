@@ -36,12 +36,17 @@ Then open **http://127.0.0.1:7337** in Chrome or Edge.
 | 0–9 | Go to a channel number |
 | G or Enter | Program guide |
 | I | What's on now |
-| L or Backspace | Last channel |
-| Space | Pause (resuming returns to live, like TV) |
+| ← / → | Skip back 10 s / ahead 30 s, on any channel |
+| [ / ] (or Shift+← / →) | Previous / next program |
+| L or Backspace | Back to live after skipping; otherwise last channel |
+| Space | Pause (resuming plays on from where you paused) |
 | M / F | Mute / full screen |
 | S | Settings |
 
 On a phone or tablet: swipe up or down to change channel, tap for info.
+
+There are no station breaks unless you turn them on (Settings → Look & feel →
+Station breaks): shows play back to back. See ADR-0006.
 
 ### What it costs your provider
 

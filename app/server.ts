@@ -27,12 +27,12 @@ import { seasonState, validTimeZone } from "../src/clock/dayparts.ts";
 import { parseVttBlock } from "../src/library/vtt.ts";
 import { RATINGS, normalizeRating, ratingRank } from "../src/clock/ratings.ts";
 import { Library, ART_MAX_BYTES, type ArtKind, displayTitle, effectiveRating, mediaBadges, fileStatus, plainError, PROVIDER_NAMES, STATUS_ORDER, type Config, type LibItem, type ProviderBases, type RemoteProvider } from "./library.ts";
-import { Lineup, airable, autoRules, dedupeGroups, nfoIds, presetMatches, usableLibrary, SEASONAL_PRESETS, PRESET_MIN_HOURS, PRESET_MIN_TITLES, cleanGroup, cleanDates, cleanExclusions, cleanLogo, cleanRestricted, cleanSlots, cleanWeights, type ItemInfo, type StationChannel, type CustomChannel } from "./lineup.ts";
+import { Lineup, airable, autoRules, withoutBreaks, type Rule, dedupeGroups, nfoIds, presetMatches, usableLibrary, SEASONAL_PRESETS, PRESET_MIN_HOURS, PRESET_MIN_TITLES, cleanGroup, cleanDates, cleanExclusions, cleanLogo, cleanRestricted, cleanSlots, cleanWeights, type ItemInfo, type StationChannel, type CustomChannel } from "./lineup.ts";
 import { Meters } from "./meters.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
 import { demoItems } from "./demo.ts";
 import { backupIfDue, listBackups, readBackup } from "./backups.ts";
-import { EdgeCache } from "./edgecache.ts";
+import { EdgeCache, HEAD_BYTES, TAIL_BYTES } from "./edgecache.ts";
 import { PinLock } from "./pinlock.ts";
 import { OnlineMetadata } from "./metadata/tmdb.ts";
 import { allowedUnder } from "../src/clock/ratings.ts";
@@ -179,9 +179,11 @@ function rebuild() {
   });
   meters.cache = { bytes: edge.bytes(), files: edge.entries() };
   const timeZone = stationTimeZone();
-  liveLineup.sync(liveClock, autoRules(liveItems, liveLineup.custom(), liveLineup.groups(), idsOf), now, { timeZone, info: itemInfo(liveItems, now) });
+  // Breaks are opt-in (ADR-0006); with them off, programs run back to back.
+  const shape = (rules: Rule[]) => (config.get().breaks ? rules : withoutBreaks(rules));
+  liveLineup.sync(liveClock, shape(autoRules(liveItems, liveLineup.custom(), liveLineup.groups(), idsOf)), now, { timeZone, info: itemInfo(liveItems, now) });
   const demoClock = new StationClock(demoMedia());
-  demoLineup.sync(demoClock, autoRules(demo, demoLineup.custom(), demoLineup.groups(), idsOf), now, { timeZone, info: itemInfo(demo, now) });
+  demoLineup.sync(demoClock, shape(autoRules(demo, demoLineup.custom(), demoLineup.groups(), idsOf)), now, { timeZone, info: itemInfo(demo, now) });
   clock = isDemo() ? demoClock : liveClock;
   refusedElsewhere = new Map(
     [...copiesById(liveItems).values()].flatMap((v) => {
@@ -213,6 +215,7 @@ function settingsExport() {
     note: "Settings only. API keys are never exported.",
     sources: { torbox: !!c.torboxKey, realdebrid: !!c.rdToken, localDirs: c.localDirs ?? [] },
     scanPerMinute: c.scanPerMinute ?? 30,
+    breaks: !!c.breaks,
     lineup: liveLineup.exportSettings(),
     ratings: library.manualRatings(),
   };
@@ -222,6 +225,10 @@ function importSettings(res: http.ServerResponse, body: Record<string, unknown>)
   if (!l || typeof l !== "object") return json(res, 400, { error: "That isn't a DebridTV settings file." });
   const n = liveLineup.importSettings(l as never);
   const ratings = library.importRatings((body as { ratings?: unknown }).ratings);
+  const breaks = (body as { breaks?: unknown }).breaks;
+  if (typeof breaks === "boolean") config.update((c) => {
+    c.breaks = breaks || undefined;
+  });
   rebuild();
   return json(res, 200, { ok: true, ...n, ratings });
 }
@@ -530,6 +537,7 @@ async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, i
   const st = fileStatus(it, accountOf(it.provider));
   if (st.status === "refused") return json(res, 451, { error: "policy", message: st.message });
   if (st.status === "account" || st.status === "gone" || st.status === "not-ready") return json(res, 409, { error: st.status, message: st.message });
+  meters.preload.played(id);
   const ac = new AbortController();
   let finished = false;
   let opened = false;
@@ -636,6 +644,99 @@ async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, i
 }
 
 /**
+ * Next-show pre-load (ADR-0006, amends ADR-0003). Late in a program, the player on
+ * the channel being watched asks for the program that follows; this fetches the
+ * two ends of that file the edge cache keeps (first 1 MiB, last 256 KiB), so the
+ * switch is answered from this PC instead of waiting on the host. The request stays
+ * open while it works: the player dropping it (channel change, pause, seek, stop)
+ * cancels the host fetch at once. Never for local or demo files, locked items, or
+ * copies a provider refused; nothing is retried. Bytes, API calls, and whether they
+ * were played or wasted are counted apart in Meters.
+ */
+async function servePreload(req: http.IncomingMessage, res: http.ServerResponse, id: string) {
+  const it = itemById(id);
+  if (!it) return json(res, 404, { error: "unknown item" });
+  if (refuseLocked(res, id)) return;
+  const skip = (why: string) => json(res, 200, { ok: true, skipped: why });
+  if (it.provider === "demo" || it.provider === "local") return skip("not-remote");
+  if (it.availability === "policy-blocked" || it.availability === "unavailable") return skip(it.availability);
+  const client = library.client(it.provider);
+  if (!client) return skip("not-connected");
+  const st = fileStatus(it, accountOf(it.provider)).status;
+  if (st === "refused" || st === "account" || st === "gone" || st === "not-ready") return skip(st);
+  const size = it.bytes || 0;
+  const known = edge.get(id, size || undefined);
+  const headWanted = size ? Math.min(HEAD_BYTES, size) : HEAD_BYTES;
+  const needHead = !known || known.headLen < headWanted;
+  // The tail only when the file is big enough for it to be apart from the head.
+  const needTail = size > HEAD_BYTES + TAIL_BYTES && (!known || known.tailFrom > size - TAIL_BYTES);
+  if (!needHead && !needTail) {
+    meters.preload.alreadyCached();
+    return json(res, 200, { ok: true, cached: true, bytes: 0 });
+  }
+  const label = displayTitle(it).slice(0, 60);
+  const ac = new AbortController();
+  res.on("close", () => {
+    if (!res.writableFinished) ac.abort();
+  });
+  const t0 = Date.now();
+  const missesBefore = library.grants.misses;
+  let got = 0;
+  meters.preload.begin(id);
+  const ranges: Array<[number, number | null]> = [];
+  if (needHead) ranges.push([known?.headLen ?? 0, headWanted - 1]);
+  if (needTail) ranges.push([size - TAIL_BYTES, null]);
+  try {
+    const grant = await library.grants.get(client, it.ref, ac.signal);
+    meters.preload.apiCalls(id, library.grants.misses - missesBefore);
+    for (const [from, to] of ranges) {
+      const up = await fetch(grant.url, { headers: { range: `bytes=${from}-${to ?? ""}` }, signal: ac.signal });
+      const cr = /bytes (\d+)-(\d+)\/(\d+)/.exec(up.headers.get("content-range") ?? "");
+      if (up.status !== 206 || !cr || !up.body || Number(cr[1]) !== from || (size && Number(cr[3]) !== size)) {
+        // A refused link, a host that ignores ranges, or a different file: stop. The
+        // real tune re-resolves on its own (ADR-0002); a pre-load never retries.
+        if (up.status === 403 || up.status === 404 || up.status === 410) library.grants.invalidate(client, it.ref);
+        await up.body?.cancel().catch(() => {});
+        meters.preload.end(id, "failed");
+        return json(res, 200, { ok: false, status: up.status, bytes: got });
+      }
+      const total = Number(cr[3]);
+      const watch = edge.observe(id, total, from);
+      let reachedEnd = false;
+      try {
+        for await (const chunk of up.body as unknown as AsyncIterable<Uint8Array>) {
+          got += chunk.length;
+          meters.add("preload", chunk.length);
+          meters.preload.bytes(id, chunk.length);
+          watch.chunk(chunk);
+        }
+        reachedEnd = true;
+      } finally {
+        watch.done(reachedEnd);
+        meters.cache = { bytes: edge.bytes(), files: edge.entries() };
+      }
+    }
+    meters.preload.end(id, "done");
+    meters.log("preload", `${label}: ${Math.round(got / 1024)} KB in ${Date.now() - t0} ms`);
+    return json(res, 200, { ok: true, bytes: got, ms: Date.now() - t0 });
+  } catch (e) {
+    if (ac.signal.aborted) {
+      meters.preload.end(id, "cancelled");
+      meters.log("preload", `${label}: cancelled after ${Math.round(got / 1024)} KB`);
+      return;
+    }
+    meters.preload.end(id, "failed");
+    if (e instanceof ProviderError && e.kind === "policy") {
+      edge.drop(id);
+      library.markAvailability(id, "policy-blocked", `${PROVIDER_NAMES[it.provider]} refused this file`);
+      scheduleRebuild();
+      return json(res, 200, { ok: false, policy: true });
+    }
+    return json(res, 200, { ok: false, error: plainError(e) });
+  }
+}
+
+/**
  * Compatibility path: ffmpeg reads through our own metered proxy, starts at the
  * live position, copies video when the browser can decode it, converts audio to
  * AAC, and emits fragmented MP4. Like real TV, this stream can't be seeked.
@@ -667,6 +768,12 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
   const maxh = maxhRaw == null || maxhRaw === "" || maxhRaw === "0" ? null : Number(maxhRaw);
   if (maxh !== null && maxh !== 720 && maxh !== 1080) return json(res, 400, { error: "maxh is 720 or 1080." });
   const scale = maxh ? `scale=-2:'min(ih,${maxh})'` : "scale='min(1920,iw)':-2";
+  // Audio delay (docs/parity/player.md): ad=<ms>, positive plays the sound later, negative earlier.
+  // The browser can only delay sound by itself, so "earlier" comes here, where the audio is re-encoded anyway.
+  const adRaw = url.searchParams.get("ad");
+  const ad = adRaw == null || adRaw === "" ? 0 : Number(adRaw);
+  if (!Number.isInteger(ad) || Math.abs(ad) > 10_000) return json(res, 400, { error: "ad is a whole number of ms between -10000 and 10000." });
+  const audioShift = ad > 0 ? ["-af", `adelay=${ad}:all=1`] : ad < 0 ? ["-af", `atrim=start=${(-ad / 1000).toFixed(3)},asetpts=PTS-STARTPTS`] : [];
   const subCodec = sub.index != null ? (sub as { track?: { codec: string } }).track?.codec : undefined;
   const textSub = sub.index != null && (!subCodec || TEXT_SUBS.has(subCodec));
   const burn = sub.index != null && !textSub && url.searchParams.get("burn") === "1" && IMAGE_SUBS.has(subCodec ?? "");
@@ -686,7 +793,7 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
       ? ["-filter_complex", `[0:v:0][0:s:${sub.index}]overlay=eof_action=pass,${scale}[v]`, "-map", "[v]", ...encode]
       : ["-map", "0:v:0", ...(copyVideo ? ["-c:v", "copy"] : [...encode, "-vf", scale])]),
     // An index we couldn't check against the file's track list is optional, so a wrong guess plays without sound rather than failing.
-    "-map", a.index == null ? "0:a:0?" : `0:a:${a.index}${it.tracks?.length ? "" : "?"}`, "-sn", "-dn", "-map_chapters", "-1",
+    "-map", a.index == null ? "0:a:0?" : `0:a:${a.index}${it.tracks?.length ? "" : "?"}`, "-sn", "-dn", "-map_chapters", "-1", ...audioShift,
     ...(ac === "opus" ? ["-c:a", "libopus", "-ac", "2", "-b:a", "160k"] : ["-c:a", "aac", "-ac", "2", "-b:a", "192k"]),
     "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "pipe:1",
     // Text subtitles ride along as a second output of the same process: no second read.
@@ -808,6 +915,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       waiting: isDemo() && Object.values(connected()).some(Boolean) ? { scanning: library.scan.running, needed: library.needsScan() } : null,
       channels: lineup().channels().map(channelView),
       ffmpeg: !!ffmpeg,
+      breaks: !!config.get().breaks,
       connected: connected(),
       gates: { sharing: gates.isGranted("sharing"), cloudRelay: gates.isGranted("cloud-relay"), tunerExport: gates.isGranted("tuner-export") },
       version: VERSION,
@@ -841,6 +949,18 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       next: next ? view(next) : null,
     });
   }
+  if (p === "/api/station") {
+    // Station breaks (ADR-0006): off by default. A change reaches each channel at the end of what's on (C7).
+    if (m === "POST") {
+      if (typeof body.breaks !== "boolean") return json(res, 400, { error: "breaks is true or false." });
+      config.update((c) => {
+        c.breaks = body.breaks ? true : undefined;
+      });
+      rebuild();
+    }
+    return json(res, 200, { breaks: !!config.get().breaks });
+  }
+  if (p === "/api/preload" && m === "POST") return await servePreload(req, res, String(body.itemId ?? ""));
   if (p === "/api/prefetch" && m === "POST") {
     // Resolve the playback link early (EXP-006); no media is read here.
     const it = itemById(String(body.itemId ?? ""));

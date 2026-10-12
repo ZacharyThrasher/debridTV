@@ -1,6 +1,6 @@
 // On-screen display: the green channel number, the info banner, and the channel bug.
 
-import { html, raw, fmtTime, fmtDur, fmtClock, now, clamp, pref, onPrefsApplied } from "./util.js";
+import { html, raw, fmtTime, fmtDur, fmtClock, now, viewNow, shift, clamp, pref, onPrefsApplied } from "./util.js";
 import { logoHtml, hasLogo } from "./channel-editor.js";
 import { isLocked, isRedacted } from "./lock.js";
 import { onDemandItem } from "./ondemand.js";
@@ -117,7 +117,7 @@ function padAt(a) {
 }
 
 // Rating card (N-16): a rated program shows its rating top-left for a few seconds
-// when it starts or when you tune into it. Pref ratingCard (default on).
+// when it starts or when you tune into it. Pref ratingCard: off unless turned on (ADR-0006).
 const ratingEl = Object.assign(document.createElement("div"), { className: "rating-card", hidden: true });
 ratingEl.setAttribute("aria-live", "polite");
 document.getElementById("stage").append(ratingEl);
@@ -128,7 +128,7 @@ function ratingCard(info) {
   if (key === ratedKey) return;
   ratedKey = key;
   ratingEl.hidden = true;
-  if (!a?.rating || info.segment?.kind !== "program" || pref("ratingCard") === false) return;
+  if (!a?.rating || info.segment?.kind !== "program" || pref("ratingCard") !== true) return;
   ratingEl.innerHTML = html`<small>Rated</small><b>${a.rating}</b>`.html;
   ratingEl.hidden = false;
   clearTimeout(ratingTimer);
@@ -186,7 +186,7 @@ function renderBanner() {
   const { ch, info, route } = bannerState;
   const a = info.airing;
   const seg = info.segment;
-  const t = now();
+  const t = viewNow(); // the point in the schedule on screen, which is now() unless the viewer skipped around
   let title = ch.name, meta = "", pct = 0, times = "", next = "";
   if (a && (isLocked(ch) || isRedacted(a))) {
     title = "Locked channel";
@@ -217,6 +217,7 @@ function renderBanner() {
     const fmt = formatChips(a);
     if (fmt) bits.push(fmt);
     if (seg?.kind === "break") bits.push(html`<span class="badge warn">Station break</span>`);
+    else if (shift.ms) bits.push(html`<span class="badge shift">${shiftLabel(shift.ms)}</span>`);
     else bits.push(html`<span class="badge live">LIVE</span>`);
     if (a.watched) bits.push(html`<span class="badge ok">✓ Watched</span>`);
     if (a.availability === "policy-blocked") bits.push(html`<span class="badge bad">Refused by provider</span>`);
@@ -243,8 +244,42 @@ function renderBanner() {
       </div>
     </div>
     <div style="display:grid;gap:calc(var(--u)*.5);justify-items:end">
-      <div class="clock">${fmtTime(t)}</div>
+      <div class="clock">${fmtTime(now())}</div>
       <div class="times">${times}</div>
       ${raw(next)}
+      ${shift.ms ? raw(BACK_HINT) : ""}
     </div>`;
 }
+
+// ------------------------------------------------------------------ time shift (ADR-0006)
+
+// When the viewer has skipped back or ahead on a channel, a small "Back to live" button
+// stays on screen. The player owns the logic (player.js: seekBy, skipProgram,
+// backToLive); this is only the label, so the player controls can replace it.
+const BACK_HINT = '<div class="next"><span class="kb-only"><kbd>L</kbd> back to live</span><span class="tv-only"><kbd>Back</kbd> back to live</span></div>';
+
+/** "12 min behind" / "1 hr 5 min ahead". */
+export function shiftLabel(ms) {
+  const s = Math.round(Math.abs(ms) / 1000);
+  const m = Math.round(s / 60);
+  const amount = s < 60 ? `${s} s` : m < 60 ? `${m} min` : `${Math.floor(m / 60)} hr${m % 60 ? ` ${m % 60} min` : ""}`;
+  return ms < 0 ? `${amount} behind live` : `${amount} ahead of live`;
+}
+
+const livePill = Object.assign(document.createElement("button"), { id: "live-pill", className: "live-pill", type: "button", hidden: true });
+livePill.setAttribute("aria-label", "Back to live");
+livePill.addEventListener("click", (e) => {
+  e.stopPropagation();
+  dispatchEvent(new CustomEvent("debridtv:backtolive"));
+});
+document.getElementById("stage").append(livePill);
+function paintLivePill() {
+  livePill.hidden = !shift.ms || !!od;
+  if (livePill.hidden) return;
+  livePill.innerHTML = html`<i aria-hidden="true"></i><b>Back to live</b><span>${shiftLabel(shift.ms)}</span>`.html;
+}
+addEventListener("debridtv:timeshift", () => {
+  paintLivePill();
+  if (!bannerEl.hidden) renderBanner();
+});
+addEventListener("debridtv:ondemand", paintLivePill);
