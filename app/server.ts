@@ -50,7 +50,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = process.env.DEBRIDTV_PUBLIC ? resolve(process.env.DEBRIDTV_PUBLIC) : join(HERE, "public");
 const HOST = "127.0.0.1";
 const MIN = 60_000;
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 
 export interface AppOptions {
   /** 0 picks a free port (tests). Default 7337 or $PORT. */
@@ -167,6 +167,8 @@ function isWatched(id: string, durationMs: number | null | undefined): boolean {
 function isDemo(): boolean {
   const c = connected();
   if (process.env.DEBRIDTV_DEMO === "1") return true;
+  // The Windows app never shows made-up channels: an empty lineup gets a setup screen instead.
+  if (process.env.DEBRIDTV_DEMO === "0") return false;
   if (!(c.torbox || c.realdebrid || c.local)) return true;
   // Connected but nothing playable yet: keep the demo on air until the first channel exists.
   return liveLineup.channels().length === 0;
@@ -982,7 +984,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       now: Date.now(),
       demo: isDemo(),
       // Sources are connected but no channel exists yet: the demo is a stand-in while running times are learned.
-      waiting: isDemo() && Object.values(connected()).some(Boolean) ? { scanning: library.scan.running, needed: library.needsScan() } : null,
+      waiting: (isDemo() || !liveLineup.channels().length) && Object.values(connected()).some(Boolean) ? { scanning: library.scan.running, needed: library.needsScan() } : null,
       channels: lineup().channels().map(channelView),
       ffmpeg: !!ffmpeg,
       breaks: !!config.get().breaks,
