@@ -124,7 +124,7 @@ function render(c) {
       <div class="cc-sample" aria-hidden="true"><span style="${captionCss({ sample: true })}">Your captions look like this.</span></div>
       ${burned ? html`<p class="cc-note">These subtitles are drawn into the picture, so the look settings don't change them.</p>` : ""}
       ${raw(style)}
-      <p class="cc-foot">Your choice carries over to the next show and channel.
+      <p class="cc-foot">Your choice carries over to the next show and channel. Subtitle sync and loading your own subtitle file are in the player's ⚙ menu.
         <span class="kb-only">Press <kbd>C</kbd> to open this menu.</span></p>
     </div>`;
 }
@@ -165,6 +165,38 @@ addEventListener("pointerdown", (e) => {
   if (!sheet.hidden && !sheet.contains(e.target) && !e.target.closest?.('[data-act="captions"], [data-gt="captions"], [data-act="ccopen"]')) closeCaptions();
 }, true);
 
+// ------------------------------------------------------------------ state for other controls
+
+/**
+ * For the player bar's CC button (controls.js): { on, label, available }.
+ * on: captions are showing (a track from the file, or a subtitle file loaded on this
+ * device); label: what is showing; available: this program has subtitle tracks.
+ * "debridtv:captions" fires with the same object whenever it changes.
+ */
+let state = { on: false, label: "", available: false };
+export const captionsState = () => ({ ...state });
+
+let refreshing = 0;
+async function refresh() {
+  const n = ++refreshing;
+  const c = await trackChoices().catch(() => ({ why: "error" }));
+  if (n !== refreshing) return;
+  const t = !c.why && c.subNow != null ? c.subs.find((x) => x.index === c.subNow) : null;
+  const own = [...video.textTracks].find((x) => x.mode === "showing" && x.label === "Your file" && (x.cues?.length ?? 0) > 0);
+  const next = { on: !!(t || own), label: t ? trackLabel(t) : own ? "Your file" : "", available: !c.why && c.subs.length > 0 };
+  if (next.on === state.on && next.label === state.label && next.available === state.available) return;
+  state = next;
+  dispatchEvent(new CustomEvent("debridtv:captions", { detail: captionsState() }));
+}
+
 // A new program (or a track change restarting this one) may have other tracks.
-document.getElementById("video").addEventListener("loadstart", () => !sheet.hidden && setTimeout(draw, 50));
-addEventListener("debridtv:channel", () => !sheet.hidden && setTimeout(draw, 50));
+const video = document.getElementById("video");
+const changed = () => {
+  setTimeout(refresh, 50);
+  if (!sheet.hidden) setTimeout(draw, 50);
+};
+video.addEventListener("loadstart", changed);
+video.addEventListener("playing", () => setTimeout(refresh, 50));
+video.textTracks.addEventListener?.("change", () => setTimeout(refresh, 50));
+video.textTracks.addEventListener?.("addtrack", () => setTimeout(refresh, 50));
+addEventListener("debridtv:channel", changed);
