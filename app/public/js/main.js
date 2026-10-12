@@ -54,7 +54,8 @@ async function bootstrap({ keepChannel = true } = {}) {
     if (start.startsWith("ch:")) saved = start.slice(3);
     target = tv.channels.find((c) => c.id === saved) ?? tv.channels[0];
   }
-  if (!tv.channels.length) return;
+  if (!tv.channels.length) return void showSetup();
+  hideSetup();
   if (!tv.current || tv.current.id !== target.id || wasDemo !== boot.demo) await tune(target);
 }
 
@@ -330,6 +331,52 @@ function closeWelcome() {
   setPref("welcomed", true);
   unlockAudio();
   applyVolume();
+}
+
+// ------------------------------------------------------------------ setup
+
+// No channels and no demo (the Windows app): instead of a dark screen, a page that
+// says what to do next and follows along until the first channel is on the air.
+let setupTimer = null;
+
+function showSetup() {
+  const el = document.getElementById("welcome");
+  const w = boot?.waiting;
+  const step = !w ? 1 : w.scanning || w.needed ? 2 : 3;
+  const line = (n, text) => html`<li class="${n < step ? "done" : n === step ? "now" : ""}">${text}</li>`;
+  el.innerHTML = html`<div class="welcome-card setup-card">
+    <div class="brand">Debrid<i>TV</i></div>
+    <h1>${step === 1 ? "Put your library on the air." : step === 2 ? "Getting your channels ready." : "Almost there."}</h1>
+    <p>${step === 1
+      ? "DebridTV turns the shows and films you already have into channels. Connect TorBox, Real-Debrid or a folder on this PC to start."
+      : step === 2
+        ? w.scanning
+          ? "Your library is connected and being scanned. Your first channel comes on as soon as it's ready; this page switches by itself."
+          : "Your library is connected. Its files need a scan so each program's running time is known. Start it in Settings."
+        : "Your library is connected, but nothing in it can fill a channel yet. Add a folder or source with episodes or films, or check Settings → Library."}</p>
+    <ol class="setup-steps">
+      ${raw(line(1, "Connect a source"))}${raw(line(2, "Scan your files"))}${raw(line(3, "Watch your channels"))}
+    </ol>
+    <button class="btn primary" data-sources>${step === 1 ? "Connect a source" : step === 2 ? (w.scanning ? "See scan progress" : "Start the scan") : "Open Settings"}</button>
+  </div>`;
+  el.hidden = false;
+  const b = el.querySelector("[data-sources]");
+  b.focus();
+  b.onclick = () => {
+    el.hidden = true; // the next check brings this page back if there's still nothing on
+    openPanel(step === 3 ? "library" : "sources");
+  };
+  clearInterval(setupTimer);
+  setupTimer = setInterval(() => !panelOpen() && bootstrap().catch(() => {}), 5000);
+}
+
+function hideSetup() {
+  if (setupTimer == null) return;
+  clearInterval(setupTimer);
+  setupTimer = null;
+  const el = document.getElementById("welcome");
+  if (el.querySelector(".setup-card")) el.hidden = true;
+  if (!pref("welcomed")) showWelcome();
 }
 
 // ------------------------------------------------------------------ start
