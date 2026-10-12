@@ -179,7 +179,19 @@ async function sources() {
             <div class="muted">A scan asks for one playback link per file and reads its header. Files a provider refused or hasn't finished are skipped.</div>`}
     </div>
     ${s.local.connected ? raw(await silenceCard()) : ""}
-    <p class="muted">Your keys and library facts are stored in <code>${s.dataDir}</code>.</p>`;
+    ${raw(compatCard(s))}
+    <p class="muted">Your keys and library facts are stored in <code>${s.dataDir}</code>.${s.version ? html` DebridTV ${s.version}.` : ""}</p>`;
+}
+
+/** Compatibility mode needs ffmpeg on the PC. Say once, plainly, how to get it. */
+function compatCard(s) {
+  if (s.ffmpeg !== false) return "";
+  return html`<h3>Compatibility mode</h3>
+    <div class="src">
+      <div class="src-head"><div class="src-name"><span class="src-dot"></span>ffmpeg isn't installed</div><span class="badge">Off</span></div>
+      <p class="lead">Most files play straight away without it. Files with sound or picture formats your browser can't decode, other audio tracks and subtitles need ffmpeg, a free program that converts them on this PC as you watch.</p>
+      <div class="muted">On Windows, open Command Prompt and run <code>winget install Gyan.FFmpeg</code>, or put <code>ffmpeg.exe</code> and <code>ffprobe.exe</code> in the same folder as DebridTV.exe. Then close DebridTV and start it again.</div>
+    </div>`;
 }
 
 /** N-22c: break points from silences, for episodes on this PC without chapters. Off until started. */

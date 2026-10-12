@@ -45,10 +45,11 @@ import { showGaps } from "./missing.ts";
 import { acquireRoutes, type AcquireRouteDeps } from "./acquire-routes.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PUBLIC = join(HERE, "public");
+// The Windows app unpacks the page files elsewhere and points here with $DEBRIDTV_PUBLIC.
+const PUBLIC = process.env.DEBRIDTV_PUBLIC ? resolve(process.env.DEBRIDTV_PUBLIC) : join(HERE, "public");
 const HOST = "127.0.0.1";
 const MIN = 60_000;
-const VERSION = "0.2.0";
+const VERSION = "0.1.0";
 
 export interface AppOptions {
   /** 0 picks a free port (tests). Default 7337 or $PORT. */
@@ -549,6 +550,8 @@ function sourcesView() {
     scan: { ...library.scan, needed: library.needsScan(), perMinute: c.scanPerMinute ?? 30,
       failed: library.items().filter((i) => isConnected(i.provider) && i.present && i.durationMs == null && i.probe?.error && i.probe.error !== "policy").length },
     dataDir: dataDir(),
+    ffmpeg: !!ffmpeg,
+    version: VERSION,
   };
 }
 
@@ -1843,7 +1846,9 @@ function download(res: http.ServerResponse, name: string, body: unknown) {
 }
 
 function detectFfmpeg(): string | null {
-  return detect([process.env.FFMPEG, "ffmpeg"]);
+  // An ffmpeg.exe dropped next to DebridTV.exe counts too.
+  const beside = process.env.DEBRIDTV_EXE_DIR ? join(process.env.DEBRIDTV_EXE_DIR, process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg") : null;
+  return detect([process.env.FFMPEG, beside && existsSync(beside) ? beside : null, "ffmpeg"]);
 }
 function detectFfprobe(ffmpeg: string): string | null {
   // ffprobe ships next to ffmpeg in every common Windows/macOS/Linux build.
@@ -1861,8 +1866,8 @@ function detect(list: Array<string | null | undefined>): string | null {
   return null;
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isMain) {
+/** Start the server and print where it is. The Windows app calls this too. */
+export async function main(): Promise<{ app: ReturnType<typeof createApp>; port: number }> {
   const app = createApp();
   const port = await app.listen();
   console.log(`\n  📺  DebridTV is on the air:  http://${HOST}:${port}\n`);
@@ -1870,4 +1875,8 @@ if (isMain) {
   console.log(`  Compatibility mode (ffmpeg): ${app.ffmpeg ? "available" : "not found — some files may not play in the browser"}`);
   console.log(`  Home network: ${app.lan.enabled ? "on (paired TVs and phones can open it)" : "off (turn on at http://" + HOST + ":" + port + "/lan)"}`);
   console.log(`  Data folder: ${dataDir()}\n`);
+  return { app, port };
 }
+
+const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) main();
