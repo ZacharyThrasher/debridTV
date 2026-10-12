@@ -100,6 +100,9 @@ html.remote .pb-scrub:focus-visible .pb-rail { box-shadow: 0 0 0 3px color-mix(i
 .pb-btn.boost { color: var(--pb-accent); }
 .pb-seek { display: none; }
 .can-seek .pb-seek { display: inline-grid; }
+.pb-prog { display: none; }
+:is([data-mode="live"], [data-mode="shifted"]) .pb-prog { display: inline-grid; }
+body.pbar-on .live-pill { display: none; }
 [data-mode="ondemand"] .pb-ch { display: none; }
 html.remote .pbar :focus-visible { outline: var(--ring, 3px) solid var(--pb-focus); outline-offset: 1px; box-shadow: none; }
 
@@ -131,6 +134,7 @@ html.remote .pb-volr:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px
   flex: none; display: inline-flex; align-items: center; gap: .45em; height: calc(var(--pb-btn) * .7); padding: 0 .75em; border-radius: 99px;
   border: 0; background: var(--pb-hi); color: var(--pb-ink); font-weight: 700; font-size: .82em; letter-spacing: .06em; cursor: pointer; text-transform: uppercase;
 }
+.pb-live small { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--pb-dim); font-family: var(--pb-num); }
 .pb-live i { width: .55em; height: .55em; border-radius: 50%; background: var(--pb-dim); }
 .pb-live.at-live { background: transparent; cursor: default; }
 .pb-live.at-live i { background: var(--pb-accent); box-shadow: 0 0 .6em var(--pb-accent); }

@@ -14,6 +14,7 @@ import * as cards from "./cards.js"; // lockedCard comes from workstream B
 import { osd, osdHide, bug, setBanner, showBanner } from "./ui.js";
 import { initSignOff, signedOff } from "./signoff.js";
 import { musicShow, musicHide } from "./music.js";
+import { planPreload, cancelPreload } from "./preload.js";
 import { tracksFor, selectionFor, needsCompat, selectionQuery, audioTracks, subTracks, defaultAudio, isText, trackLabel, Captions } from "./tracks.js";
 
 const video = document.getElementById("video");
@@ -63,6 +64,7 @@ export async function tune(ch, { silent = false, seek = false } = {}) {
   if (!ch || signedOff()) return;
   const my = ++token;
   if (!silent) {
+    cancelPreload();
     clearTimeout(liveSeekTimer);
     setShift(0);
   }
@@ -166,6 +168,7 @@ function render(ch, info, my, silent, hold = 0, seek = false) {
   }
   hideCard();
   scheduleBoundary(ch, seg ? seg.end : a ? a.end : now() + 60_000);
+  planPreload(ch, info); // ADR-0006: the next program's opening bytes, late in this one
 
   if (info.offAir || !a) {
     tv.route = "card";
@@ -474,7 +477,7 @@ function stopMedia() {
 }
 
 function setPaused(p, { quiet = false } = {}) {
-  if (p) flushWatch(true);
+  if (p) flushWatch(true), cancelPreload();
   tv.paused = p;
   pausedEl.hidden = !p;
   if (p) {
@@ -673,6 +676,7 @@ function odInfo(item, fromMs) {
 export async function playOnDemand(itemId, { fromMs = 0, item: listed = null } = {}) {
   if (!itemId || signedOff()) return;
   const my = ++token;
+  cancelPreload();
   clearTimeout(boundary);
   clearTimeout(stallTimer);
   flushWatch(true);
@@ -866,6 +870,7 @@ function isLocked(ch, info) {
 }
 
 function showLocked(ch, info) {
+  cancelPreload();
   tv.route = "card";
   stopMedia();
   synthStop();
@@ -965,6 +970,7 @@ initSignOff({
   // Drop every stream and timer: nothing is fetched until the viewer is back.
   stop() {
     token++;
+    cancelPreload();
     clearTimeout(liveSeekTimer);
     setShift(0);
     endOnDemand();
@@ -985,14 +991,14 @@ initSignOff({
 // ------------------------------------------------------------------ control bar
 
 // What the YouTube-style bar (controls.js, docs/parity/player.md) reads and calls.
-// Live-channel seeking belongs to the "free seeking" work: when it lands, timeline()
-// reports mode "shifted" and a seekable range, and the bar needs no change.
+// Seeking on a channel is the time shift above (ADR-0006); the bar only adds seekTo().
 
 /**
  * Where playback is, in file time:
  * { mode: "live" | "shifted" | "ondemand", itemId, posMs, durMs, liveMs, minMs, maxMs, route, paused }
- * liveMs is the station's live point (null in On Demand); minMs..maxMs is what can be
- * seeked to (equal on a plain live channel). null when nothing with a timeline is on.
+ * liveMs is the station's live point inside this file (null in On Demand, or when the
+ * live point is in another program); minMs..maxMs is what seekTo can reach without
+ * changing program. null when nothing with a timeline is on.
  */
 export function timeline() {
   if (tv.onDemand) {
@@ -1001,24 +1007,30 @@ export function timeline() {
       route: tv.route, paused: tv.paused };
   }
   const info = tv.info, a = info?.airing;
-  if (!a || info.segment?.kind !== "program" || tv.route === "card" || a.itemId == null) return null;
-  const liveMs = info.fileOffsetMs + (now() - info.now);
-  const posMs = filePos() ?? liveMs;
-  return { mode: "live", itemId: a.itemId, posMs, durMs: a.durationMs || 0, liveMs, minMs: liveMs, maxMs: liveMs, route: tv.route, paused: tv.paused };
+  if (!a || info.segment?.kind !== "program" || tv.route === "card" || a.itemId == null || info.fileOffsetMs == null) return null;
+  // Where the station clock (shifted by the viewer) says the picture is; the picture itself when it has one.
+  const expected = info.fileOffsetMs + (now() - info.now);
+  const posMs = filePos() ?? expected;
+  const d = a.durationMs || 0;
+  const live = expected - shift.ms;
+  const liveMs = live >= 0 && (!d || live <= d) ? live : null;
+  return { mode: shift.ms ? "shifted" : "live", itemId: a.itemId, posMs, durMs: d, liveMs, minMs: 0, maxMs: d ? d - 1000 : 0, route: tv.route, paused: tv.paused };
 }
 
-/** Seek to a file time where the timeline allows it. Returns false when it can't. */
+/** Seek to a file time in the program on screen (a time shift on a channel). */
 export function seekTo(fileMs) {
   const t = timeline();
   if (!t || t.maxMs <= t.minMs) return false;
-  seekBy(clamp(fileMs, t.minMs, t.maxMs) - t.posMs);
+  seekBy(Math.round(clamp(fileMs, t.minMs, t.maxMs) - t.posMs));
   return true;
 }
 
-/** Playback speed (pitch kept). Only off the station clock: live keeps 1×. */
+// The next show is readied only while watching live (ADR-0006 pre-load): a shift or On Demand drops it.
+addEventListener("debridtv:timeshift", (e) => e.detail?.shiftMs && cancelPreload());
+
+/** Playback speed (pitch kept). On Demand only: a channel follows the station clock. */
 export function setRate(r) {
-  const t = timeline();
-  if (!t || t.mode === "live") return false;
+  if (!tv.onDemand) return false;
   rate = clamp(Number(r) || 1, 0.25, 4);
   video.preservesPitch = true;
   if (media) video.playbackRate = rate;

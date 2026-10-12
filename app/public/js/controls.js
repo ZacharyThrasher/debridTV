@@ -51,6 +51,8 @@ const P = {
   down: "M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z",
   next: "M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z",
   prev: "M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z",
+  prevProg: "M6 6h2v12H6zm3.5 6 8.5 6V6z",
+  nextProg: "M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z",
   check: "M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z",
 };
 const icon = (d, extra = "") => raw(`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/>${extra}</svg>`);
@@ -72,8 +74,10 @@ bar.innerHTML = html`
   <div class="pb-row">
     <div class="pb-left">
       <button class="pb-btn" data-act="play" aria-label="Pause" data-tip="Pause (Space)">${icon(P.pause)}</button>
+      <button class="pb-btn pb-prog" data-act="prev" aria-label="Previous program" data-tip="Previous program (Shift+←)">${icon(P.prevProg)}</button>
       <button class="pb-btn pb-seek" data-act="back" aria-label="Back 10 seconds" data-tip="Back 10 s">${icon(P.back, num(10))}</button>
       <button class="pb-btn pb-seek" data-act="fwd" aria-label="Forward 30 seconds" data-tip="Forward 30 s">${icon(P.fwd, num(30))}</button>
+      <button class="pb-btn pb-prog" data-act="next" aria-label="Next program" data-tip="Next program (Shift+→)">${icon(P.nextProg)}</button>
       <button class="pb-btn pb-ch" data-act="down" aria-label="Channel down" data-tip="Channel down (↓)">${icon(P.down)}</button>
       <button class="pb-btn pb-ch" data-act="up" aria-label="Channel up" data-tip="Channel up (↑)">${icon(P.up)}</button>
       <div class="pb-vol">
@@ -253,10 +257,11 @@ function draw() {
   $(".pb-now").textContent = showLeft && t.durMs ? `-${fmtClock(t.durMs - t.posMs)}` : fmtClock(t.posMs);
   $(".pb-dur").textContent = t.durMs ? ` / ${fmtClock(t.durMs)}` : "";
   // At the live point it's a red LIVE label; anywhere else it takes you back.
-  const atLive = t.mode === "live" && (t.liveMs == null || Math.abs(t.posMs - t.liveMs) < 4000);
-  liveBtn.hidden = !(t.mode === "live" || tv.current);
+  const atLive = t.mode === "live" && !tv.paused;
+  const sh = player.timeShift?.() ?? 0;
+  liveBtn.hidden = !tv.current;
   liveBtn.classList.toggle("at-live", atLive);
-  liveBtn.innerHTML = atLive ? "<i></i>LIVE" : "<i></i>Back to live";
+  liveBtn.innerHTML = atLive ? "<i></i>LIVE" : html`<i></i>Back to live${sh ? html`<small>${sh < 0 ? "−" : "+"}${fmtClock(Math.abs(sh))}</small>` : ""}`.html;
   liveBtn.setAttribute("aria-label", atLive ? "Live" : "Back to live (L)");
   const ch = chapterAt(t.posMs);
   const title = tv.onDemand?.title ?? tv.info?.airing?.title ?? "";
@@ -269,19 +274,11 @@ document.addEventListener("fullscreenchange", draw);
 
 // ------------------------------------------------------------------ seeking
 
-/** Seek to a file time. A live channel can't seek yet, so it opens the program in On Demand there. */
+/** Seek to a file time in the program on screen (a time shift on a channel, ADR-0006). */
 export function seekTo(ms) {
   const t = player.timeline?.();
-  if (!t) return false;
-  ms = clamp(ms, 0, t.durMs ? t.durMs - 1000 : ms);
-  if (t.maxMs > t.minMs) return player.seekTo(ms);
-  if (t.mode === "live" && t.durMs && tv.route !== "demo" && player.playOnDemand) {
-    // Not the live point any more: play this program from there, off the clock. "Back to live" returns.
-    player.playOnDemand(t.itemId, { fromMs: ms, item: { title: tv.info?.airing?.title } });
-    return true;
-  }
-  if (t.mode === "live") toast("This channel is a demo picture: it can't rewind.");
-  return false;
+  if (!t || !(t.maxMs > t.minMs)) return false;
+  return player.seekTo(ms);
 }
 export function seekRel(deltaMs) {
   const t = player.timeline?.();
@@ -388,6 +385,8 @@ function playPause() {
 const ACTIONS = {
   play: playPause,
   back: () => seekRel(-10_000),
+  prev: () => player.skipProgram?.(-1),
+  next: () => player.skipProgram?.(1),
   fwd: () => seekRel(30_000),
   up: () => channelStep(1),
   down: () => channelStep(-1),
@@ -395,7 +394,7 @@ const ACTIONS = {
   time: () => ((showLeft = !showLeft), draw()),
   live: () => {
     const t = player.timeline?.();
-    if (t?.mode === "live" && (t.liveMs == null || Math.abs(t.posMs - t.liveMs) < 4000) && !tv.paused) return;
+    if (t?.mode === "live" && !tv.paused) return;
     player.backToLive?.();
   },
   guide: () => (hideBar(), openGuide()),
@@ -430,14 +429,14 @@ const signed = (ms, unit = "ms") => (ms > 0 ? `+${ms} ${unit}` : `${ms} ${unit}`
 
 function rows() {
   const t = player.timeline?.();
-  const offClock = t && t.mode !== "live";
+  const offClock = t?.mode === "ondemand";
   const p = fx.picture();
   const pictureChanged = p.zoom !== 1 || p.rotate || p.flip || p.brightness !== 1 || p.contrast !== 1 || p.saturation !== 1;
   const loop = fx.abLoop();
   switch (page) {
     case "main":
       return html`
-        ${row("speed", "Playback speed", offClock ? `${player.currentRate?.() ?? 1}×` : "Normal (live)")}
+        ${row("speed", "Playback speed", offClock ? `${player.currentRate?.() ?? 1}×` : "Normal")}
         ${row("audio", "Audio track", "…")}
         ${row("async", "Audio sync", signed(fx.audioDelay()))}
         ${row("subs", "Subtitles", captionsOn() ? "On" : "Off")}
@@ -452,7 +451,7 @@ function rows() {
     case "speed":
       return html`${head("Playback speed")}${offClock
         ? SPEEDS.map((s) => pick(`rate:${s}`, s === 1 ? "Normal" : `${s}×`, (player.currentRate?.() ?? 1) === s))
-        : html`<p class="pm-note">Live channels play at normal speed so they stay on the schedule. Rewind or open the program in On Demand to change speed.</p>${act("odhere", "Watch this program in On Demand")}`}`;
+        : html`<p class="pm-note">Channels play at normal speed so they keep to the schedule. Open this program in On Demand to change speed.</p>${t ? act("odhere", "Watch this program in On Demand") : ""}`}`;
     case "async":
       return html`${head("Audio sync")}${stepper("ad", fx.audioDelay(), "ms")}
         <p class="pm-note">Plus plays the sound later, minus earlier.${fx.audioDelay() < 0 && !tv.ffmpeg ? " Earlier needs ffmpeg on the PC." : fx.audioDelay() < 0 ? " Earlier restarts the stream on the PC at the same point." : ""}</p>
@@ -488,7 +487,7 @@ function rows() {
       return html`${head("Loop")}${t && t.maxMs > t.minMs
         ? html`${act("ab", !loop || loop.whole ? "Set A here" : loop.b == null ? "Set B here" : "Clear A–B loop")}
           ${toggle("loopfile", "Loop this program", !!loop?.whole)}`
-        : html`<p class="pm-note">Loops work in On Demand.</p>${act("odhere", "Watch this program in On Demand")}`}`;
+        : html`<p class="pm-note">Nothing to loop right now.</p>`}`;
     case "audio":
       return html`${head("Audio track")}<div class="pm-tracks"><p class="pm-note">Looking up tracks…</p></div>`;
   }
@@ -565,7 +564,7 @@ menu.addEventListener("click", (e) => {
       return renderMenu(true);
     case "odhere":
       closeMenu();
-      return void (t && seekTo(t.posMs));
+      return void (t && player.playOnDemand?.(t.itemId, { fromMs: t.posMs, item: { title: tv.info?.airing?.title } }));
     case "atrack":
       player.pickAudio?.(Number(v));
       page = "main";
@@ -659,10 +658,10 @@ addEventListener("pointerdown", (e) => {
 // ------------------------------------------------------------------ keyboard shortcuts
 
 const KEYS = [
-  ["Watching", [["Space / K", "Pause and play"], ["↑ ↓", "Change channel"], ["0–9", "Go to a channel number"], ["L / Backspace", "Last channel, or back to live"],
+  ["Watching", [["Space / K", "Pause and play"], ["↑ ↓", "Change channel"], ["0–9", "Go to a channel number"], ["L / Backspace", "Back to live, else last channel"],
     ["G / Enter", "Program guide"], ["O", "On Demand"], ["I", "What's on"], ["S", "DebridTV settings"]]],
-  ["Seeking", [["← →", "Back 10 s / forward 30 s (On Demand)"], ["Shift + ← →", "Previous / next chapter"], ["Home / End", "Start / end"],
-    [", .", "One frame back / forward (paused)"], ["< > or [ ]", "Slower / faster"]]],
+  ["Seeking", [["← →", "Back 10 s / forward 30 s"], ["Shift + ← →", "Previous / next chapter, then program"], ["[ ]", "Previous / next program"],
+    ["Home", "Start of the program"], ["End", "Back to live (end of file in On Demand)"], [", .", "One frame back / forward (paused)"], ["< >", "Slower / faster (On Demand)"]]],
   ["Sound", [["M", "Mute"], ["/ *", "Volume down / up (up to 200%)"], ["Mouse wheel", "Volume, over the picture"], ["A", "Next audio track"]]],
   ["Picture and subtitles", [["C", "Subtitles"], ["Z", "Picture shape"], ["F / double-click", "Full screen"], ["P", "Picture in picture"], ["X", "Screenshot"], ["D", "Stats for nerds"]]],
 ];
@@ -742,7 +741,6 @@ addEventListener("keydown", (e) => {
     }
   }
   const t = player.timeline?.();
-  const seekable = !!t && t.maxMs > t.minMs;
   switch (k) {
     case "ArrowDown":
       // While the bar shows from a key press, Down goes onto it instead of changing channel.
@@ -750,15 +748,21 @@ addEventListener("keydown", (e) => {
       return;
     case "ArrowLeft":
     case "ArrowRight":
-      if (e.shiftKey && t) return stop(), chapterJump(k === "ArrowRight" ? 1 : -1);
-      // main.js seeks On Demand or shows what's on; the bar comes along.
+      // Shift: the next or previous chapter when the file has one that way; else main.js skips the program.
+      if (e.shiftKey && t && chapterJump(k === "ArrowRight" ? 1 : -1)) return stop();
+      // main.js seeks; the bar comes along.
       showBar("key");
       return;
     case "Home":
-    case "End":
       if (!t) return;
       stop();
-      seekTo(k === "Home" ? 0 : (t.durMs || 0) - 5000);
+      seekTo(0);
+      return;
+    case "End":
+      // On a channel End is Back to live (main.js); in On Demand it's the end of the file.
+      if (t?.mode !== "ondemand") return;
+      stop();
+      seekTo((t.durMs || 0) - 5000);
       return;
     case ",":
     case ".":
@@ -768,15 +772,13 @@ addEventListener("keydown", (e) => {
       showBar("key");
       return;
     case "<":
-    case ">":
-    case "[":
-    case "]": {
+    case ">": {
       stop();
       const cur = player.currentRate?.() ?? 1;
       const i = SPEEDS.indexOf(cur);
-      const next = SPEEDS[clamp((i < 0 ? 3 : i) + (k === ">" || k === "]" ? 1 : -1), 0, SPEEDS.length - 1)];
+      const next = SPEEDS[clamp((i < 0 ? 3 : i) + (k === ">" ? 1 : -1), 0, SPEEDS.length - 1)];
       if (player.setRate?.(next)) osd(`${next}×`, "Speed", 1000);
-      else osd("1×", seekable || t?.mode !== "live" ? "Speed" : "Live plays at normal speed", 1500);
+      else osd("1×", "Speed changes in On Demand", 1500);
       return;
     }
     case "/":
@@ -810,20 +812,16 @@ addEventListener("keydown", (e) => {
   }
 }, true);
 
+/** Jump to the next or previous chapter. False when there's none that way (then Shift+arrow skips the program). */
 function chapterJump(dir) {
   const t = player.timeline?.();
-  if (!t) return;
+  if (!t || !chapters.list.length || chapters.id !== t.itemId) return false;
   const l = [0, ...chapters.list];
-  let to;
-  if (dir > 0) to = l.find((c) => c > t.posMs + 1000);
-  else {
-    const before = l.filter((c) => c < t.posMs - 3000);
-    to = before.at(-1) ?? 0;
-  }
-  if (to == null) return osd("CHAPTER", "No more chapters", 1200);
-  seekTo(to);
-  const ch = chapterAt(to);
-  osd(`CHAPTER ${ch?.n ?? 1}`, "", 1200);
+  const to = dir > 0 ? l.find((c) => c > t.posMs + 1000) : l.filter((c) => c < t.posMs - 3000).at(-1);
+  if (to == null || !seekTo(to)) return false;
+  osd(`CHAPTER ${chapterAt(to)?.n ?? 1}`, "", 1200);
+  showBar("key");
+  return true;
 }
 
 // ------------------------------------------------------------------ mouse and touch on the picture
