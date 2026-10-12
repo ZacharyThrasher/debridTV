@@ -5,12 +5,13 @@
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { closeQuietly } from "./close.ts";
+import { startServer } from "./serve.ts";
 import { makeOnDemand, answerOnDemand } from "./ondemand-mock.ts";
 
 const require = createRequire(import.meta.url);
@@ -23,8 +24,7 @@ for (const p of [process.env.PLAYWRIGHT, "playwright", "/opt/node22/lib/node_mod
   } catch {}
 }
 const EXE = process.env.CHROMIUM ?? "/opt/pw-browsers/chromium";
-const PORT = 7800 + (process.pid % 200);
-const BASE = `http://127.0.0.1:${PORT}`;
+let BASE = "";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let server: ChildProcess | null = null;
@@ -41,14 +41,7 @@ before(async () => {
     return;
   }
   home = mkdtempSync(join(tmpdir(), "debridtv-od-"));
-  server = spawn(process.execPath, ["app/server.ts"], { env: { ...process.env, PORT: String(PORT), DEBRIDTV_HOME: home, DEBRIDTV_DEMO: "1" }, stdio: "ignore" });
-  for (let i = 0; i < 100; i++) {
-    try {
-      if ((await fetch(`${BASE}/api/bootstrap`)).ok) return;
-    } catch {}
-    await sleep(100);
-  }
-  throw new Error("server did not start");
+  ({ server, base: BASE } = await startServer({ DEBRIDTV_HOME: home, DEBRIDTV_DEMO: "1" }));
 });
 
 after(async () => {
@@ -75,7 +68,9 @@ async function open(opts: { prefs?: object; missing?: boolean; empty?: boolean }
   const errors: string[] = [];
   page.on("pageerror", (e: Error) => errors.push(e.message));
   await page.goto(BASE + "/");
-  await page.waitForFunction("document.getElementById('bug').textContent.length > 0");
+  // The first tune has finished (its render would hide a card or overlay opened sooner).
+  await page.evaluate(`import("/js/player.js").then((m) => void (window.__tv = m.tv))`);
+  await page.waitForFunction(`!!window.__tv.info && document.getElementById("bug").textContent.length > 0`);
   return { page, ctx, requests, errors, mock };
 }
 

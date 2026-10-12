@@ -5,12 +5,13 @@
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { closeQuietly } from "./close.ts";
+import { startServer } from "./serve.ts";
 
 const require = createRequire(import.meta.url);
 let chromium: any = null;
@@ -22,8 +23,7 @@ for (const p of [process.env.PLAYWRIGHT, "playwright", "/opt/node22/lib/node_mod
   } catch {}
 }
 const EXE = process.env.CHROMIUM ?? "/opt/pw-browsers/chromium";
-const PORT = 7800 + (process.pid % 150);
-const BASE = `http://127.0.0.1:${PORT}`;
+let BASE = "";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let server: ChildProcess | null = null;
@@ -40,13 +40,7 @@ before(async () => {
     return;
   }
   home = mkdtempSync(join(tmpdir(), "debridtv-oddemo-"));
-  server = spawn(process.execPath, ["app/server.ts"], { env: { ...process.env, PORT: String(PORT), DEBRIDTV_HOME: home }, stdio: "ignore" });
-  for (let i = 0; i < 100; i++) {
-    try {
-      if ((await fetch(`${BASE}/api/bootstrap`)).ok) break;
-    } catch {}
-    await sleep(100);
-  }
+  ({ server, base: BASE } = await startServer({ DEBRIDTV_HOME: home }));
 });
 
 after(async () => {

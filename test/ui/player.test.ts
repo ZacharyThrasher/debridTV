@@ -5,12 +5,13 @@
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { closeQuietly } from "./close.ts";
+import { startServer } from "./serve.ts";
 
 const require = createRequire(import.meta.url);
 let chromium: any = null;
@@ -22,8 +23,7 @@ for (const p of [process.env.PLAYWRIGHT, "playwright", "/opt/node22/lib/node_mod
   } catch {}
 }
 const EXE = process.env.CHROMIUM ?? "/opt/pw-browsers/chromium";
-const PORT = 7600 + (process.pid % 200);
-const BASE = `http://127.0.0.1:${PORT}`;
+let BASE = "";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let ffmpeg = true;
@@ -81,13 +81,7 @@ before(async () => {
     execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-f", "lavfi", "-i", `sine=frequency=${200 + i * 60}:duration=40`, "-f", "lavfi", "-i", "anoisesrc=d=40:c=pink:a=0.15",
       "-filter_complex", "[0][1]amix=inputs=2", "-c:a", "libopus", "-b:a", "48k", "-metadata", `title=Tone Number ${i}`, "-metadata", "artist=Test Band",
       "-metadata", "album=Signal Tones", "-metadata", `track=${i}`, "-metadata", "date=1994", "-metadata", "genre=Electronic", join(album, `0${i} Tone Number ${i}.opus`)]);
-  server = spawn(process.execPath, ["app/server.ts"], { env: { ...process.env, PORT: String(PORT), DEBRIDTV_HOME: home }, stdio: "ignore" });
-  for (let i = 0; i < 100; i++) {
-    try {
-      if ((await fetch(`${BASE}/api/bootstrap`)).ok) break;
-    } catch {}
-    await sleep(100);
-  }
+  ({ server, base: BASE } = await startServer({ DEBRIDTV_HOME: home }));
   await post("/api/sources", { provider: "local", dirs: [media] });
   await post("/api/scan/start", { perMinute: 600 });
   let lib: any = null;

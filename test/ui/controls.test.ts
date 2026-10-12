@@ -5,12 +5,13 @@
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { closeQuietly } from "./close.ts";
+import { startServer } from "./serve.ts";
 
 const require = createRequire(import.meta.url);
 let chromium: any = null;
@@ -22,8 +23,7 @@ for (const p of [process.env.PLAYWRIGHT, "playwright", "/opt/node22/lib/node_mod
   } catch {}
 }
 const EXE = process.env.CHROMIUM ?? "/opt/pw-browsers/chromium";
-const PORT = 7800 + (process.pid % 150);
-const BASE = `http://127.0.0.1:${PORT}`;
+let BASE = "";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let ffmpeg = true;
@@ -67,13 +67,7 @@ before(async () => {
   // A letterboxed clip (2.39:1 picture in a 16:9 frame) for auto crop; served by the test, not the library.
   execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x134:rate=24:duration=5", "-vf", "pad=320:180:0:23:black",
     "-c:v", "libvpx-vp9", "-b:v", "120k", "-deadline", "realtime", "-cpu-used", "8", "-an", join(home, "letterbox.webm")]);
-  server = spawn(process.execPath, ["app/server.ts"], { env: { ...process.env, PORT: String(PORT), DEBRIDTV_HOME: home }, stdio: "ignore" });
-  for (let i = 0; i < 100; i++) {
-    try {
-      if ((await fetch(`${BASE}/api/bootstrap`)).ok) break;
-    } catch {}
-    await sleep(100);
-  }
+  ({ server, base: BASE } = await startServer({ DEBRIDTV_HOME: home }));
   await post("/api/sources", { provider: "local", dirs: [media] });
   await post("/api/scan/start", { perMinute: 600 });
   for (let i = 0; i < 150 && !channel; i++) {

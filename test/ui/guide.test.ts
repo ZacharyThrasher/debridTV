@@ -4,12 +4,13 @@
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { closeQuietly } from "./close.ts";
+import { startServer } from "./serve.ts";
 
 const require = createRequire(import.meta.url);
 let chromium: any = null;
@@ -21,8 +22,7 @@ for (const p of [process.env.PLAYWRIGHT, "playwright", "/opt/node22/lib/node_mod
   } catch {}
 }
 const EXE = process.env.CHROMIUM ?? "/opt/pw-browsers/chromium";
-const PORT = 7400 + (process.pid % 200);
-const BASE = `http://127.0.0.1:${PORT}`;
+let BASE = "";
 const MIN = 60_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -48,17 +48,7 @@ before(async () => {
     return;
   }
   home = mkdtempSync(join(tmpdir(), "debridtv-ui-"));
-  server = spawn(process.execPath, ["app/server.ts"], {
-    env: { ...process.env, PORT: String(PORT), DEBRIDTV_HOME: home, DEBRIDTV_DEMO: "1" },
-    stdio: "ignore",
-  });
-  for (let i = 0; i < 100; i++) {
-    try {
-      if ((await fetch(`${BASE}/api/bootstrap`)).ok) return;
-    } catch {}
-    await sleep(100);
-  }
-  throw new Error("server did not start");
+  ({ server, base: BASE } = await startServer({ DEBRIDTV_HOME: home, DEBRIDTV_DEMO: "1" }));
 });
 
 after(async () => {
@@ -72,20 +62,24 @@ async function open(opts: { prefs?: object; at?: number; size?: [number, number]
   const [width, height] = opts.size ?? [1600, 900];
   const ctx = await browser.newContext({ viewport: { width, height }, hasTouch: !!opts.touch, isMobile: !!opts.touch });
   const offset = opts.at ? opts.at - Date.now() : 0;
+  // With a fake clock the page runs ahead of this process by every advance() so far.
+  // The server's times are moved by the same amount, or each clock sync (every
+  // /api/now) would pull the app's clock back by that much and stall what runs on it.
+  let ahead = 0;
   const requests: string[] = [];
   await ctx.addInitScript(`localStorage.setItem("debridtv.prefs", ${JSON.stringify(JSON.stringify({ welcomed: true, ...opts.prefs }))})`);
   await ctx.route("**/*", async (route: any) => {
     const u = new URL(route.request().url());
     requests.push(u.pathname);
-    if (!offset || !u.pathname.startsWith("/api/")) return route.continue();
-    if (u.pathname === "/api/now" && !u.searchParams.has("at")) u.searchParams.set("at", String(Date.now() + offset));
+    if ((!offset && !opts.fakeClock) || !u.pathname.startsWith("/api/")) return route.continue();
+    if (u.pathname === "/api/now" && !u.searchParams.has("at")) u.searchParams.set("at", String(Date.now() + offset + ahead));
     // A request still in flight when the test closes its context rejects here; that's not a failure.
     try {
       const resp = await route.fetch({ url: u.toString() });
       let body = await resp.text();
       try {
         const o = JSON.parse(body);
-        if (typeof o.now === "number") o.now += offset;
+        if (typeof o.now === "number") o.now += offset + ahead;
         body = JSON.stringify(o);
       } catch {}
       await route.fulfill({ response: resp, body });
@@ -96,8 +90,15 @@ async function open(opts: { prefs?: object; at?: number; size?: [number, number]
   page.on("pageerror", (e: Error) => errors.push(e.message));
   if (opts.fakeClock) await page.clock.install();
   await page.goto(BASE + "/");
-  await page.waitForFunction("document.getElementById('bug').textContent.length > 0");
-  return { page, ctx, requests, errors };
+  // The first tune has finished (its render would hide a card or overlay opened sooner).
+  await page.evaluate(`import("/js/player.js").then((m) => void (window.__tv = m.tv))`);
+  await page.waitForFunction(`!!window.__tv.info && document.getElementById("bug").textContent.length > 0`);
+  /** Move the page's fake clock (fakeClock only), keeping the server's times in step. */
+  const advance = async (ms: number) => {
+    ahead += ms;
+    await page.clock.runFor(ms);
+  };
+  return { page, ctx, requests, errors, advance };
 }
 
 const js = (page: any, expr: string) => page.evaluate(expr);
@@ -230,16 +231,20 @@ describe("station breaks", { skip }, () => {
   it("a long break rotates through what's on, from the local clock only", async () => {
     const brk = await findLongBreak();
     assert.ok(brk, "demo lineup should have a long break in the next 12 hours");
-    const { page, ctx, requests, errors } = await open({ at: brk.at, prefs: { startup: "last" }, fakeClock: true });
+    const { page, ctx, requests, errors, advance } = await open({ at: brk.at, prefs: { startup: "last" }, fakeClock: true });
     await js(page, `localStorage.setItem("debridtv.lastChannel", ${JSON.stringify(brk.ch.id)})`);
     await page.reload();
     await page.waitForSelector(".card.brk .brk-hero");
     assert.match(await js(page, `document.querySelector(".brk-label").textContent`), /Up next/);
-    const seen = new Set<string>();
-    for (let i = 0; i < 4; i++) {
-      await page.clock.runFor(10_500);
-      seen.add(await js(page, `document.querySelector(".brk-stage .brk-label").textContent`));
-    }
+    // Every slide that goes up is recorded, so a busy machine that lets the clock run
+    // on between samples can't skip one unseen.
+    await js(page, `(() => {
+      window.__slides = [];
+      const card = document.getElementById("card");
+      new MutationObserver(() => window.__slides.push(card.querySelector(".brk-stage .brk-label")?.textContent ?? "")).observe(card, { childList: true, subtree: true });
+    })()`);
+    for (let i = 0; i < 5; i++) await advance(10_500);
+    const seen = new Set<string>(await js(page, `window.__slides`));
     assert.ok([...seen].some((s) => /On now elsewhere/.test(s)), `slides seen: ${[...seen].join(" | ")}`);
     assert.ok([...seen].some((s) => /^Later on/.test(s)));
     assert.equal(requests.filter((p) => p.startsWith("/media") || p === "/api/prefetch").length, 0);
@@ -454,7 +459,9 @@ describe("locked channels (N-06b)", { skip }, () => {
       } catch {}
     });
     await o.page.reload();
-    await o.page.waitForFunction("document.getElementById('bug').textContent.length > 0");
+    // The first tune has finished (its render would hide a card or overlay opened sooner).
+    await o.page.evaluate(`import("/js/player.js").then((m) => void (window.__tv = m.tv))`);
+    await o.page.waitForFunction(`!!window.__tv.info && document.getElementById("bug").textContent.length > 0`);
     return { ...o, unlocks };
   }
 
