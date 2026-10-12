@@ -206,6 +206,7 @@ function render(ch, info, my, silent, hold = 0, seek = false) {
     playMedia(ch, info, my, null, hold);
   }
   setBanner(ch, info, tv.route);
+  timelineChanged();
   if (!silent || newProgram) showBanner();
   if (silent) osdHide();
 }
@@ -546,7 +547,65 @@ function setShift(ms) {
   if (next === shift.ms) return;
   shift.ms = next;
   dispatchEvent(new CustomEvent("debridtv:timeshift", { detail: { shiftMs: next } }));
+  timelineChanged();
 }
+
+/**
+ * Where the picture is, for a scrub bar. File times in ms:
+ *   mode    "live" (on the station clock), "shifted" (behind or ahead), "ondemand"
+ *   posMs   the picture's position in the file
+ *   durMs   the file's length
+ *   liveMs  where the station is in this file right now (outside 0–durMs when the
+ *           live point is in another program); null in On Demand
+ *   minMs, maxMs  the range seekTo() accepts: the whole file, on any channel
+ * Null when nothing with a timeline is on screen (a card, off air, locked).
+ */
+export function timeline() {
+  if (tv.onDemand) {
+    const durMs = tv.onDemand.durationMs || 0;
+    return { mode: "ondemand", posMs: tv.onDemand.positionMs, durMs, liveMs: null, minMs: 0, maxMs: durMs, itemId: tv.onDemand.itemId };
+  }
+  const info = tv.info;
+  const a = info?.airing;
+  if (!a || info.segment?.kind !== "program" || info.fileOffsetMs == null || !a.itemId) return null;
+  const posMs = filePos() ?? info.fileOffsetMs + (now() - info.now);
+  const durMs = a.durationMs || (media?.itemId === a.itemId && Number.isFinite(video.duration) ? video.duration * 1000 : 0);
+  return { mode: shift.ms ? "shifted" : "live", posMs, durMs, liveMs: posMs - shift.ms, minMs: 0, maxMs: durMs, itemId: a.itemId };
+}
+
+let lastMode = null;
+/** "debridtv:timeline" ({ mode }) whenever live / shifted / ondemand / nothing changes. */
+function timelineChanged() {
+  const mode = tv.onDemand ? "ondemand" : tv.info?.segment?.kind === "program" && tv.info?.airing?.itemId ? (shift.ms ? "shifted" : "live") : null;
+  if (mode === lastMode) return;
+  lastMode = mode;
+  dispatchEvent(new CustomEvent("debridtv:timeline", { detail: { mode } }));
+}
+addEventListener("debridtv:ondemand", timelineChanged);
+
+/** Jump to a point in the file on screen (a scrub bar). On a channel this time-shifts. */
+export function seekTo(fileMs) {
+  const t = timeline();
+  if (!t || !Number.isFinite(fileMs)) return;
+  seekBy(clamp(fileMs, t.minMs, Math.max(t.minMs, t.maxMs - 1000)) - t.posMs);
+}
+
+// Playing a shifted channel faster or slower (the speed menu) moves the picture away
+// from a fixed shift. While the speed isn't 1×, the shift follows the picture once a
+// second, so the banner, boundaries and Back to live stay right. Compatibility mode
+// uses its own 1.1× to catch up to live (alignLive); that isn't the viewer's speed.
+setInterval(() => {
+  const m = media;
+  const info = tv.info;
+  if (!m || m.route !== "direct" || tv.onDemand || tv.paused || video.playbackRate === 1 || m.info !== info || info?.segment?.kind !== "program") return;
+  const pos = filePos();
+  if (pos == null || info.segment.fileFrom == null) return;
+  const t = now();
+  setShift(info.segment.start + (pos - info.segment.fileFrom) - t);
+  info.fileOffsetMs = pos;
+  info.now = t;
+  scheduleBoundary(tv.current, info.segment.end);
+}, 1000);
 
 /** A paused channel counts the pause as time behind the station, then plays on. */
 function unpauseLive() {
