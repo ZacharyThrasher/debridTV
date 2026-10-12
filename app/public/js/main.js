@@ -22,7 +22,7 @@ applyPrefs();
 whereAmI().then((w) => (document.documentElement.dataset.where = w));
 applyVolume();
 // The demo picture draws text on a canvas, which only uses fonts already loaded.
-for (const f of ['20px "Instrument Serif"', '500 20px "IBM Plex Mono"', "600 20px Inter"]) document.fonts?.load(f).catch(() => {});
+for (const f of ['700 20px "Archivo"', '600 20px "Archivo"']) document.fonts?.load(f).catch(() => {});
 
 let boot = null;
 
@@ -242,10 +242,11 @@ function showWelcome() {
   const el = document.getElementById("welcome");
   const demo = boot?.demo;
   el.innerHTML = html`<div class="welcome-card">
-    <div class="brand" style="justify-content:center">Debrid<i>TV</i></div>
-    <h1>Your library,<br><span>always on the air</span></h1>
-    <p>Your shows and films play on channels around the clock. Browse the guide, drop into whatever's on, or pick something On Demand.
-      ${demo ? "You're watching demo channels with made-up shows. Connect TorBox, Real-Debrid or a folder in Settings to put your own library on the air." : ""}</p>
+    <div class="brand">Debrid<i>TV</i></div>
+    <h1>${demo ? "These are demo channels." : "Your channels are on."}</h1>
+    <p>${demo
+      ? "Made-up shows play around the clock so you can try the guide and On Demand. Connect TorBox, Real-Debrid or a folder and your own library takes their place."
+      : "Your shows and films play around the clock. Open the guide to see what's on, or pick something On Demand."}</p>
     <div class="keys tv-only">
       <div><span class="kk"><kbd>▲</kbd><kbd>▼</kbd></span><span>change channel</span></div>
       <div><span class="kk"><kbd>OK</kbd></span><span>program guide</span></div>

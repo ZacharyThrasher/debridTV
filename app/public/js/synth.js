@@ -1,5 +1,5 @@
 // Demo programs. Demo items have no media at all, so the picture is painted here:
-// a scene chosen from the show's genre, animated purely from the *file position*
+// a program slate tinted by the show's genre, kept in step with the *file position*
 // (tune away and back and you land exactly where the station is), with a burned-in
 // timecode so the station clock is visible on screen. Zero provider traffic.
 
@@ -13,17 +13,6 @@ function hash(s) {
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return h >>> 0;
 }
-function rng(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 // Each genre leans to a colour family; the show picks a spot in it. Muted on purpose:
 // this stands in for a picture, it shouldn't shout over the guide.
 const GENRE_HUE = { "Sci-fi": [190, 250], "Newsroom drama": [200, 230], Mystery: [220, 280], Nature: [90, 170], Cooking: [15, 45], Sitcom: [25, 55], Cartoon: [330, 400] };
@@ -71,130 +60,80 @@ function loop() {
 }
 
 function draw() {
-  const { airing, scene, hue, seed } = state;
-  const W = canvas.width, H = canvas.height;
   const fileMs = state.fileAtStart + (performance.now() - state.t0);
-  const t = fileMs / 1000;
   ctx.save();
-  drawField(W, H, t, hue, seed);
+  drawSlate(canvas.width, canvas.height, fileMs);
   ctx.restore();
-
-  // Movies get a letterbox, like a film on broadcast TV.
-  if (airing.kind === "movie") {
-    ctx.fillStyle = "#000";
-    const bar = H * 0.1;
-    ctx.fillRect(0, 0, W, bar);
-    ctx.fillRect(0, H - bar, W, bar);
-  }
-  overlay(W, H, fileMs);
+  overlay(canvas.width, canvas.height, fileMs);
 }
 
 // ------------------------------------------------------------------ the picture
 
-// A slow colour field: three soft lights drifting over a dark ground, a faint horizon
-// and film grain. It moves with the file position, so the station keeps visible time.
-let grain = null;
-function grainTile() {
-  if (grain) return grain;
-  grain = document.createElement("canvas");
-  grain.width = grain.height = 160;
-  const g = grain.getContext("2d");
-  const img = g.createImageData(160, 160);
-  const r = rng(7);
-  for (let i = 0; i < img.data.length; i += 4) {
-    const v = Math.floor(r() * 255);
-    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-    img.data[i + 3] = 255;
-  }
-  g.putImageData(img, 0, 0);
-  return grain;
-}
+// A program slate: the flat card a station runs ahead of a tape. Title, episode and
+// running time, a strip of colour bars, and a rule that fills as the program plays, so
+// the station keeps visible time. No media, so nothing pretends to be a picture.
+const BARS = ["#bfbfbf", "#bfbf00", "#00bfbf", "#00bf00", "#bf00bf", "#bf0000", "#0000bf"]; // SMPTE, 75%
 
-function drawField(W, H, t, hue, seed) {
-  const r = rng(seed);
-  ctx.fillStyle = `hsl(${hue} 22% 8%)`;
+function drawSlate(W, H, fileMs) {
+  const { airing, hue } = state;
+  const u = H / 60;
+  const pad = u * 5;
+  ctx.fillStyle = `hsl(${hue} 12% 10%)`;
   ctx.fillRect(0, 0, W, H);
-  ctx.globalCompositeOperation = "lighter";
-  for (let i = 0; i < 3; i++) {
-    const ph = r() * Math.PI * 2;
-    const sp = 0.012 + r() * 0.02;
-    const x = W * (0.2 + 0.6 * r() + 0.18 * Math.sin(t * sp + ph));
-    const y = H * (0.25 + 0.45 * r() + 0.12 * Math.cos(t * sp * 0.8 + ph));
-    const rad = Math.max(W, H) * (0.38 + 0.22 * r());
-    const h = hue + (i - 1) * (22 + r() * 18);
-    const g = ctx.createRadialGradient(x, y, 0, x, y, rad);
-    g.addColorStop(0, `hsl(${h} ${38 + i * 6}% ${34 - i * 4}% / .55)`);
-    g.addColorStop(0.55, `hsl(${h} 35% 20% / .18)`);
-    g.addColorStop(1, `hsl(${h} 30% 10% / 0)`);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, W, H);
+  // colour bars along the top edge
+  const bh = Math.max(2, u * 0.5);
+  BARS.forEach((c, i) => ((ctx.fillStyle = c), ctx.fillRect((i * W) / 7, 0, W / 7 + 1, bh)));
+
+  ctx.textBaseline = "alphabetic";
+  const left = pad;
+  const maxW = W - pad * 2;
+  // kind and genre, small
+  ctx.font = `600 ${u * 1.5}px "Archivo", sans-serif`;
+  ctx.fillStyle = "rgba(238,240,241,.55)";
+  const kind = airing.kind === "movie" ? "Feature" : airing.kind === "episode" ? "Series" : "Program";
+  ctx.fillText([kind, airing.genre, airing.rating].filter(Boolean).join("  ·  "), left, H * 0.36);
+  // title, condensed and big; shrinks to fit
+  let size = u * 7;
+  const setTitle = () => (ctx.font = `700 condensed ${size}px "Archivo", sans-serif`);
+  setTitle();
+  while (size > u * 3 && ctx.measureText(airing.title).width > maxW) (size -= u * 0.25), setTitle();
+  ctx.fillStyle = "#eef0f1";
+  ctx.fillText(airing.title, left - u * 0.2, H * 0.36 + size * 1.02);
+  // episode line
+  ctx.font = `500 ${u * 2}px "Archivo", sans-serif`;
+  ctx.fillStyle = "rgba(238,240,241,.75)";
+  const sub = [airing.episode, airing.subtitle ? `“${airing.subtitle}”` : null, airing.year].filter(Boolean).join("   ");
+  ctx.fillText(sub, left, H * 0.36 + size * 1.02 + u * 3.4);
+  // running rule
+  const dur = airing.durationMs || 0;
+  const y = H * 0.36 + size * 1.02 + u * 6;
+  ctx.fillStyle = "rgba(238,240,241,.16)";
+  ctx.fillRect(left, y, maxW, Math.max(1, u * 0.15));
+  if (dur > 0) {
+    ctx.fillStyle = "#f0402f";
+    ctx.fillRect(left, y, maxW * Math.min(1, Math.max(0, fileMs / dur)), Math.max(2, u * 0.3));
   }
-  ctx.globalCompositeOperation = "source-over";
-  // a horizon of light, low in the frame
-  const hz = H * (0.66 + 0.01 * Math.sin(t * 0.05));
-  const line = ctx.createLinearGradient(0, hz - H * 0.05, 0, hz + H * 0.05);
-  line.addColorStop(0, "rgba(255,240,220,0)");
-  line.addColorStop(0.5, `hsl(${hue + 20} 50% 80% / .07)`);
-  line.addColorStop(1, "rgba(255,240,220,0)");
-  ctx.fillStyle = line;
-  ctx.fillRect(0, hz - H * 0.05, W, H * 0.1);
-  // vignette
-  const v = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.75);
-  v.addColorStop(0, "rgba(0,0,0,0)");
-  v.addColorStop(1, "rgba(0,0,0,.55)");
-  ctx.fillStyle = v;
-  ctx.fillRect(0, 0, W, H);
-  // grain, moved every frame
-  ctx.globalAlpha = 0.05;
-  ctx.globalCompositeOperation = "overlay";
-  const tile = grainTile();
-  const ox = Math.floor((t * 977) % 160), oy = Math.floor((t * 613) % 160);
-  ctx.translate(-ox, -oy);
-  ctx.fillStyle = ctx.createPattern(tile, "repeat");
-  ctx.fillRect(0, 0, W + 160, H + 160);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalCompositeOperation = "source-over";
-  ctx.globalAlpha = 1;
 }
 
 // ------------------------------------------------------------------ overlay
 
 function overlay(W, H, fileMs) {
-  const { airing } = state;
   const u = H / 60;
-  const pad = u * 3;
+  const pad = u * 5;
   // Burned-in timecode: file position, so you can watch the station keep time.
   const fr = Math.floor((fileMs % 1000) / (1000 / 30));
   const tc = `${fmt(fileMs)}:${String(fr).padStart(2, "0")}`;
-  ctx.font = `500 ${u * 1.5}px "IBM Plex Mono", monospace`;
-  ctx.textBaseline = "alphabetic";
   // Bottom left, like a VHS counter, so the top-left rating card never sits on it.
   // The info banner covers that corner, so the counter steps aside while it's up.
-  const bannerUp = document.body.classList.contains("banner-open");
-  const base = H - pad;
-  if (bannerUp) ctx.globalAlpha = 0;
-  ctx.fillStyle = "rgba(241,236,226,.78)";
+  if (document.body.classList.contains("banner-open")) return;
+  const base = H - u * 3.4;
+  ctx.textBaseline = "alphabetic";
+  ctx.font = `600 ${u * 1.6}px "Archivo", sans-serif`;
+  ctx.fillStyle = "rgba(238,240,241,.8)";
   ctx.fillText(tc, pad, base);
-  ctx.font = `500 ${u * 0.95}px Inter, sans-serif`;
-  ctx.fillStyle = "rgba(241,236,226,.5)";
-  ctx.fillText("Demo program · no media is streamed", pad, base - u * 2.3);
-  ctx.globalAlpha = 1;
-
-  // Lower third: shown at the top of the program and for a few seconds after tuning in.
-  // Lower third: only at the top of a program, like a real broadcast. On tune-in the
-  // info banner already says what this is.
-  const show = fileMs < 10_000 ? Math.min(1, (10_000 - fileMs) / 600) : 0;
-  if (show <= 0 || document.body.classList.contains("banner-open")) return;
-  ctx.globalAlpha = Math.min(1, show);
-  const y = H * (airing.kind === "movie" ? 0.78 : 0.8);
-  ctx.font = `400 ${u * 4.6}px "Instrument Serif", Georgia, serif`;
-  ctx.fillStyle = "#f1ece2";
-  ctx.fillText(airing.title, pad, y);
-  ctx.font = `500 ${u * 1.5}px Inter, sans-serif`;
-  ctx.fillStyle = "rgba(241,236,226,.75)";
-  const sub = [airing.episode, airing.subtitle ? `“${airing.subtitle}”` : null, airing.year].filter(Boolean).join("   ");
-  ctx.fillText(sub, pad + u * 0.1, y + u * 2.4);
-  ctx.globalAlpha = 1;
+  ctx.font = `500 ${u * 1.1}px "Archivo", sans-serif`;
+  ctx.fillStyle = "rgba(238,240,241,.5)";
+  ctx.fillText("Demo program. No media is streamed.", pad, base - u * 2.4);
 }
 
 function fmt(ms) {

@@ -309,7 +309,7 @@ describe("themes (N-11b)", { skip }, () => {
     assert.equal(r.ok.colors.bg, "#000000");
     assert.equal(r.ok.colors.panel, "#112233");
     assert.equal(r.ok.colors.ink, "#ffffff");
-    assert.equal(r.ok.colors.accent, "#ff5b29", "an invalid colour falls back, never reaches CSS");
+    assert.equal(r.ok.colors.accent, "#f0402f", "an invalid colour falls back, never reaches CSS");
     assert.equal(r.ok.name, "bX/b");
     assert.equal(r.ok.cellStrength, 100);
     assert.match(r.bad, /something else/);

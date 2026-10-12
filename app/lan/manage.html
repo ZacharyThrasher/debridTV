@@ -9,21 +9,21 @@
   <link rel="stylesheet" href="/fonts/fonts.css" />
   <style>
     :root {
-      --bg: #0c0b0a; --ink: #f1ece2; --dim: #b3ac9f; --panel: #131210; --panel-2: #1b1a17;
-      --line: rgba(241, 236, 226, 0.12); --amber: #f1ece2; --magenta: #f1ece2; --cyan: #f1ece2; --accent: #ff5b29; --ok: #8ccf9f; --bad: #ff7a66;
-      --display: "Instrument Serif", Georgia, serif;
-      --body: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-      --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+      --bg: #0b0c0d; --ink: #eef0f1; --dim: #a8aeb3; --panel: #121415; --panel-2: #1a1d1f;
+      --line: rgba(238,240,241, 0.12); --amber: #eef0f1; --magenta: #eef0f1; --cyan: #eef0f1; --accent: #f0402f; --ok: #7fcf96; --bad: #ff7466;
+      --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+      --body: "Archivo", "Helvetica Neue", Arial, sans-serif;
+      --mono: "Archivo", "Helvetica Neue", Arial, sans-serif;
     }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--body); }
     .wrap { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
     a.back { color: var(--dim); text-decoration: none; font-size: 14px; }
     a.back:hover, a.back:focus { color: var(--amber); }
-    h1 { font-family: var(--display); font-weight: 400; font-size: 44px; margin: 8px 0 4px; letter-spacing: .01em; }
+    h1 { font-family: var(--display); font-weight: 700; font-stretch: 78%; font-size: 44px; margin: 8px 0 4px; letter-spacing: .01em; }
     .sub { color: var(--dim); margin: 0 0 24px; }
-    section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
-    h2 { font-family: var(--display); font-weight: 400; font-size: 24px; margin: 0 0 8px; }
+    section { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 20px; margin-bottom: 16px; }
+    h2 { font-family: var(--display); font-weight: 700; font-stretch: 78%; font-size: 24px; margin: 0 0 8px; }
     .row { display: flex; align-items: center; gap: 16px; justify-content: space-between; flex-wrap: wrap; }
     .muted { color: var(--dim); }
     .switch { position: relative; width: 64px; height: 34px; flex: none; }
@@ -33,16 +33,16 @@
     .switch input:checked + span { background: var(--ink); }
     .switch input:checked + span::after { transform: translateX(30px); background: #fff; }
     .switch input:focus-visible + span { outline: 3px solid var(--amber); outline-offset: 2px; }
-    .url { font-family: var(--mono); font-size: 34px; color: var(--cyan); letter-spacing: .02em; word-break: break-all; user-select: all; }
+    .url { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; font-size: 34px; color: var(--cyan); letter-spacing: .02em; word-break: break-all; user-select: all; }
     button {
       font: 600 15px var(--body); color: var(--ink); background: var(--panel-2); border: 1px solid var(--line);
-      border-radius: 10px; padding: 9px 16px; cursor: pointer;
+      border-radius: 3px; padding: 9px 16px; cursor: pointer;
     }
     button:hover, button:focus-visible { border-color: var(--amber); outline: none; }
     button.primary { background: var(--ink); color: var(--bg); border: 0; }
     button.danger:hover, button.danger:focus-visible { border-color: var(--bad); color: var(--bad); }
-    .code { font-family: var(--mono); font-size: 96px; line-height: 1; letter-spacing: .14em; color: var(--amber);  margin: 8px 0; }
-    .bar { height: 4px; background: var(--panel-2); border-radius: 4px; overflow: hidden; margin: 10px 0 14px; }
+    .code { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; font-size: 96px; line-height: 1; letter-spacing: .14em; color: var(--amber);  margin: 8px 0; }
+    .bar { height: 4px; background: var(--panel-2); border-radius: 0; overflow: hidden; margin: 10px 0 14px; }
     .bar i { display: block; height: 100%; background: var(--amber); transition: width 1s linear; }
     #devices { list-style: none; padding: 0; margin: 8px 0 0; }
     #devices li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }

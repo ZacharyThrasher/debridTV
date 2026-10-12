@@ -415,9 +415,9 @@ function startScramble(ch, airing) {
   s.fillRect(0, H * 0.34, W, H * 0.34);
   s.fillStyle = "#fff";
   s.textAlign = "center";
-  s.font = '34px "Instrument Serif", Georgia, serif';
+  s.font = '700 condensed 32px "Archivo", sans-serif';
   s.fillText(String(airing?.title ?? ch.name).slice(0, 26), W / 2, H * 0.52);
-  s.font = '500 18px "IBM Plex Mono", monospace';
+  s.font = '600 17px "Archivo", sans-serif';
   s.fillText(`${ch.number} ${ch.name}`.toUpperCase(), W / 2, H * 0.64);
   const ctx = cv.getContext("2d");
   const calm = document.body.classList.contains("calm") || matchMedia("(prefers-reduced-motion: reduce)").matches;

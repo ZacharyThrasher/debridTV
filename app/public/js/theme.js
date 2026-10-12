@@ -28,8 +28,8 @@ const SLOTS = [
 
 const BUILTIN = {
   // The ids stay as they were so saved prefs keep working; tokens.css draws them.
-  midnight: { name: "Night", colors: { bg: "#0c0b0a", panel: "#131210", ink: "#f1ece2", accent: "#ff5b29", highlight: "#f1ece2", accent2: "#e9c46a", cell: "#f1ece2", osd: "#f1ece2" }, cellStrength: 6 },
-  daylight: { name: "Paper", colors: { bg: "#e9e4d8", panel: "#f6f2e9", ink: "#1a1815", accent: "#c63d0f", highlight: "#1a1815", accent2: "#8a6a12", cell: "#1a1815", osd: "#f1ece2" }, cellStrength: 6 },
+  midnight: { name: "Night", colors: { bg: "#0b0c0d", panel: "#121415", ink: "#eef0f1", accent: "#f0402f", highlight: "#eef0f1", accent2: "#e8c547", cell: "#eef0f1", osd: "#eef0f1" }, cellStrength: 6 },
+  daylight: { name: "Paper", colors: { bg: "#e4e5e3", panel: "#f7f7f5", ink: "#141516", accent: "#d0281a", highlight: "#141516", accent2: "#8a6d00", cell: "#141516", osd: "#eef0f1" }, cellStrength: 6 },
   cable92: { name: "Cable '92", colors: { bg: "#04164d", panel: "#071d63", ink: "#ffffff", accent: "#ffe14d", highlight: "#c8d4ff", accent2: "#ffe14d", cell: "#2850c8", osd: "#ffffff" }, cellStrength: 60 },
 };
 
@@ -141,9 +141,9 @@ export function themeVars(t) {
     "--osd": c.osd,
     "--cell": mix(c.cell, s, c.panel),
     "--cell-now": mix(c.cell, Math.min(100, Math.round(s * 1.7 + 4)), c.panel),
-    "--ok": light ? "#2f7a45" : "#8ccf9f",
-    "--warn": light ? "#8a6a12" : "#e9c46a",
-    "--bad": light ? "#b3261e" : "#ff7a66",
+    "--ok": light ? "#2f7a45" : "#7fcf96",
+    "--warn": light ? "#8a6d00" : "#e8c547",
+    "--bad": light ? "#b3261e" : "#ff7466",
   };
 }
 
