@@ -50,7 +50,7 @@ export class RealDebridClient implements ProviderClient {
       const q = new URLSearchParams({ limit: "500", page: String(page) });
       const res = await fetch(`${this.base}/rest/1.0/torrents?${q}`, { headers: this.auth(), signal });
       if (res.status === 204) break;
-      if (!res.ok) throw classify(res.status, await res.text());
+      if (!res.ok) throw classify(res.status, await res.text(), res.headers.get("retry-after"));
       const rows = (await res.json()) as Array<{ id: string; filename: string; bytes: number; status: string; links: string[] }>;
       for (const r of rows)
         out.push({
@@ -70,7 +70,7 @@ export class RealDebridClient implements ProviderClient {
   async expand(torrentId: string, signal?: AbortSignal): Promise<InventoryFile[]> {
     this.counter.add("rd.torrents.info");
     const res = await fetch(`${this.base}/rest/1.0/torrents/info/${encodeURIComponent(torrentId)}`, { headers: this.auth(), signal });
-    if (!res.ok) throw classify(res.status, await res.text());
+    if (!res.ok) throw classify(res.status, await res.text(), res.headers.get("retry-after"));
     const t = (await res.json()) as {
       status: string;
       files: Array<{ id: number; path: string; bytes: number; selected: number }>;
@@ -92,7 +92,7 @@ export class RealDebridClient implements ProviderClient {
       body: new URLSearchParams({ link: ref }),
       signal,
     });
-    if (!res.ok) throw classify(res.status, await res.text());
+    if (!res.ok) throw classify(res.status, await res.text(), res.headers.get("retry-after"));
     const body = (await res.json()) as { download: string };
     // R02 documents no lifetime for unrestricted links.
     return { url: body.download, expiresAtMs: null, obtainedAtMs: Date.now() };
@@ -102,7 +102,7 @@ export class RealDebridClient implements ProviderClient {
   async account(signal?: AbortSignal): Promise<AccountInfo> {
     this.counter.add("rd.user");
     const res = await fetch(`${this.base}/rest/1.0/user`, { headers: this.auth(), signal });
-    if (!res.ok) throw classify(res.status, await res.text());
+    if (!res.ok) throw classify(res.status, await res.text(), res.headers.get("retry-after"));
     const u = (await res.json()) as { type?: string; premium?: number; expiration?: string | null };
     const until = u.expiration ? Date.parse(u.expiration) : NaN;
     return {
@@ -136,7 +136,7 @@ export class TorBoxClient implements ProviderClient {
   async inventory(signal?: AbortSignal): Promise<InventoryFile[]> {
     this.counter.add("tb.mylist");
     const res = await fetch(`${this.base}/v1/api/torrents/mylist`, { headers: this.auth(), signal });
-    if (!res.ok) throw classify(res.status, await res.text());
+    if (!res.ok) throw classify(res.status, await res.text(), res.headers.get("retry-after"));
     const body = (await res.json()) as {
       data: Array<{ id: number; download_finished: boolean; files: Array<{ id: number; name: string; size: number }> }>;
     };
@@ -156,7 +156,7 @@ export class TorBoxClient implements ProviderClient {
   async resolve(ref: string, signal?: AbortSignal): Promise<PlaybackGrant> {
     this.counter.add("tb.requestdl");
     const res = await fetch(this.requestUrl(ref, false), { headers: this.auth(), signal });
-    if (!res.ok) throw classify(res.status, await res.text());
+    if (!res.ok) throw classify(res.status, await res.text(), res.headers.get("retry-after"));
     const body = (await res.json()) as { data: string };
     // SDK text conflicts on 1h vs 3h link windows (handoff §5.2): do not trust either.
     return { url: body.data, expiresAtMs: null, obtainedAtMs: Date.now() };
@@ -166,7 +166,7 @@ export class TorBoxClient implements ProviderClient {
   async account(signal?: AbortSignal): Promise<AccountInfo> {
     this.counter.add("tb.user");
     const res = await fetch(`${this.base}/v1/api/user/me`, { headers: this.auth(), signal });
-    if (!res.ok) throw classify(res.status, await res.text());
+    if (!res.ok) throw classify(res.status, await res.text(), res.headers.get("retry-after"));
     const d = ((await res.json()) as { data?: { plan?: number; premium_expires_at?: string | null } }).data ?? {};
     const until = d.premium_expires_at ? Date.parse(d.premium_expires_at) : NaN;
     const untilMs = Number.isFinite(until) ? until : null;

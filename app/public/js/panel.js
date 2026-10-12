@@ -150,7 +150,7 @@ async function sources() {
     <p class="lead">A channel can only schedule a program once its exact running time is known. DebridTV learns it by reading a few kilobytes from the start of each file. It never downloads whole files, and it only runs when you start it.</p>
     <div class="src">
       ${sc.running
-        ? html`<div class="src-head"><b>${sc.pausedUntil ? "Paused: the provider asked DebridTV to slow down" : html`Scanning${sc.current ? html`: ${sc.current}` : ""}`}</b><span class="muted">${sc.done} / ${sc.total}</span></div>
+        ? html`<div class="src-head"><b>${sc.pausedUntil ? `Paused: ${sc.pausedReason ?? "the provider asked DebridTV to slow down"}` : html`Scanning${sc.current ? html`: ${sc.current}` : ""}`}</b><span class="muted">${sc.done} / ${sc.total}</span></div>
             <div class="progressbar"><i style="width:${pct}%"></i></div>
             <div class="row-actions"><button class="btn" data-scan-stop>Stop</button><span class="muted">${sc.pausedUntil ? `Resuming in ${Math.max(0, Math.ceil((sc.pausedUntil - Date.now()) / 1000))} s` : `Pace: ${sc.perMinute} files a minute`}</span></div>`
         : html`<div class="src-head"><b>${sc.needed ? `${sc.needed} files still need a running time` : "Every file has a running time"}</b></div>

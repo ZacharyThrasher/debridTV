@@ -30,6 +30,8 @@ export interface AccountInfo {
 export class ProviderError extends Error {
   readonly kind: "rate-limited" | "auth" | "account" | "gone" | "not-found" | "not-ready" | "policy" | "transient" | "unknown";
   readonly status: number;
+  /** The provider's own Retry-After, when it sent one. */
+  retryAfterMs?: number;
   constructor(kind: ProviderError["kind"], status: number, message: string) {
     super(message);
     this.kind = kind;
@@ -102,7 +104,21 @@ export function rdRefusedTag(name: string): string | null {
   return m[0].replace(/^p\./i, "");
 }
 
-export function classify(status: number, body: string): ProviderError {
+/** Retry-After as milliseconds from now: seconds, or an HTTP date. */
+export function retryAfterMs(header: string | null | undefined, now = Date.now()): number | undefined {
+  if (!header) return undefined;
+  const secs = Number(header);
+  const ms = Number.isFinite(secs) ? secs * 1000 : Date.parse(header) - now;
+  return Number.isFinite(ms) && ms > 0 ? ms : undefined;
+}
+
+export function classify(status: number, body: string, retryAfter?: string | null): ProviderError {
+  const e = classifyBody(status, body);
+  e.retryAfterMs = retryAfterMs(retryAfter);
+  return e;
+}
+
+function classifyBody(status: number, body: string): ProviderError {
   let parsed: { error_code?: unknown; error?: unknown } = {};
   try {
     const j: unknown = JSON.parse(body);

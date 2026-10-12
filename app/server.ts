@@ -627,8 +627,9 @@ async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, i
       return json(res, 451, { error: "policy", message: `${PROVIDER_NAMES[it.provider]} refused this file. DebridTV won't retry it or fetch it elsewhere.` });
     }
     if (e instanceof ProviderError && (e.kind === "auth" || e.kind === "account")) void library.checkAccount(it.provider as RemoteProvider).catch(() => {});
-    // A rate limit is about the account, not this file: don't mark the file.
-    if (!(e instanceof ProviderError && e.kind === "rate-limited")) library.markAvailability(id, "unavailable", plainError(e));
+    // A rate limit or a provider outage is about the account, not this file: don't mark the file, and make the scan wait.
+    if (e instanceof ProviderError && (e.kind === "rate-limited" || e.kind === "transient")) library.playbackPushedBack(it.provider as RemoteProvider, e.kind === "rate-limited" ? "rate-limited" : "provider-down", e.retryAfterMs);
+    else library.markAvailability(id, "unavailable", plainError(e));
     meters.log("error", `${label}: ${plainError(e)}`);
     json(res, 502, { error: plainError(e) });
   }

@@ -49,6 +49,12 @@ export interface MockOptions {
   tbPerMinutePerEndpoint?: number;
   /** Account facts and key check. Without it any key is accepted. */
   account?: MockAccount;
+  /** Real-Debrid: while this returns true, link requests answer 503 with no error code (as seen live under load). */
+  rdDown?: () => boolean;
+  /** Sent as Retry-After with those 503s. */
+  rdDownRetryAfterSec?: number;
+  /** Those 503s carry this Real-Debrid error code (an answer about the file, e.g. 19 hoster_unavailable). */
+  rdDownCode?: number;
 }
 
 export interface ServerCounters {
@@ -169,6 +175,10 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
         const f = files.get(ref);
         if (!f) return json(res, 404, { error: "unknown_ressource", error_code: 20 });
         if (f.policy) return json(res, 503, { error: "infringing_file", error_code: 35 });
+        if (opts.rdDown?.()) {
+          if (opts.rdDownRetryAfterSec) res.setHeader("retry-after", String(opts.rdDownRetryAfterSec));
+          return json(res, 503, opts.rdDownCode ? { error: "hoster_unavailable", error_code: opts.rdDownCode } : { error: "service_unavailable" });
+        }
         json(res, 200, { id: f.ref, filename: f.name, filesize: f.bytes, download: issueGrant(ref) });
       });
     }
