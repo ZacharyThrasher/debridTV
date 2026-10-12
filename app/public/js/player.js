@@ -1049,59 +1049,30 @@ initSignOff({
 
 // ------------------------------------------------------------------ control bar
 
-// What the YouTube-style bar (controls.js, docs/parity/player.md) reads and calls.
-// Seeking on a channel is the time shift above (ADR-0006); the bar only adds seekTo().
+// What the YouTube-style bar (controls.js, docs/parity/player.md) calls besides the
+// time shift's timeline(), seekTo(), seekBy(), skipProgram() and backToLive() above.
 
 /**
- * Where playback is, in file time:
- * { mode: "live" | "shifted" | "ondemand", itemId, posMs, durMs, liveMs, minMs, maxMs, route, paused }
- * liveMs is the station's live point inside this file (null in On Demand, or when the
- * live point is in another program); minMs..maxMs is what seekTo can reach without
- * changing program. null when nothing with a timeline is on.
+ * Playback speed (pitch kept): On Demand, and a time-shifted channel in direct play
+ * (the shift follows the picture, see above). Live stays 1×; compatibility mode drives
+ * its own catch-up speed.
  */
-export function timeline() {
-  if (tv.onDemand) {
-    const d = tv.onDemand.durationMs || 0;
-    return { mode: "ondemand", itemId: tv.onDemand.itemId, posMs: tv.onDemand.positionMs, durMs: d, liveMs: null, minMs: 0, maxMs: d ? d - 1000 : 0,
-      route: tv.route, paused: tv.paused };
-  }
-  const info = tv.info, a = info?.airing;
-  if (!a || info.segment?.kind !== "program" || tv.route === "card" || a.itemId == null || info.fileOffsetMs == null) return null;
-  // Where the station clock (shifted by the viewer) says the picture is; the picture itself when it has one.
-  const expected = info.fileOffsetMs + (now() - info.now);
-  const posMs = filePos() ?? expected;
-  const d = a.durationMs || 0;
-  const live = expected - shift.ms;
-  const liveMs = live >= 0 && (!d || live <= d) ? live : null;
-  return { mode: shift.ms ? "shifted" : "live", itemId: a.itemId, posMs, durMs: d, liveMs, minMs: 0, maxMs: d ? d - 1000 : 0, route: tv.route, paused: tv.paused };
-}
-
-/** Seek to a file time in the program on screen (a time shift on a channel). */
-export function seekTo(fileMs) {
-  const t = timeline();
-  if (!t || t.maxMs <= t.minMs) return false;
-  seekBy(Math.round(clamp(fileMs, t.minMs, t.maxMs) - t.posMs));
-  return true;
-}
-
-// The next show is readied only while watching live (ADR-0006 pre-load): a shift or On Demand drops it.
-addEventListener("debridtv:timeshift", (e) => e.detail?.shiftMs && cancelPreload());
-
-/** Playback speed (pitch kept). On Demand only: a channel follows the station clock. */
 export function setRate(r) {
-  if (!tv.onDemand) return false;
+  if (!speedOk()) return false;
   rate = clamp(Number(r) || 1, 0.25, 4);
   video.preservesPitch = true;
   if (media) video.playbackRate = rate;
   return true;
 }
-export const currentRate = () => (tv.onDemand ? rate : 1);
+export const speedOk = () => !!tv.onDemand || (!!shift.ms && media?.route === "direct");
+export const currentRate = () => (speedOk() ? rate : 1);
 let rate = 1;
 video.addEventListener("playing", () => {
   // A restarted compatibility stream (seek, track change) starts at 1×.
-  if (tv.onDemand && media && video.playbackRate !== rate) video.playbackRate = rate;
+  if (speedOk() && media && video.playbackRate !== rate) video.playbackRate = rate;
 });
-addEventListener("debridtv:ondemand", (e) => !e.detail && (rate = 1));
+// Back to live (or a new channel) is normal speed again.
+addEventListener("debridtv:timeline", (e) => e.detail?.mode !== "ondemand" && e.detail?.mode !== "shifted" && (rate = 1));
 
 /** The program on screen, for the bar's menus: { itemId, route, sel } or null. */
 export const playing = () => (media ? { itemId: media.itemId, route: media.route, sel: media.sel ?? null } : null);

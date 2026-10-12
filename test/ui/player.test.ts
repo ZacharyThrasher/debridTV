@@ -186,7 +186,9 @@ describe("player", () => {
     await sleep(800);
     const after = await drift(page);
     assert.ok(after.driftMs < -3500 && after.driftMs > -7000, `picks up where it paused, behind the station (drift ${after.driftMs} ms)`);
-    assert.ok(await page.locator("#live-pill").isVisible(), "Back to live shows");
+    // While paused the control bar is up and its own LIVE button stands in for the pill.
+    assert.equal(await page.evaluate(() => document.getElementById("live-pill")!.hidden), false, "Back to live shows");
+    assert.match(await page.locator(".pb-live").innerText(), /Back to live/i);
     await page.keyboard.press("l");
     await page.waitForFunction(() => document.getElementById("live-pill")!.hidden);
     await playing(page);
@@ -234,7 +236,7 @@ describe("player", () => {
     assert.ok(next.shift > 0, `ahead of the station (${next.shift} ms)`);
     assert.match(await page.locator("#live-pill").innerText(), /ahead/);
 
-    await page.locator("#live-pill").click();
+    await page.evaluate(() => document.getElementById("live-pill")!.click()); // the control bar may be covering it
     await page.waitForFunction(() => document.getElementById("live-pill")!.hidden);
     await playing(page);
     await sleep(800);

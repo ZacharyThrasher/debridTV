@@ -296,7 +296,7 @@ setInterval(() => {
   const t = player.timeline?.();
   if (!loop || !t) return;
   if (loopItem !== t.itemId) return void (loop = loopItem = null);
-  if (loop.b != null && !t.paused && t.posMs >= loop.b) player.seekTo(loop.a);
+  if (loop.b != null && !player.tv.paused && t.posMs >= loop.b) player.seekTo(loop.a);
 }, 200);
 
 // ------------------------------------------------------------------ stats

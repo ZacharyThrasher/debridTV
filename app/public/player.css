@@ -226,7 +226,7 @@ html.tv .pb-text b, html.tv .pb-ch { display: none; }
 
 @media (max-width: 760px) {
   :root { --pb-btn: 40px; --pb-icon: 22px; --pb-pad-x: 6px; }
-  .pb-title, .pb-vol, .pb-prog, [data-act="pip"], [data-act="ondemand"] { display: none !important; }
+  .pb-title, .pb-vol, .pb-prog, .pb-seek, [data-act="pip"], [data-act="ondemand"] { display: none !important; } /* double-tap a side to skip */
   .pb-left, .pb-right { gap: 0; }
   .pb-time { padding: 0 .3em; font-size: .92em; }
   .pb-live { padding: 0 .55em; }

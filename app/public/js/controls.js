@@ -195,6 +195,7 @@ export function chapterAt(ms) {
   return { n: n + 1, of: l.length + 1, start: n ? l[n - 1] : 0 };
 }
 
+const narrow = matchMedia("(max-width: 760px)");
 const pct = (ms, d) => `${(clamp(ms / d, 0, 1) * 100).toFixed(3)}%`;
 
 function draw() {
@@ -251,7 +252,7 @@ function draw() {
   const loop = fx.abLoop();
   abEl.hidden = !loop || loop.whole;
   if (loop && !loop.whole) Object.assign(abEl.style, { left: pct(loop.a, d), width: loop.b == null ? "2px" : pct(loop.b - loop.a, d) });
-  liveMark.hidden = t.liveMs == null;
+  liveMark.hidden = t.liveMs == null || t.liveMs < 0 || t.liveMs > d;
   if (t.liveMs != null) liveMark.style.left = pct(t.liveMs, d);
   scrub.setAttribute("aria-valuemax", String(Math.round(d / 1000)));
   scrub.setAttribute("aria-valuenow", String(Math.round(t.posMs / 1000)));
@@ -264,7 +265,8 @@ function draw() {
   const sh = player.timeShift?.() ?? 0;
   liveBtn.hidden = !tv.current;
   liveBtn.classList.toggle("at-live", atLive);
-  liveBtn.innerHTML = atLive ? "<i></i>LIVE" : html`<i></i>Back to live${sh ? html`<small>${sh < 0 ? "−" : "+"}${fmtClock(Math.abs(sh))}</small>` : ""}`.html;
+  // Phones say LIVE either way, like YouTube: a grey dot means behind, and a tap goes back.
+  liveBtn.innerHTML = atLive || narrow.matches ? "<i></i>LIVE" : html`<i></i>Back to live${sh ? html`<small>${sh < 0 ? "−" : "+"}${fmtClock(Math.abs(sh))}</small>` : ""}`.html;
   liveBtn.setAttribute("aria-label", atLive ? "Live" : "Back to live (L)");
   const ch = chapterAt(t.posMs);
   const title = tv.onDemand?.title ?? tv.info?.airing?.title ?? "";
@@ -281,7 +283,8 @@ document.addEventListener("fullscreenchange", draw);
 export function seekTo(ms) {
   const t = player.timeline?.();
   if (!t || !(t.maxMs > t.minMs)) return false;
-  return player.seekTo(ms);
+  player.seekTo(ms);
+  return true;
 }
 export function seekRel(deltaMs) {
   const t = player.timeline?.();
@@ -432,7 +435,7 @@ const signed = (ms, unit = "ms") => (ms > 0 ? `+${ms} ${unit}` : `${ms} ${unit}`
 
 function rows() {
   const t = player.timeline?.();
-  const offClock = t?.mode === "ondemand";
+  const offClock = !!player.speedOk?.();
   const p = fx.picture();
   const pictureChanged = p.zoom !== 1 || p.rotate || p.flip || p.brightness !== 1 || p.contrast !== 1 || p.saturation !== 1;
   const loop = fx.abLoop();
@@ -454,7 +457,7 @@ function rows() {
     case "speed":
       return html`${head("Playback speed")}${offClock
         ? SPEEDS.map((s) => pick(`rate:${s}`, s === 1 ? "Normal" : `${s}×`, (player.currentRate?.() ?? 1) === s))
-        : html`<p class="pm-note">Channels play at normal speed so they keep to the schedule. Open this program in On Demand to change speed.</p>${t ? act("odhere", "Watch this program in On Demand") : ""}`}`;
+        : html`<p class="pm-note">Live plays at normal speed. Skip back a little (or open this program in On Demand) to change speed.</p>${t ? act("odhere", "Watch this program in On Demand") : ""}`}`;
     case "async":
       return html`${head("Audio sync")}${stepper("ad", fx.audioDelay(), "ms")}
         <p class="pm-note">Plus plays the sound later, minus earlier.${fx.audioDelay() < 0 && !tv.ffmpeg ? " Earlier needs ffmpeg on the PC." : fx.audioDelay() < 0 ? " Earlier restarts the stream on the PC at the same point." : ""}</p>
@@ -515,8 +518,10 @@ function audioLabel() {
   return list.length > 1 ? `${name} (${list.length} tracks)` : name;
 }
 
+let openedByKey = false;
 function openMenu(to = "main") {
   openedFrom = document.activeElement;
+  openedByKey = document.documentElement.classList.contains("remote");
   page = to;
   menu.hidden = false;
   menu.setAttribute("aria-modal", "true"); // the remote's arrows stay inside it (spatial.js)
@@ -528,7 +533,10 @@ export function closeMenu() {
   if (menu.hidden) return;
   menu.hidden = true;
   menu.removeAttribute("aria-modal");
-  if (menu.contains(document.activeElement)) (openedFrom && bar.contains(openedFrom) ? openedFrom : $('[data-act="menu"]')).focus({ focusVisible: true });
+  if (!menu.contains(document.activeElement)) return;
+  // Opened with the mouse: let go of focus, so the arrow keys seek again. With the remote: back to the gear.
+  if (!openedByKey) return void document.activeElement.blur();
+  (openedFrom && bar.contains(openedFrom) ? openedFrom : $('[data-act="menu"]')).focus({ focusVisible: true });
 }
 function renderMenu(focusFirst = false, keep = null) {
   menu.innerHTML = String(rows());
@@ -674,7 +682,7 @@ const KEYS = [
   ["Watching", [["Space / K", "Pause and play"], ["↑ ↓", "Change channel"], ["0–9", "Go to a channel number"], ["L / Backspace", "Back to live, else last channel"],
     ["G / Enter", "Program guide"], ["O", "On Demand"], ["I", "What's on"], ["S", "DebridTV settings"]]],
   ["Seeking", [["← →", "Back 10 s / forward 30 s"], ["Shift + ← →", "Previous / next chapter, then program"], ["[ ]", "Previous / next program"],
-    ["Home", "Start of the program"], ["End", "Back to live (end of file in On Demand)"], [", .", "One frame back / forward (paused)"], ["< >", "Slower / faster (On Demand)"]]],
+    ["Home", "Start of the program"], ["End", "Back to live (end of file in On Demand)"], [", .", "One frame back / forward (paused)"], ["< >", "Slower / faster (not at live)"]]],
   ["Sound", [["M", "Mute"], ["/ *", "Volume down / up (up to 200%)"], ["Mouse wheel", "Volume, over the picture"], ["A", "Next audio track"]]],
   ["Picture and subtitles", [["C", "Subtitles"], ["Z", "Picture shape"], ["F / double-click", "Full screen"], ["P", "Picture in picture"], ["X", "Screenshot"], ["D", "Stats for nerds"]]],
 ];
@@ -737,8 +745,8 @@ addEventListener("keydown", (e) => {
   }
   if (typing(e.target)) return;
   if (otherLayer()) return;
-  // The remote is on the bar.
-  if (bar.contains(document.activeElement)) {
+  // The remote is on the bar (a button the mouse clicked doesn't count: arrows still seek).
+  if (bar.contains(document.activeElement) && document.activeElement.matches(":focus-visible")) {
     const el = document.activeElement;
     if (k === "Escape" || k === "Backspace") return stop(), hideBar();
     if (el === scrub && (k === "ArrowLeft" || k === "ArrowRight")) return stop(), seekRel(k === "ArrowLeft" ? -10_000 : 30_000);
@@ -794,7 +802,7 @@ addEventListener("keydown", (e) => {
       const i = SPEEDS.indexOf(cur);
       const next = SPEEDS[clamp((i < 0 ? 3 : i) + (k === ">" ? 1 : -1), 0, SPEEDS.length - 1)];
       if (player.setRate?.(next)) osd(`${next}×`, "Speed", 1000);
-      else osd("1×", "Speed changes in On Demand", 1500);
+      else osd("1×", "Live plays at normal speed", 1500);
       return;
     }
     case "/":
