@@ -5,6 +5,17 @@
 
 import { classify, type AccountInfo, type InventoryFile, type PlaybackGrant, type ProviderClient } from "./types.ts";
 
+/** A Real-Debrid pack whose selected files and links don't pair up one to one. */
+export class PackMismatchError extends Error {
+  readonly files: number;
+  readonly links: number;
+  constructor(files: number, links: number) {
+    super(`Real-Debrid listed ${files} files but ${links} links for this pack, so they can't be matched safely`);
+    this.files = files;
+    this.links = links;
+  }
+}
+
 export class CallCounter {
   readonly calls: Record<string, number> = {};
   add(name: string): void {
@@ -66,11 +77,11 @@ export class RealDebridClient implements ProviderClient {
       links: string[];
     };
     const selected = t.files.filter((f) => f.selected === 1);
-    return selected.flatMap((f, i) =>
-      t.links[i]
-        ? [{ provider: "realdebrid" as const, ref: t.links[i]!, name: f.path.replace(/^\//, ""), bytes: f.bytes, providerState: t.status }]
-        : [],
-    );
+    // RD sends one link per selected file, in order. If the counts differ the two
+    // lists can't be paired, and guessing would air one episode under another's
+    // name and running time (Debrid Media Manager's pickLink makes the same refusal).
+    if (selected.length !== t.links.length) throw new PackMismatchError(selected.length, t.links.length);
+    return selected.map((f, i) => ({ provider: "realdebrid" as const, ref: t.links[i]!, name: f.path.replace(/^\//, ""), bytes: f.bytes, providerState: t.status }));
   }
 
   async resolve(ref: string, signal?: AbortSignal): Promise<PlaybackGrant> {

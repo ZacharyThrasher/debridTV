@@ -22,6 +22,8 @@ export interface MockFile {
   etag?: string;
   /** Real-Debrid: files sharing a pack name are listed as one multi-file torrent. */
   pack?: string;
+  /** Real-Debrid pack member that /torrents/info lists without a link (files and links no longer pair). */
+  noLink?: boolean;
 }
 
 export interface MockAccount {
@@ -157,7 +159,7 @@ export async function startMockProviders(opts: MockOptions): Promise<MockProvide
         const t = rdTorrents().find((x) => x.id === decodeURIComponent(info[1]!));
         if (!t) return json(res, 404, { error: "unknown_ressource", error_code: 20 });
         json(res, 200, { id: t.id, filename: t.name, status: t.status,
-          files: t.files.map((f, i) => ({ id: i + 1, path: `/${f.name}`, bytes: f.bytes, selected: 1 })), links: t.files.map(rdLink) });
+          files: t.files.map((f, i) => ({ id: i + 1, path: `/${f.name}`, bytes: f.bytes, selected: 1 })), links: t.files.filter((f) => !f.noLink).map(rdLink) });
       });
     }
     if (p === "/rd/rest/1.0/unrestrict/link" && req.method === "POST") {

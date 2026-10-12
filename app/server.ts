@@ -626,7 +626,7 @@ async function serveMedia(req: http.IncomingMessage, res: http.ServerResponse, i
       scheduleRebuild();
       return json(res, 451, { error: "policy", message: `${PROVIDER_NAMES[it.provider]} refused this file. DebridTV won't retry it or fetch it elsewhere.` });
     }
-    if (e instanceof ProviderError && e.kind === "auth") void library.checkAccount(it.provider as RemoteProvider).catch(() => {});
+    if (e instanceof ProviderError && (e.kind === "auth" || e.kind === "account")) void library.checkAccount(it.provider as RemoteProvider).catch(() => {});
     // A rate limit is about the account, not this file: don't mark the file.
     if (!(e instanceof ProviderError && e.kind === "rate-limited")) library.markAvailability(id, "unavailable", plainError(e));
     meters.log("error", `${label}: ${plainError(e)}`);
@@ -1095,7 +1095,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       files: rows.slice(offset, offset + limit).map(({ it, status, message }) => ({
         id: it.id, title: displayTitle(it), name: it.name, provider: it.provider, status, message, art: artView(it),
         kind: it.parsed.kind, durationMs: it.durationMs, bytes: it.bytes, providerState: it.providerState,
-        container: it.container, video: it.video, audio: it.audio, excluded: !!it.excluded,
+        container: it.container, video: it.video, audio: it.audio, excluded: !!it.excluded, nameBlocked: it.nameBlocked ?? null,
         checkedAt: it.availabilityAt ?? null, playableAt: it.playableAt ?? null, goneAt: it.goneAt ?? null,
         etagChanges: it.etagChanges ?? 0, watched: isWatched(it.id, it.durationMs), seenMs: ledger.seenMs(it.id),
         ...(copies.has(it.id) ? { copies: copies.get(it.id) } : {}),
@@ -1111,7 +1111,8 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     const it = library.get(String(body.id ?? ""));
     if (!it || !isConnected(it.provider)) return json(res, 404, { error: "unknown item" });
     const st = fileStatus(it, accountOf(it.provider));
-    if (st.status === "refused") return json(res, 409, { error: "refused", message: st.message });
+    // A file kept off only by its name was never asked about, so one check is allowed.
+    if (st.status === "refused" && !it.nameBlocked) return json(res, 409, { error: "refused", message: st.message });
     if (st.status === "not-ready") return json(res, 409, { error: "not-ready", message: st.message });
     if (st.status === "gone") return json(res, 409, { error: "gone", message: st.message });
     if (it.provider === "local") {
@@ -1123,6 +1124,10 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     try {
       library.grants.invalidate(client, it.ref);
       await library.grants.get(client, it.ref);
+      if (it.nameBlocked) {
+        library.clearNameBlock(it.id);
+        scheduleRebuild();
+      }
       library.markAvailability(it.id, "playable");
       return json(res, 200, { ok: true, message: `${PROVIDER_NAMES[it.provider]} gave a playback link just now.` });
     } catch (e) {

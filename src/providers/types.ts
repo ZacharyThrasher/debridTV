@@ -28,7 +28,7 @@ export interface AccountInfo {
 }
 
 export class ProviderError extends Error {
-  readonly kind: "rate-limited" | "auth" | "not-found" | "not-ready" | "policy" | "transient" | "unknown";
+  readonly kind: "rate-limited" | "auth" | "account" | "gone" | "not-found" | "not-ready" | "policy" | "transient" | "unknown";
   readonly status: number;
   constructor(kind: ProviderError["kind"], status: number, message: string) {
     super(message);
@@ -64,7 +64,11 @@ export function providerReady(provider: ProviderId, state: string): boolean {
 // RD 35 on a file the inventory listed as "downloaded".
 const RD_CODES: Record<number, ProviderError["kind"]> = {
   8: "auth", // bad_token
-  9: "auth", // permission_denied
+  // RD documents 403 permission_denied as "account locked, not premium": the account,
+  // not the key, so signing in again changes nothing (measured by Debrid Media Manager).
+  9: "account", // permission_denied
+  14: "account", // account_locked
+  24: "gone", // unavailable_file: RD no longer has the file, for anyone
   34: "rate-limited", // too_many_requests
   20: "not-found", // unknown_ressource
   35: "policy", // infringing_file
@@ -75,7 +79,28 @@ const TB_ERRORS: Record<string, ProviderError["kind"]> = {
   NOT_FOUND: "not-found",
   TOO_MANY_REQUESTS: "rate-limited",
   DOWNLOAD_NOT_READY: "not-ready",
+  PLAN_RESTRICTED_FEATURE: "account", // the plan has no API access
 };
+
+/**
+ * Release tags Real-Debrid refuses to stream (`451 infringing_file` on
+ * /unrestrict/link), matched anywhere in a file's own name, in any case. Only the
+ * exact dot or hyphen counts: WEB.DL, WEBDL and BluRay-x264 stream. Measured by
+ * Debrid Media Manager on 2026-10-10 over 214 adds and 22 link requests on a
+ * clean test account (their deInfringe.ts; facts only, no code copied). RD changed
+ * this list during October 2026, so a match is a prediction: the file is skipped
+ * without asking, and "Check now" can still ask once.
+ */
+const RD_REFUSED_TAG = /web-dl|(?:web|bd|hd|dvd)rip|bluray\.x264|p\.bluray\.dts|hdtv\.(?:x264|xvid)|web\.(?:x264|h264)/i;
+
+/** The tag in this file's own name (not its folders) that Real-Debrid refuses, or null. */
+export function rdRefusedTag(name: string): string | null {
+  const base = name.split(/[\\/]/).pop() ?? name;
+  const m = RD_REFUSED_TAG.exec(base);
+  if (!m) return null;
+  // "1080p.BluRay.DTS" matches from the "p"; show the tag itself.
+  return m[0].replace(/^p\./i, "");
+}
 
 export function classify(status: number, body: string): ProviderError {
   let parsed: { error_code?: unknown; error?: unknown } = {};
