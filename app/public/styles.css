@@ -599,9 +599,10 @@ textarea.input { font-family: var(--font-mono); font-size: .9em; line-height: 1.
 }
 .ced-head { display: flex; align-items: center; gap: 1em; padding: 1.3em 1.5em .9em; }
 .ced-head .logo { font-size: 1.6em; }
-.ced-title { flex: 1; min-width: 0; }
-.ced-title .k { font-family: var(--font-ui); font-weight: 600; letter-spacing: 0; text-transform: none; font-size: .7em; color: var(--ink-3); }
-.ced-title .t { font-family: var(--font-display); font-weight: var(--display-wght); font-stretch: var(--display-wdth); font-size: 2em; line-height: 1.02; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The name first, then what this sheet is, on the same line (not an eyebrow over it). */
+.ced-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: .7em; }
+.ced-title .k { order: 1; flex: none; font-family: var(--font-ui); font-weight: 500; font-size: .9em; color: var(--ink-3); }
+.ced-title .t { min-width: 0; font-family: var(--font-display); font-weight: var(--display-wght); font-stretch: var(--display-wdth); font-size: 2em; line-height: 1.02; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ced-sheet > .tabs { padding: 0 1.25em; }
 .ced-body { overflow-y: auto; padding: 1.2em 1.5em 1.5em; scrollbar-width: thin; scrollbar-color: var(--rule-strong) transparent; }
 .ced-body h4 { font-family: var(--font-display); font-weight: var(--display-wght); font-stretch: var(--display-wdth); letter-spacing: -.005em; font-size: 1.45em; margin: 1.4em 0 .45em; }

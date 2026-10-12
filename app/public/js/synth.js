@@ -78,7 +78,7 @@ function drawSlate(W, H, fileMs) {
   const { airing, hue } = state;
   const u = H / 60;
   const pad = u * 5;
-  ctx.fillStyle = `hsl(${hue} 12% 10%)`;
+  ctx.fillStyle = `hsl(${hue} 7% 10%)`;
   ctx.fillRect(0, 0, W, H);
   // colour bars along the top edge
   const bh = Math.max(2, u * 0.5);

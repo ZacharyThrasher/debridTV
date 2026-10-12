@@ -88,3 +88,42 @@ startup landing pages.
   soft shadows, and weightless copy.
 - [There are 3 telltale signs that you used AI to make your app](https://tech.yahoo.com/ai/copilot/articles/3-telltale-signs-used-ai-040101406.html).
   It notes polish that outruns function, and missing empty, loading and error states.
+
+## Audit, 12 October 2026
+
+Every screen was checked at phone, laptop and TV size: guide, On Demand, show page,
+welcome, settings, channel editor, groups, themes, player bar, subtitles, Back to live,
+pairing and home network. "Before" is the app as of PR #2. "First pass" is the Listings
+redesign as first pushed. "Now" is after this list was written.
+
+| # | Tell | Before | First pass | Now |
+| --- | --- | --- | --- | --- |
+| 1 | Inter as the only face | ✗ Inter plus Barlow | ✗ Inter, serif, mono trio | ✓ Archivo only |
+| 2 | Oversized serif headline | ✓ | ✗ Instrument Serif everywhere | ✓ bold condensed sans |
+| 3 | Italic accent word, coloured stop | ✗ gradient "always on the air." | ✗ italic plus red stop | ✓ |
+| 4 | Eyebrows | ✗ "SHOW · SITCOM", "NOW WATCHING" | ✗ "CONTINUE WATCHING" | ✓ sentence case, under the title |
+| 5 | Monospace for decoration | ✗ counts, kickers | ✗ times, counts, keys | ✓ tabular figures |
+| 6 | Decorative numbering | ✓ | ✓ | ✓ |
+| 7 | Purple gradients, gradient text or buttons | ✗ all three | ✓ | ✓ |
+| 8 | Cream with terracotta | ✓ | ✗ paper and orange | ✓ neutral, tally red |
+| 9 | Glass | ✗ | ✗ blur behind dialogs | ✓ opaque |
+| 10 | Glows | ✗ focus and logo glow | ✓ | ✓ live dot glow removed too |
+| 11 | Blobs, aurora, grain | ✗ synthwave, blurred blobs | ✗ drifting colour field, grain | ✓ program slate |
+| 12 | Shadow on every card | ✗ | ✓ | ✓ |
+| 13 | Pills, one big radius | ✗ | ✗ pill chips | ✓ 2 to 4 px |
+| 14 | Generic icons, emoji | ✗ ◷ ▶ ⚙ in the guide bar | ✗ line icons | ✓ text, plus the CC box |
+| 15 | Identical colour tiles | ✗ gradient tiles | ✗ same frame, hue only | ◐ three layouts; posters still best |
+| 16 | Everything centred | ✗ centred welcome | ✓ | ✓ |
+| 17 | Em dashes in copy | ✓ | ✓ | ✓ |
+| 18 | Weightless lines | ✗ "Your library, always on the air." | ✗ same line | ✓ "These are demo channels." |
+| 19 | Placeholder passing as real | ✓ demo is labelled | ✓ | ✓ |
+| 20 | Overflow and overlap | ✗ cover titles cut | ✗ break card under the banner | ✓ both fixed |
+| | **Passes** | **5 of 20** | **7 of 20** | **19 of 20, 1 partial** |
+
+What's left on purpose:
+
+- The player bar keeps standard media icons (play, skip, volume, full screen). They are
+  controls, not decoration.
+- Small uppercase stays on broadcast badges like LIVE, HD and PG.
+- Drawn covers are still placeholders. Real posters from TMDB or Kodi art replace them
+  wherever a match is found.
