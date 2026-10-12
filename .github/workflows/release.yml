@@ -173,44 +173,57 @@ jobs:
           Start-Sleep 2
           # No sound card on the runner: mpv still decodes, into a null output.
           $env:DEBRIDTV_MPV_ARGS = "--ao=null"
-          $w = Start-Process "window\debridtv-window.exe" -ArgumentList "--url", "http://127.0.0.1:7444/", "--mpv", $mpv, "--data", "$env:RUNNER_TEMP\webview", "--trace", "$env:RUNNER_TEMP\trace.log" -PassThru
-          for ($i = 0; $i -lt 60 -and -not (Test-Path $report); $i++) { Start-Sleep 1 }
-          if (-not (Test-Path $report)) { Get-Content "$env:RUNNER_TEMP\trace.log" -ErrorAction SilentlyContinue | Select-Object -First 80; throw "the page never reported" }
-          $r = Get-Content $report | ConvertFrom-Json
-          $r | ConvertTo-Json -Depth 5
-          if (-not $r.ok) { throw "the page says: $($r.why)" }
-          if ($r.audioCodec -ne "dts") { throw "mpv isn't decoding DTS: $($r.audioCodec)" }
-          if (-not $r.audioParams.samplerate) { throw "no decoded sound" }
-          if ($r.path -notmatch "/media/test$") { throw "mpv didn't open the file directly: $($r.path)" }
-          if ([math]::Abs($r.timePos - 3 - $r.currentTime) -gt 0.5 -or $r.timePos -lt 4) { throw "positions are off: mpv $($r.timePos), page $($r.currentTime)" }
-          # The picture shows through the page; the page's red bar covers the picture.
           Add-Type -AssemblyName System.Drawing, System.Windows.Forms
           Add-Type 'using System; using System.Runtime.InteropServices; public class W { [StructLayout(LayoutKind.Sequential)] public struct R { public int L, T, Rt, B; } [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r); [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h); }'
-          $w.Refresh()
-          [W]::SetForegroundWindow($w.MainWindowHandle) | Out-Null
-          Start-Sleep 1
-          $rect = New-Object W+R
-          [W]::GetWindowRect($w.MainWindowHandle, [ref]$rect) | Out-Null
-          $bmp = New-Object System.Drawing.Bitmap ([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width), ([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height)
-          $g = [System.Drawing.Graphics]::FromImage($bmp)
-          $g.CopyFromScreen(0, 0, 0, 0, $bmp.Size)
-          $bmp.Save("$env:RUNNER_TEMP\window.png")
-          function Avg($x0, $y0) { $s = 0; $n = 0; $red = 0; for ($x = $x0 - 10; $x -lt $x0 + 10; $x += 2) { for ($y = $y0 - 10; $y -lt $y0 + 10; $y += 2) { $c = $bmp.GetPixel($x, $y); $s += ($c.R + $c.G + $c.B) / 3; $red += $c.R - ($c.G + $c.B) / 2; $n++ } }; [pscustomobject]@{ bright = $s / $n; red = $red / $n } }
-          $cx = [int](($rect.L + $rect.Rt) / 2)
-          $top = Avg $cx ([int]($rect.T + ($rect.B - $rect.T) * 0.35))
-          $bar = Avg $cx ([int]($rect.B - ($rect.B - $rect.T) * 0.08))
-          Write-Host "window $($rect.L),$($rect.T)-$($rect.Rt),$($rect.B); picture area $($top | ConvertTo-Json -Compress); bar $($bar | ConvertTo-Json -Compress)"
-          Stop-Process -Id $w.Id, $srv.Id -ErrorAction SilentlyContinue
-          if ($bar.red -lt 80) { throw "the page isn't on top of the picture" }
-          if ($top.bright -lt 25) { throw "the picture doesn't show through the page" }
+          $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $results = @{}
+          # The default layout, and the alternative (mpv in the main window) for comparison.
+          foreach ($layout in "static", "parent") {
+            $env:DEBRIDTV_WINDOW_LAYOUT = $layout
+            Remove-Item $report -ErrorAction SilentlyContinue
+            $w = Start-Process "window\debridtv-window.exe" -ArgumentList "--url", "http://127.0.0.1:7444/", "--mpv", $mpv, "--data", "$env:RUNNER_TEMP\webview", "--trace", "$env:RUNNER_TEMP\trace-$layout.log" -PassThru
+            for ($i = 0; $i -lt 60 -and -not (Test-Path $report); $i++) { Start-Sleep 1 }
+            if (-not (Test-Path $report)) { Get-Content "$env:RUNNER_TEMP\trace-$layout.log" -ErrorAction SilentlyContinue | Select-Object -First 80; throw "the page never reported ($layout)" }
+            $r = Get-Content $report | ConvertFrom-Json
+            $r | ConvertTo-Json -Depth 5
+            if (-not $r.ok) { throw "the page says: $($r.why)" }
+            if ($r.audioCodec -ne "dts") { throw "mpv isn't decoding DTS: $($r.audioCodec)" }
+            if (-not $r.audioParams.samplerate) { throw "no decoded sound" }
+            if ($r.path -notmatch "/media/test$") { throw "mpv didn't open the file directly: $($r.path)" }
+            if ([math]::Abs($r.timePos - 3 - $r.currentTime) -gt 0.5 -or $r.timePos -lt 4) { throw "positions are off: mpv $($r.timePos), page $($r.currentTime)" }
+            # The picture shows through the page; the page's red bar covers the picture.
+            $w.Refresh()
+            [W]::SetForegroundWindow($w.MainWindowHandle) | Out-Null
+            Start-Sleep 1
+            $rect = New-Object W+R
+            [W]::GetWindowRect($w.MainWindowHandle, [ref]$rect) | Out-Null
+            $bmp = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen(0, 0, 0, 0, $bmp.Size)
+            $bmp.Save("$env:RUNNER_TEMP\window-$layout.png")
+            function Avg($x0, $y0) { $s = 0; $n = 0; $red = 0; for ($x = $x0 - 10; $x -lt $x0 + 10; $x += 2) { for ($y = $y0 - 10; $y -lt $y0 + 10; $y += 2) { $c = $bmp.GetPixel($x, $y); $s += ($c.R + $c.G + $c.B) / 3; $red += $c.R - ($c.G + $c.B) / 2; $n++ } }; [pscustomobject]@{ bright = [int]$s / $n; red = [int]$red / $n } }
+            $cx = [int](($rect.L + [math]::Min($rect.Rt, $screen.Width)) / 2)
+            $bottom = [math]::Min($rect.B, $screen.Height - 50)
+            $top = Avg $cx ([int]($rect.T + ($bottom - $rect.T) * 0.35))
+            $bar = Avg $cx ([int]($bottom - 40))
+            Write-Host "[$layout] window $($rect.L),$($rect.T)-$($rect.Rt),$($rect.B); picture area $($top | ConvertTo-Json -Compress); bar $($bar | ConvertTo-Json -Compress)"
+            $g.Dispose(); $bmp.Dispose()
+            Stop-Process -Id $w.Id -ErrorAction SilentlyContinue
+            Start-Sleep 2
+            # testsrc2 is mid-grey and colourful; a see-through failure shows the page's white or the layer's black.
+            $results[$layout] = ($bar.red -gt 80) -and ($top.bright -gt 25) -and ($top.bright -lt 245)
+          }
+          Stop-Process -Id $srv.Id -ErrorAction SilentlyContinue
+          $results | ConvertTo-Json
+          if (-not $results["static"]) { throw "the picture doesn't show through the page (default layout)" }
           Write-Host "Window check passed: DTS plays in mpv, the picture shows through the page, the page draws on top."
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: window-check
           path: |
-            ${{ runner.temp }}/window.png
-            ${{ runner.temp }}/trace.log
+            ${{ runner.temp }}/window-*.png
+            ${{ runner.temp }}/trace-*.log
             ${{ runner.temp }}/report.json
           if-no-files-found: ignore
 

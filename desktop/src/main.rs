@@ -10,6 +10,13 @@
 //!
 //!   debridtv-window.exe --url http://127.0.0.1:7337/ [--mpv C:\...\mpv.exe]
 //!                       [--data %LOCALAPPDATA%\DebridTV\webview] [--trace file] [--no-dialog]
+//!                       [--console-of <pid>]
+//!   debridtv-window.exe --show-console <pid>
+//!
+//! `--console-of` hides DebridTV.exe's console while the window is open, so the
+//! app is one window. `--show-console` brings it back (when DebridTV keeps running
+//! for phones and TVs after the window closes). A second start brings the open
+//! window to the front instead of opening another.
 //!
 //! Without `--mpv` (or when mpv won't start) the page plays video itself, exactly
 //! as in a browser, so the window is still useful.
@@ -23,6 +30,16 @@ fn main() {
 
 #[cfg(windows)]
 fn main() {
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(String::as_str) == Some("--show-console") {
+        if let Some(pid) = argv.get(2).and_then(|p| p.parse().ok()) {
+            app::console_of(pid, true);
+        }
+        return;
+    }
+    if app::bring_existing_to_front() {
+        return;
+    }
     if let Err(e) = app::run() {
         // Started by DebridTV.exe, which has other ways to open the guide: just say no.
         if !std::env::args().any(|a| a == "--no-dialog") {
@@ -45,13 +62,56 @@ mod app {
     use tao::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
     use tao::event::{Event, StartCause, WindowEvent};
     use tao::event_loop::{ControlFlow, EventLoopBuilder};
-    use tao::platform::windows::WindowExtWindows;
+    use tao::platform::windows::{WindowBuilderExtWindows, WindowExtWindows};
     use tao::window::{Fullscreen, Icon, WindowBuilder};
-    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HWND};
+    use windows_sys::Win32::System::Console::{AttachConsole, FreeConsole, GetConsoleWindow};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, MessageBoxW, MoveWindow, MB_ICONERROR, MB_OK, WS_CHILD,
-        WS_CLIPSIBLINGS, WS_DISABLED, WS_VISIBLE,
+        CreateWindowExW, FindWindowExW, FindWindowW, IsIconic, SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, MessageBoxW, MoveWindow, SetForegroundWindow, ShowWindow, MB_ICONERROR,
+        MB_OK, SW_HIDE, SW_RESTORE, SW_SHOW, WS_CHILD, WS_DISABLED, WS_VISIBLE,
     };
+
+    const CLASS: &str = "DebridTV.Window";
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// One DebridTV window per sign-in: a second start shows the first one.
+    pub fn bring_existing_to_front() -> bool {
+        unsafe {
+            let name = wide("Local\\DebridTV.Window");
+            let m = CreateMutexW(std::ptr::null(), 0, name.as_ptr());
+            if m.is_null() || GetLastError() != ERROR_ALREADY_EXISTS {
+                return false; // the mutex stays held for this process's life
+            }
+            let w = FindWindowW(wide(CLASS).as_ptr(), std::ptr::null());
+            if w.is_null() {
+                return false;
+            }
+            if IsIconic(w) != 0 {
+                ShowWindow(w, SW_RESTORE);
+            }
+            SetForegroundWindow(w);
+            true
+        }
+    }
+
+    /// Hide or show the console window of DebridTV.exe (process `pid`).
+    pub fn console_of(pid: u32, show: bool) {
+        unsafe {
+            FreeConsole();
+            if AttachConsole(pid) == 0 {
+                return;
+            }
+            let c = GetConsoleWindow();
+            if !c.is_null() {
+                ShowWindow(c, if show { SW_SHOW } else { SW_HIDE });
+            }
+            FreeConsole();
+        }
+    }
     /// A STATIC control that paints itself black.
     const SS_BLACKRECT: u32 = 0x4;
     use wry::{Rect, WebContext, WebViewBuilder, WebViewBuilderExtWindows};
@@ -70,10 +130,11 @@ mod app {
         mpv: Option<PathBuf>,
         data: Option<PathBuf>,
         trace: Option<PathBuf>,
+        console_of: Option<u32>,
     }
 
     fn args() -> Result<Args, String> {
-        let mut a = Args { url: String::new(), mpv: None, data: None, trace: None };
+        let mut a = Args { url: String::new(), mpv: None, data: None, trace: None, console_of: None };
         let mut it = std::env::args().skip(1);
         while let Some(k) = it.next() {
             let mut v = || it.next().ok_or_else(|| format!("{k} needs a value"));
@@ -83,6 +144,7 @@ mod app {
                 "--data" => a.data = Some(PathBuf::from(v()?)),
                 "--trace" => a.trace = Some(PathBuf::from(v()?)),
                 "--no-dialog" => {}
+                "--console-of" => a.console_of = v()?.parse().ok(),
                 _ => return Err(format!("unknown option {k}")),
             }
         }
@@ -123,6 +185,7 @@ mod app {
             .with_inner_size(LogicalSize::new(1280.0, 760.0))
             .with_min_inner_size(LogicalSize::new(480.0, 300.0))
             .with_window_icon(icon())
+            .with_window_classname(CLASS)
             .build(&event_loop)
             .map_err(|e| e.to_string())?;
         let parent = window.hwnd() as HWND;
@@ -136,7 +199,9 @@ mod app {
                 0,
                 class.as_ptr(),
                 std::ptr::null(),
-                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_DISABLED | SS_BLACKRECT,
+                // No WS_CLIPSIBLINGS: the page's layer above must not cut this one out,
+                // or the picture is hidden even where the page is see-through.
+                WS_CHILD | WS_VISIBLE | WS_DISABLED | SS_BLACKRECT,
                 0,
                 0,
                 size.width as i32,
@@ -153,7 +218,9 @@ mod app {
 
         let proxy = event_loop.create_proxy();
         let mpv = match &args.mpv {
-            Some(exe) => match Mpv::start(exe, picture as isize, args.data.as_deref(), proxy.clone()) {
+            // DEBRIDTV_WINDOW_LAYOUT=parent: mpv draws straight into the main window
+            // (the page's layer is raised above it), for comparing layouts on a PC.
+            Some(exe) => match Mpv::start(exe, if parent_layout() { parent as isize } else { picture as isize }, args.data.as_deref(), proxy.clone()) {
                 Ok(m) => Some(m),
                 Err(e) => {
                     // Still a working window: the page plays video itself.
@@ -197,8 +264,14 @@ mod app {
         }
         let webview = builder.build(&window).map_err(|e| e.to_string())?;
         let _ = webview.focus();
+        // From here on the app is this window; the console comes back only if
+        // DebridTV keeps running after it closes.
+        if let Some(pid) = args.console_of {
+            console_of(pid, false);
+        }
 
         let mut mpv = mpv;
+        let mut raised = 0;
         event_loop.run(move |event, _, flow| {
             *flow = ControlFlow::Wait;
             match event {
@@ -218,6 +291,10 @@ mod app {
                 }
                 Event::UserEvent(UserEvent::FromMpv(line)) => {
                     trace(&tr, "<", &line);
+                    if parent_layout() && raised < 50 {
+                        raised += 1;
+                        raise_page(parent);
+                    }
                     // mpv's JSON is a valid JavaScript expression; it goes in as data.
                     let _ = webview.evaluate_script(&format!("window.__dtvMpv && window.__dtvMpv({line})"));
                 }
@@ -233,6 +310,21 @@ mod app {
                 _ => {}
             }
         });
+    }
+
+    fn parent_layout() -> bool {
+        std::env::var("DEBRIDTV_WINDOW_LAYOUT").map(|v| v == "parent").unwrap_or(false)
+    }
+
+    /// Put the page's layer (wry's WRY_WEBVIEW child) above mpv's window.
+    fn raise_page(parent: HWND) {
+        unsafe {
+            let class = wide("WRY_WEBVIEW");
+            let w = FindWindowExW(parent, std::ptr::null_mut(), class.as_ptr(), std::ptr::null());
+            if !w.is_null() {
+                SetWindowPos(w, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            }
+        }
     }
 
     /// The DebridTV mark for the title bar and taskbar: a white "TV" tile on black.

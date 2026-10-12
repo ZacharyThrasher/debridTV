@@ -116,6 +116,8 @@ function appWindow(url: string): boolean {
 
 /** debridtv-window.exe, unpacked with the page files when this exe carries it. */
 let windowExe: string | null = null;
+/** What to do when the viewer closes DebridTV's window. */
+let onWindowClosed: (() => void) | null = null;
 
 /**
  * Windows: DebridTV's own window (desktop/). The page runs in WebView2 and video
@@ -137,13 +139,18 @@ async function nativeWindow(url: string): Promise<boolean> {
     });
   }
   const local = process.env.LOCALAPPDATA ?? homedir();
-  const args = ["--url", url, "--data", join(local, "DebridTV", "webview"), "--no-dialog"];
+  // The window hides this console while it's open, so DebridTV is one window.
+  const args = ["--url", url, "--data", join(local, "DebridTV", "webview"), "--no-dialog", "--console-of", String(process.pid)];
   if (mpv) args.push("--mpv", mpv);
   return new Promise((resolve) => {
     try {
       const child = spawn(windowExe!, args, { stdio: "ignore", detached: true, windowsHide: false });
       // A window that can't open quits at once; give it a moment before trusting it.
-      const t = setTimeout(() => (child.unref(), resolve(true)), 4000);
+      const t = setTimeout(() => {
+        child.unref();
+        child.on("exit", (code) => code === 0 && onWindowClosed?.());
+        resolve(true);
+      }, 4000);
       child.on("error", () => (clearTimeout(t), resolve(false)));
       child.on("exit", (code) => {
         clearTimeout(t);
@@ -199,6 +206,14 @@ async function start(): Promise<void> {
   try {
     const { app, port } = await main();
     console.log("  Keep this window open while you watch. Closing it turns DebridTV off.\n");
+    // Closing DebridTV's own window closes DebridTV, unless phones and TVs are using it.
+    onWindowClosed = () => {
+      if (!app.lan.enabled) process.exit(0);
+      console.log("  DebridTV's window is closed. DebridTV keeps running for your home network; close this window to turn it off.\n");
+      try {
+        spawn(windowExe!, ["--show-console", String(process.pid)], { stdio: "ignore", windowsHide: true }).on("error", () => {});
+      } catch {}
+    };
     openBrowser(`http://127.0.0.1:${port}/`).catch(() => {});
     // One click: fetch ffmpeg in the background the first time, so compatibility mode just works.
     if (process.platform === "win32" && !app.ffmpeg && process.env.DEBRIDTV_NO_FFMPEG_DOWNLOAD !== "1") {

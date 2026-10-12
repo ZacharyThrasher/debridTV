@@ -219,6 +219,12 @@ describe("native player (desktop app)", () => {
     if (skip) return t.skip(skip);
     const s = await open(dts!);
     try {
+      // Far enough into a program that a step back stays inside it.
+      for (let i = 0; i < 120; i++) {
+        const n = await get(`/api/now?channel=${dts!.id}`);
+        if (n.segment?.kind === "program" && n.fileOffsetMs >= 15_000 && n.airing.end - n.now > 8000) break;
+        await sleep(500);
+      }
       await playing(s.page);
       const loads = () => s.sent.filter((m) => m.command?.[0] === "loadfile").length;
       const n0 = loads();
