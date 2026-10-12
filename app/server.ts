@@ -666,6 +666,12 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
   const maxh = maxhRaw == null || maxhRaw === "" || maxhRaw === "0" ? null : Number(maxhRaw);
   if (maxh !== null && maxh !== 720 && maxh !== 1080) return json(res, 400, { error: "maxh is 720 or 1080." });
   const scale = maxh ? `scale=-2:'min(ih,${maxh})'` : "scale='min(1920,iw)':-2";
+  // Audio delay (docs/parity/player.md): ad=<ms>, positive plays the sound later, negative earlier.
+  // The browser can only delay sound by itself, so "earlier" comes here, where the audio is re-encoded anyway.
+  const adRaw = url.searchParams.get("ad");
+  const ad = adRaw == null || adRaw === "" ? 0 : Number(adRaw);
+  if (!Number.isInteger(ad) || Math.abs(ad) > 10_000) return json(res, 400, { error: "ad is a whole number of ms between -10000 and 10000." });
+  const audioShift = ad > 0 ? ["-af", `adelay=${ad}:all=1`] : ad < 0 ? ["-af", `atrim=start=${(-ad / 1000).toFixed(3)},asetpts=PTS-STARTPTS`] : [];
   const subCodec = sub.index != null ? (sub as { track?: { codec: string } }).track?.codec : undefined;
   const textSub = sub.index != null && (!subCodec || TEXT_SUBS.has(subCodec));
   const burn = sub.index != null && !textSub && url.searchParams.get("burn") === "1" && IMAGE_SUBS.has(subCodec ?? "");
@@ -685,7 +691,7 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
       ? ["-filter_complex", `[0:v:0][0:s:${sub.index}]overlay=eof_action=pass,${scale}[v]`, "-map", "[v]", ...encode]
       : ["-map", "0:v:0", ...(copyVideo ? ["-c:v", "copy"] : [...encode, "-vf", scale])]),
     // An index we couldn't check against the file's track list is optional, so a wrong guess plays without sound rather than failing.
-    "-map", a.index == null ? "0:a:0?" : `0:a:${a.index}${it.tracks?.length ? "" : "?"}`, "-sn", "-dn", "-map_chapters", "-1",
+    "-map", a.index == null ? "0:a:0?" : `0:a:${a.index}${it.tracks?.length ? "" : "?"}`, "-sn", "-dn", "-map_chapters", "-1", ...audioShift,
     ...(ac === "opus" ? ["-c:a", "libopus", "-ac", "2", "-b:a", "160k"] : ["-c:a", "aac", "-ac", "2", "-b:a", "192k"]),
     "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "pipe:1",
     // Text subtitles ride along as a second output of the same process: no second read.

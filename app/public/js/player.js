@@ -241,6 +241,8 @@ async function playMedia(ch, info, my, forced = null, hold = 0) {
   }
   let route = chooseRoute(a);
   if (sel && needsCompat(sel) && tv.ffmpeg && route === "direct") route = "live";
+  // Sound earlier than the picture can only be done on the PC (see audioShiftQuery).
+  if (audioShiftQuery() && route === "direct" && a.kind !== "track") route = "live";
   tv.route = route;
   const offsetAt = () => info.fileOffsetMs + (now() - info.now);
   media = { itemId: a.itemId, route, liveStart: 0, ch, info, sel, my };
@@ -358,6 +360,7 @@ function startLive(offsetMs, a, onPlaying, onError) {
   const m = media;
   m.liveStart = offsetMs;
   m.aligned = false;
+  m.shift = audioShiftQuery();
   video.onloadedmetadata = null;
   video.onplaying = () => {
     if (media !== m) return;
@@ -368,7 +371,7 @@ function startLive(offsetMs, a, onPlaying, onError) {
     onPlaying();
   };
   video.onerror = onError;
-  video.src = `/media/${encodeURIComponent(a.itemId)}/live?start=${(offsetMs / 1000).toFixed(2)}&v=${v}&tok=${tok}${aacOk ? "" : "&ac=opus"}${capQuery()}${selectionQuery(m.sel)}`;
+  video.src = `/media/${encodeURIComponent(a.itemId)}/live?start=${(offsetMs / 1000).toFixed(2)}&v=${v}&tok=${tok}${aacOk ? "" : "&ac=opus"}${capQuery()}${selectionQuery(m.sel)}${audioShiftQuery()}`;
   video.play().catch(() => autoplayHint());
   if (m.sel?.sub != null && !m.sel.burn) {
     tracksFor(a.itemId).then((tracks) => {
@@ -826,3 +829,95 @@ initSignOff({
     if (tv.current) tune(tv.current, { silent: true });
   },
 });
+
+// ------------------------------------------------------------------ control bar
+
+// What the YouTube-style bar (controls.js, docs/parity/player.md) reads and calls.
+// Live-channel seeking belongs to the "free seeking" work: when it lands, timeline()
+// reports mode "shifted" and a seekable range, and the bar needs no change.
+
+/**
+ * Where playback is, in file time:
+ * { mode: "live" | "shifted" | "ondemand", itemId, posMs, durMs, liveMs, minMs, maxMs, route, paused }
+ * liveMs is the station's live point (null in On Demand); minMs..maxMs is what can be
+ * seeked to (equal on a plain live channel). null when nothing with a timeline is on.
+ */
+export function timeline() {
+  if (tv.onDemand) {
+    const d = tv.onDemand.durationMs || 0;
+    return { mode: "ondemand", itemId: tv.onDemand.itemId, posMs: tv.onDemand.positionMs, durMs: d, liveMs: null, minMs: 0, maxMs: d ? d - 1000 : 0,
+      route: tv.route, paused: tv.paused };
+  }
+  const info = tv.info, a = info?.airing;
+  if (!a || info.segment?.kind !== "program" || tv.route === "card" || a.itemId == null) return null;
+  const liveMs = info.fileOffsetMs + (now() - info.now);
+  const posMs = filePos() ?? liveMs;
+  return { mode: "live", itemId: a.itemId, posMs, durMs: a.durationMs || 0, liveMs, minMs: liveMs, maxMs: liveMs, route: tv.route, paused: tv.paused };
+}
+
+/** Seek to a file time where the timeline allows it. Returns false when it can't. */
+export function seekTo(fileMs) {
+  const t = timeline();
+  if (!t || t.maxMs <= t.minMs) return false;
+  seekBy(clamp(fileMs, t.minMs, t.maxMs) - t.posMs);
+  return true;
+}
+
+/** Playback speed (pitch kept). Only off the station clock: live keeps 1×. */
+export function setRate(r) {
+  const t = timeline();
+  if (!t || t.mode === "live") return false;
+  rate = clamp(Number(r) || 1, 0.25, 4);
+  video.preservesPitch = true;
+  if (media) video.playbackRate = rate;
+  return true;
+}
+export const currentRate = () => (tv.onDemand ? rate : 1);
+let rate = 1;
+video.addEventListener("playing", () => {
+  // A restarted compatibility stream (seek, track change) starts at 1×.
+  if (tv.onDemand && media && video.playbackRate !== rate) video.playbackRate = rate;
+});
+addEventListener("debridtv:ondemand", (e) => !e.detail && (rate = 1));
+
+/** The program on screen, for the bar's menus: { itemId, route, sel } or null. */
+export const playing = () => (media ? { itemId: media.itemId, route: media.route, sel: media.sel ?? null } : null);
+
+/** Pick an audio track by index (null = the file's default). Remembers the language. */
+export async function pickAudio(index) {
+  const m = media;
+  if (!m) return false;
+  const tracks = await tracksFor(m.itemId);
+  if (media !== m) return false;
+  const t = audioTracks(tracks).find((x) => x.index === index) ?? null;
+  const isDefault = index == null || index === defaultAudio(tracks);
+  if (!isDefault && !tv.ffmpeg) return osd("AUDIO", "Switching tracks needs compatibility mode (install ffmpeg)", 3000), false;
+  setPref("audioLang", t?.lang && t.lang !== "und" ? t.lang : null);
+  if ((m.sel?.audio ?? null) === (isDefault ? null : index)) return true;
+  osd("AUDIO", trackLabel(t ?? audioTracks(tracks).find((x) => x.index === defaultAudio(tracks))), 2000);
+  replay(m, { ...(m.sel ?? { sub: null, burn: false }), audio: isDefault ? null : index });
+  return true;
+}
+
+/** Restart the program where it is with the current audio shift (sound earlier needs the PC). */
+export function reapplyAudioShift() {
+  const m = media;
+  if (!m || m.my !== token) return;
+  const want = audioShiftQuery() !== "";
+  // Already playing with this shift? Nothing to do.
+  if (m.route === "direct" ? !want : (m.shift ?? "") === audioShiftQuery()) return;
+  if (want && !tv.ffmpeg) return void toast("Moving the sound earlier needs compatibility mode (install ffmpeg). Later works anywhere.");
+  replay(m, m.sel);
+}
+
+/**
+ * pref audioDelayMs < 0 (sound earlier) → &ad= for the compatibility stream. Sound later
+ * (> 0) is a Web Audio delay in controls.js, which works on any route without a restart.
+ */
+function audioShiftQuery() {
+  const d = Math.round(Number(pref("audioDelayMs")) || 0);
+  return d < 0 && tv.ffmpeg ? `&ad=${Math.max(-10_000, d)}` : "";
+}
+
+/** The demo picture's canvas, for screenshots on demo channels. */
+export const demoCanvas = () => (tv.route === "demo" ? synthEl : null);
