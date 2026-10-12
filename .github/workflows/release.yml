@@ -65,8 +65,12 @@ jobs:
           # An older copy (like `npm start` from a checkout) already holds the port: the exe must
           # replace it, so the loop below waits for an answer that carries this build.
           Set-Content old.js 'require("http").createServer((q, r) => r.end(JSON.stringify({ channels: [], version: "0.0.9" }))).listen(7337, "127.0.0.1")'
-          $old = Start-Process node -ArgumentList "old.js" -PassThru
-          Start-Sleep 2
+          $old = Start-Process node -ArgumentList (Resolve-Path old.js).Path -PassThru -RedirectStandardError old.err
+          $oldUp = $false
+          for ($i = 0; $i -lt 30 -and -not $oldUp; $i++) {
+            try { $o = Invoke-RestMethod "http://127.0.0.1:7337/api/bootstrap"; $oldUp = ($o.version -eq "0.0.9") } catch { Start-Sleep 1 }
+          }
+          if (-not $oldUp) { Get-Content old.err; throw "the stand-in older copy didn't start" }
           $p = Start-Process $exe -ArgumentList "--no-browser" -PassThru -RedirectStandardOutput out.log -RedirectStandardError err.log
           $base = "http://127.0.0.1:7337"
           $up = $false
