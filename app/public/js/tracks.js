@@ -252,7 +252,8 @@ export function applyCaptionStyle() {
     styleEl.id = "caption-style";
     document.head.append(styleEl);
   }
-  styleEl.textContent = `#video::cue { ${captionCss()} }
+  // "html" outranks other ::cue rules (a loaded subtitle file's), so the chosen look wins.
+  styleEl.textContent = `html #video::cue { ${captionCss()} }
   #video::-webkit-media-text-track-display { padding: 0 .3em; }`;
   const video = document.getElementById("video");
   for (const t of video?.textTracks ?? []) for (const c of [...(t.cues ?? [])]) placeCue(c);

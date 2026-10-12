@@ -1,0 +1,64 @@
+{
+  "experiment": "EXP-011",
+  "ranAt": "2026-10-12T00:12:01.488Z",
+  "preload": false,
+  "apiLatencyMs": 370,
+  "mediaTtfbMs": 200,
+  "linkMbps": 100,
+  "fileMbps": 6,
+  "programSec": 40,
+  "medianMs": 519,
+  "min": 299,
+  "max": 530,
+  "boundaries": [
+    {
+      "itemId": "tff23005719e2",
+      "startAt": 1791763721040,
+      "frameMs": 530
+    },
+    {
+      "itemId": "td36b12b787ad",
+      "startAt": 1791763761048,
+      "frameMs": 521
+    },
+    {
+      "itemId": "tee59a6476c44",
+      "startAt": 1791763801056,
+      "frameMs": 529
+    },
+    {
+      "itemId": "t30af8ba45651",
+      "startAt": 1791763841064,
+      "frameMs": 519
+    },
+    {
+      "itemId": "tb7db5fcd22bf",
+      "startAt": 1791763881072,
+      "frameMs": 511
+    },
+    {
+      "itemId": "td4e1f29a2a25",
+      "startAt": 1791763921080,
+      "frameMs": 299
+    }
+  ],
+  "apiCalls": 0,
+  "bytesMB": {
+    "playback": 155.99,
+    "preload": 0,
+    "cached": 0
+  },
+  "preloadStats": {
+    "started": 0,
+    "alreadyCached": 0,
+    "cancelled": 0,
+    "failed": 0,
+    "used": 0,
+    "wasted": 0,
+    "bytes": 0,
+    "usedBytes": 0,
+    "wastedBytes": 0,
+    "apiCalls": 0,
+    "pendingBytes": 0
+  }
+}

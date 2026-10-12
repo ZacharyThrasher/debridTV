@@ -142,6 +142,19 @@ body.guide-open .rating-card { display: none; }
 }
 .paused-icon { font-size: calc(var(--u)*4); color: var(--amber); }
 
+/* Back to live (ADR-0006): shown while the viewer is behind or ahead of the station clock. */
+.live-pill {
+  position: absolute; top: calc(var(--u)*2.2); left: 50%; transform: translateX(-50%); z-index: 3;
+  display: flex; align-items: center; gap: .6em; padding: .45em 1em .45em .8em; border-radius: 99em;
+  background: rgba(0,0,0,.66); border: 1px solid rgba(255,255,255,.22); color: #fff; cursor: pointer;
+  font: 600 calc(var(--u)*.95) var(--body); backdrop-filter: blur(6px); animation: rise .3s var(--ease);
+}
+.live-pill i { width: .6em; height: .6em; border-radius: 50%; background: #ff4d4d; box-shadow: 0 0 .5em #ff4d4d; }
+.live-pill span { color: rgba(255,255,255,.66); font-weight: 400; }
+.live-pill:hover, .live-pill:focus-visible { background: rgba(0,0,0,.85); border-color: rgba(255,255,255,.5); }
+body.guide-open .live-pill, body.panel-open .live-pill { display: none; }
+.badge.shift { background: rgba(255,190,80,.18); color: #ffd28a; }
+
 /* ------------------------------------------------------------------ cards (breaks, off air, unavailable) */
 
 .card {
@@ -1427,7 +1440,6 @@ html[data-where="device"] .ced-pin { display: none !important; }
    as the look changes. */
 .cc-glyph { display: inline-block; font-family: var(--display); font-weight: 800; font-size: .78em; letter-spacing: .04em; line-height: 1;
   padding: .18em .32em .14em; border: 2px solid currentColor; border-radius: .3em; }
-.dock .cc-glyph { font-size: .82em; }
 .cc-sheet {
   position: fixed; top: calc(var(--u)*1.2); right: calc(var(--u)*1.2); bottom: calc(var(--u)*1.2); width: min(calc(100vw - 2.4*var(--u)), calc(var(--u)*30));
   display: grid; grid-template-rows: auto 1fr; overflow: hidden; z-index: 26;
@@ -1435,7 +1447,6 @@ html[data-where="device"] .ced-pin { display: none !important; }
   box-shadow: 0 30px 80px rgba(0,0,0,.55); backdrop-filter: blur(14px); font-size: max(14px, calc(var(--u)*.92)); animation: slide .28s var(--ease);
 }
 .cc-sheet[hidden] { display: none; }
-body.captions-open .dock { display: none; }
 .cc-head { display: flex; align-items: center; justify-content: space-between; padding: 1.1em 1.3em .4em; }
 .cc-title { display: flex; align-items: center; gap: .55em; font-family: var(--display); font-weight: 800; font-size: 1.6em; letter-spacing: .02em; }
 .cc-badge { font-size: .55em; padding: .2em .4em .15em; border-radius: .3em; background: var(--ink); color: var(--panel-solid); letter-spacing: .06em; }

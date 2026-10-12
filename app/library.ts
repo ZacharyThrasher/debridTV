@@ -131,6 +131,8 @@ export interface Config {
   scanPerMinute?: number;
   /** Daily settings backups to keep (0 = none). Default 14. */
   backupKeep?: number;
+  /** Station breaks: slot padding and mid-program breaks. Off unless the viewer turns them on (ADR-0006). */
+  breaks?: boolean;
 }
 
 export interface ScanState {

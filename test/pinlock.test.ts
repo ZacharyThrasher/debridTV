@@ -139,6 +139,14 @@ test("N-06b: a locked channel costs zero bytes and zero calls until the PIN is e
   assert.equal(now.fileOffsetMs, null);
   assert.equal(now.segment.fileFrom, undefined);
   assert.ok(now.airing.end > now.airing.start);
+  // Skipping back or ahead (ADR-0006) asks the same question about another time: still nothing.
+  for (const at of [now.now - 6 * 3_600_000, now.now + 6 * 3_600_000, now.airing.end + 1]) {
+    const shifted = (await get(`/api/now?channel=${late.id}&at=${at}`)).body;
+    assert.equal(shifted.locked, true);
+    assert.equal(shifted.airing.itemId, null);
+    assert.equal(shifted.fileOffsetMs, null);
+    assert.doesNotMatch(JSON.stringify(shifted), new RegExp(`${lateItem}|Late\\.Night|"episode"`, "i"));
+  }
   assert.doesNotMatch(JSON.stringify(now), new RegExp(`${lateItem}|S01|Late\\.Night|"episode"|description|codecs`, "i"));
   const guide = (await get("/api/guide")).body.rows.find((r: any) => r.channel.id === late.id);
   assert.ok(guide.airings.length > 0 && guide.airings.every((a: any) => a.locked && a.title === "Locked" && a.itemId === null));

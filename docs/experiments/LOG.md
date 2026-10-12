@@ -467,3 +467,33 @@ is already in the library airs instead, with a small banner note ("Real-Debrid
 refused its copy"). The refused copy itself is never retried, and 409/451/403 stay
 final for it. This reverses the round-5 behaviour (PARITY-005). See ADR-0005.
 Test: `library.test` N-01d/E6.
+
+### EXP-011 — Readying the next show (ADR-0006) (2026-10-12)
+
+**Question.** Zachary asked for the upcoming show to be pre-loaded so the switch feels
+instant. How much does fetching the next file's two cached ends ahead of time save at a
+program boundary, and what does it cost?
+
+**Setup.** `experiments/exp011-next-show.ts` runs the app server against the mock TorBox
+shaped like LIVE-001 (link 370 ms, media TTFB 200 ms, 100 Mb/s) serving 6 Mb/s VP9/Opus
+WebM episodes of 40 s, back to back on one channel. Chromium sits on the channel; time =
+the next program's start on the station clock to the first presented frame of its file.
+Six boundaries per run, fresh data dir each run, pre-load off then on. Links were already
+cached from the library scan in both runs, so the difference is the bytes alone. Cloud
+container, not Zachary's PC. Results: `results/exp011-preload-{off,on}.json`.
+
+| | median | range |
+|---|---|---|
+| Pre-load off | **519 ms** | 299–530 |
+| Pre-load on | **108 ms** | 96–111 |
+
+**Cost.** 1.31 MB per boundary (1 MiB head + 256 KiB tail), 7.9 MB over the run; 6 of 7
+pre-loads were played, the 7th was still waiting when the run stopped; 0 wasted, 0 extra
+API calls (each link is the one the tune would have used). Watched bytes were unchanged
+(156 → 151 MB; the head came from the cache instead).
+
+**Verdict.** About 0.4 s less static at every boundary (−79 %), for ~1.3 MB each. With a
+cold link the tune would also pay ~370 ms for it; the pre-load resolves that ahead too.
+Shipped on by default with an off switch, only for the channel being watched, after 10 s
+settled and from 60 s before the next program. Browser test: nothing is asked for in the
+first seconds on a channel, and a channel change drops the request.

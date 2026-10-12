@@ -1,6 +1,6 @@
 # NostalgiaTV parity register (versioned, per surface)
 
-Register version: 0.6 | NostalgiaTV sources retrieved: 2026-10-10 | DebridTV column audited: 2026-10-11 (round 5) against PR #2 head `b62c1d9` plus round-5 polish `af04721` | Handoff basis: DEBRIDTV_RESEARCH_HANDOFF_2026-10-10.md sections 2.1, 3, 12.
+Register version: 0.7 | NostalgiaTV sources retrieved: 2026-10-10 | DebridTV column audited: 2026-10-11 (round 5) against PR #2 head `b62c1d9` plus round-5 polish `af04721`; 2026-10-12 defaults changed by ADR-0006 (breaks, rating card and auto sign-off are opt-in; free seeking) | Handoff basis: DEBRIDTV_RESEARCH_HANDOFF_2026-10-10.md sections 2.1, 3, 12.
 
 NostalgiaTV's Play listing, GitBook user guide and Docker companion README describe different capability sets and different versions. This register is NOT one universal spec. Each cell is evidence about one surface at one version/date. No cell was verified by running the product.
 
@@ -74,17 +74,17 @@ Order follows handoff N-01..N-28; suffix letters are splits; N-29+ are additions
 | N-13 | Number-key tuning, guide navigation | D [N01 "type the channel number"] | P [no number-key claim; N10 D-pad/controller] | ? (web /watch) | ? | **V** number entry [A02], up/down, last channel [A03], guide arrows [A05, A06]; fast surfing requests media only where it lands [A25] (cost measured in EXP-002/006). |
 | N-14 | Hover tuning, startup choices, D-pad mapping | D [N05: auto-change channel, start on On Demand, swap D-pad] | D [N05; N10 mobile D-pad] | ? | ? | **V** start on last channel [A10] or the guide, guide idle action, remote/D-pad navigation (`test/ui`). Hover-tune declined by design: the guide previews the highlighted channel from the station clock only, 0 calls / 0 bytes (`test/ui` N-14, `c8e67c9`); can be turned off. |
 | N-15 | Guide display options (scroll, time indicator, dim ended, 24h clock, idle action) | D [N05] | D [N05] | ? | ? | **V** 12 h grid, now line, 24-hour clock [A05, A06, A08]; aired shading, picture-in-guide, padding tails, idle action, clock-only preview (`test/ui` guide); page size and scroll speed settings, Channel Up/Down turn a page (`N-15` test). |
-| N-16 | Logo overlay mode/position/opacity, rating at start | D [N05] | D [N05] | ? | ? | **V** channel bug with corner and opacity settings, logos, rating card at program start (`fc8f20b`, `7e3bc92`; `server.test` N-03/N-16) [A02]. |
+| N-16 | Logo overlay mode/position/opacity, rating at start | D [N05] | D [N05] | ? | ? | **V** channel bug with corner and opacity settings, logos, rating card at program start, **optional, off by default** (ADR-0006) (`fc8f20b`, `7e3bc92`; `server.test` N-03/N-16) [A02]. |
 | N-17a | Force 4:3 / widescreen zoom | D [N05; N01 what's-new 16:9/4:3] | D [N10 mobile 4:3] | ? | ? | **V** Z cycles auto, fill, 4:3 and zoom [A28]. |
-| N-17b | Auto sign-off (up to 8 h), guide idle | D [N05] | D [N05] | ? | ? | **V** "Still watching?" after the idle limit, then streaming stops and a key returns to live (`test/ui/player` N-17b ×2). |
+| N-17b | Auto sign-off (up to 8 h), guide idle | D [N05] | D [N05] | ? | ? | **V** "Still watching?" after the idle limit, then streaming stops and a key returns to live (`test/ui/player` N-17b ×2). **Optional, off by default** (ADR-0006): the viewer picks 2–8 h in Look & feel. |
 | N-18a | Subtitle and audio-track / language options | D [N05] | D [N05] | D [N02 watch UI track selection] | ? | **V** audio language and captions chosen with A/C, in step with the picture, carried across channels (`test/ui/player` N-18a); compat stream track choice, text subs, image subs burned in, Opus where AAC can't play (`compat.test` N-18a ×2). |
 | N-18b | ExoPlayer vs libmpv, live switch | D [N05; N10 v0.9.12 live switching] | D [same] | X [engine is client-side; ? not stated] | ? | **P (different design)** browser player with one direct → compatibility fallback, never a loop [A20, A24]; no engine choice. |
 | N-19 | Direct play / transcode cap, DTS transcode, passthrough, delivery badges | D [N05; N10 v0.9.12; N01 4K/HDR/DV] | D [same] | ? | ? | **V** direct play [A20]; compatibility mode [A24]; height cap for converted video (`compat.test` N-19). Passthrough: **won't do (platform)**, browsers can't bitstream AC-3/DTS (ADR-0004). |
 | N-20 | Playback reporting; 90% watched threshold | D [N05] | D [N05] | ? | ? | **V** seen file time is reported [A22]; watched flips between 85% and 92% [A23]; D8; mark/forget/export history (`server.test` history). |
-| N-21 | Commercials between/inside programs, bumpers, idents | D [N01; Pro per N11] | D [same] | D [N02, N14] | ? | **P/V (by design)** no commercials or bumpers (they'd fetch media nobody asked for). Long breaks rotate up next / later / on now elsewhere plus a station ident slide, 0 media requests (`test/ui` station breaks). |
-| N-22a | Break groups/sequences, padding, per-channel pools | D [N01; N02] | D [N01] | D [N02] | ? | **P/V** slot padding becomes a station break [A16]; no break groups or per-channel pools. |
-| N-22b | Mid-break: halfway / chapters | D [N01 "chapter"; N10] | D [same] | D [N02 HALFWAY, CHAPTERS] | ? | **V** chapters become mid-program breaks where they fit the slot [A17; `server.test` N-22b; MKV and MP4 chapters]. No halfway mode for files without chapters (by design: breaks aren't guessed). |
-| N-22c | Mid-break: silence detection | X [N14: server-side only] | X [same] | D [N02 ffmpeg, Docker only] | ? | **V (local only)** ffmpeg silence detection finds break points for local files without chapters, same edge/spacing rules as chapters (`silence.test` N-22c ×4). Never for debrid files: it would read unwatched media (EXP-010). |
+| N-21 | Commercials between/inside programs, bumpers, idents | D [N01; Pro per N11] | D [same] | D [N02, N14] | ? | **P/V (by design, optional)** station breaks are **off by default** (ADR-0006, [A29], `breaks.test`); one switch turns them on. No commercials or bumpers (they'd fetch media nobody asked for). With breaks on, long breaks rotate up next / later / on now elsewhere plus a station ident slide, 0 media requests (`test/ui` station breaks). |
+| N-22a | Break groups/sequences, padding, per-channel pools | D [N01; N02] | D [N01] | D [N02] | ? | **P/V (optional)** with station breaks on, slot padding becomes a station break [A16]; off by default, programs run back to back [A29] (ADR-0006). No break groups or per-channel pools. |
+| N-22b | Mid-break: halfway / chapters | D [N01 "chapter"; N10] | D [same] | D [N02 HALFWAY, CHAPTERS] | ? | **V (optional)** with station breaks on (off by default, ADR-0006), chapters become mid-program breaks where they fit the slot [A17; `server.test` N-22b; MKV and MP4 chapters]. No halfway mode for files without chapters (by design: breaks aren't guessed). |
+| N-22c | Mid-break: silence detection | X [N14: server-side only] | X [same] | D [N02 ffmpeg, Docker only] | ? | **V (local only, optional)** with station breaks on (ADR-0006), ffmpeg silence detection finds break points for local files without chapters, same edge/spacing rules as chapters (`silence.test` N-22c ×4). Never for debrid files: it would read unwatched media (EXP-010). |
 | N-23a | Music/radio ("Tune Choice") | D [N01; N10 new stations] | D [same] | D [N02 + visualizer] | ? | **V** Jukebox channel from local MP3/FLAC/Ogg/Opus/WAV, songs back to back on station time, sleeve, details and spectrum analyser; sound-only compat stream (`audio.test` N-23a ×5, `compat.test` N-23a, `test/ui` music ×2). No internet radio. |
 | N-23b | Weather channels (WeatherStar 4000, Storm) | D [N01 Storm; N10 EAS crawls] | D [same] | D [N02; Storm falls back to offline simulation] | ? | — not started. |
 | N-23c | Trailers channel ("What's On") | D [N01; N10] | D | D [N02] | ? | **V** Coming Attractions: local trailers (beside the film or in `Trailers/`) back to back, offering the film when it's in the library (`trailers.test` N-23c ×2, `test/ui/stations`). No online trailers. |
@@ -106,7 +106,7 @@ Order follows handoff N-01..N-28; suffix letters are splits; N-29+ are additions
 | N-32 | Seasonal lineups (Oct-Dec holiday) | D [N01 marketing claim] -> mark P | P | ? | ? | **V** seasonal channels (off air out of season, says when they're back) and dated slots, ranges inclusive and wrapping the new year (`dayparts.test` N-32 ×3, `server.test` N-32, `test/ui/groups` seasonal ×2). No built-in holiday presets. |
 | N-33 | Fire TV support | ? | ? | ? | Fire TV: P [N10 mentions Fire TV stability fixes only; no listing] | — not started. |
 | N-34 | iOS / Apple TV / Roku / web-only client | ? | ? | P [browser /watch] | iOS: ? | **P/V** any desktop browser; phone-width guide [A26]; TV mode with a remote; paired phones and TVs on the home network (`lan.test`). No native apps; not reachable outside the home network. |
-| N-35 | Join programs in progress | D [N01 marketing claim] -> P | P | ? | ? | **V** tuning lands at station time, 0.1-0.15 s drift [A20]; pause 5 s then resume returns to live [A21]; C2/C3 tests. |
+| N-35 | Join programs in progress | D [N01 marketing claim] -> P | P | ? | ? | **V** tuning lands at station time, 0.1-0.15 s drift [A20]; C2/C3 tests. Beyond NTV (ADR-0006): any channel can be skipped back and ahead, program to program, with Back to live; pause then resume plays on from where it paused [A21] (`test/ui/player` ADR-0006 ×2, `pinlock.test` shifted /api/now stays redacted). |
 | N-36 | Weather EAS alert crawls | D [N10 v0.9.12] | D | ? | ? | — not started. |
 | N-37 | Stream/delivery status badges, HDR/audio badges | D [N10; N01] | D | ? | ? | **V** banner badges for live, break, watched, refused, route, provider, rating [A04, A24], plus resolution, HDR and sound chips (`test/ui` format chips N-37, `probe.test` N-37). |
 | N-38 | Pro entitlement gating (profiles, themes, commercials, cloud sync, 70+ channels, On Demand layout) | D [N11] | D [N11] | ? entitlement for Docker not stated | ? | **N/A** personal app with no paid tier. |
@@ -156,12 +156,12 @@ NO_PROXY=127.0.0.1 node docs/parity/audit/app-audit.mjs
 | A13 | local folders become channels after a header scan | N-01b | ✅ |
 | A14 | show channel at #10+, Quarter Hour at #6 | N-03 | ✅ |
 | A15 | the same episode in two folders airs once | N-01d, N-05 | ✅ |
-| A16 | slot padding: programs start on the quarter hour, the rest is a break | N-22a | ✅ |
-| A17 | a file with a chapter at 4:00 gets a mid-program break | N-22b | ✅ |
+| A16 | slot padding (breaks on): programs start on the quarter hour, the rest is a break | N-22a | ✅ |
+| A17 | a file with a chapter at 4:00 gets a mid-program break (breaks on) | N-22b | ✅ |
 | A18 | custom channels go on air at #50+ | N-02b, N-03 | ✅ |
 | A19 | hiding a channel keeps every other number | N-03 | ✅ |
 | A20 | tuning in lands at station time (direct play; drift ~0.1 s) | N-35 | ✅ |
-| A21 | pause 5 s inside a program, resume is back at live | N-35 | ✅ |
+| A21 | pause 5 s inside a program, resume plays on from there (5 s behind), L is back at live | N-35 | ✅ |
 | A22 | real playback is reported as seen time | N-20 | ✅ |
 | A23 | watched flips between 85% and 92% seen, and shows in the guide | N-20 | ✅ |
 | A24 | an AC-3 file plays through compatibility mode, labelled in the banner | N-19, N-37 | ✅ |
@@ -169,6 +169,7 @@ NO_PROXY=127.0.0.1 node docs/parity/audit/app-audit.mjs
 | A26 | phone-width guide has no horizontal overflow | N-34 | ✅ |
 | A27 | every settings tab renders | — | ✅ |
 | A28 | Z cycles the picture shape, including 4:3 | N-17a | ✅ |
+| A29 | station breaks are off by default: no break segments in 6 h of guide | N-21, N-22a, N-22b | ✅ |
 
 Limits: local files only (C's `createApp` tests in `test/server.test.ts` cover the provider paths against the mock providers), Chromium without H.264, and A25 may land on a channel in a break, so it shows no stray streams rather than the cost of the final tune (EXP-002/006 measure that). Rows also cite unit and browser tests by name (`test/ui/guide.test.ts`, `test/dayparts.test.ts`, `test/metadata.test.ts`, `test/server.test.ts`, `test/library.test.ts`).
 
@@ -184,7 +185,7 @@ Owner = workstream from `docs/HANDOFF.md` §7. Every round-3 gap shipped; what's
 
 Needs Zachary (product or outside-traffic decisions): profiles with separate history and kid/adult split (N-29), Plex/Jellyfin/Emby sources (N-01a, N-24a), live streams and M3U/XMLTV/HDHomeRun (N-24b/c), weather and EAS crawls (N-23b, N-36; need an online weather source), cloud sync (N-25, `cloud-relay` gate), tuner export (N-28, `tuner-export` gate).
 
-Recorded as by design (not gaps): no commercials or bumpers and no break pools (N-21, N-22a: would fetch unwatched media), no audio passthrough (N-19, ADR-0004), no hover-tune media (N-14: clock-only preview), silence detection never on debrid files (N-22c, EXP-010), no player-engine choice (N-18b).
+Recorded as by design (not gaps): station breaks, the rating card and auto sign-off are opt-in, never forced (ADR-0006); no commercials or bumpers and no break pools (N-21, N-22a: would fetch unwatched media), no audio passthrough (N-19, ADR-0004), no hover-tune media (N-14: clock-only preview), silence detection never on debrid files (N-22c, EXP-010), no player-engine choice (N-18b).
 
 ## Discrepancies
 

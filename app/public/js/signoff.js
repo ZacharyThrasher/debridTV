@@ -1,12 +1,13 @@
 // Auto sign-off (parity N-17b). A viewer who falls asleep shouldn't stream all
-// night: after `signOffHours` without a key, click or touch (default 4, 0 = never)
+// night: after `signOffHours` without a key, click or touch (0 = never, the default
+// since ADR-0006; the viewer can pick 2–8 hours)
 // the station asks "Still watching?" for a minute, then signs off. Signing off
 // drops every stream, so nothing more is fetched from a provider until the viewer
 // comes back. Any key or click puts the station back on the air, live.
 
 import { pref, fmtTime, now } from "./util.js";
 
-const DEFAULT_HOURS = 4;
+const DEFAULT_HOURS = 0;
 const ACTIVITY = ["keydown", "pointerdown", "pointermove", "wheel", "touchstart"];
 
 let hooks = null; // { stop(), resume() } from the player
