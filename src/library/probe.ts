@@ -9,6 +9,8 @@ export interface ProbeResult {
   tracks?: Track[];
   /** Chapter start times in file time (Matroska Chapters; MP4 Nero "chpl" or a QuickTime chapter track). */
   chaptersMs?: number[];
+  /** Chapter titles, one per chaptersMs entry ("" where the file has none). Absent when no chapter is named. */
+  chapterNames?: string[];
   bytesRead: number;
 }
 
@@ -33,14 +35,25 @@ export type RangeReader = (start: number, length: number) => Promise<Uint8Array>
 export const HEAD_BYTES = 256 * 1024;
 export const MAX_PROBE_BYTES = 3 * 1024 * 1024;
 
-type Info = { durationMs: number | null; video?: string; audio?: string[]; tracks?: Track[]; chaptersMs?: number[] };
+type Info = { durationMs: number | null; video?: string; audio?: string[]; tracks?: Track[]; chaptersMs?: number[]; chapterNames?: string[] };
 
-function finish(durationMs: number | null, video: string | undefined, audio: string[], tracks: Track[] = [], chapters: number[] = []): Info {
+type Chapters = { ms: number[]; names: string[] };
+
+/** Chapter starts sorted, one per time (the first title wins), with their titles alongside when any has one. */
+function chapterList(ms: number[], names: string[]): Pick<Info, "chaptersMs" | "chapterNames"> {
+  if (!ms.length) return {};
+  const byMs = new Map<number, string>();
+  ms.forEach((t, i) => byMs.has(t) || byMs.set(t, (names[i] ?? "").trim()));
+  const list = [...byMs].sort((a, b) => a[0] - b[0]);
+  return { chaptersMs: list.map((x) => x[0]), ...(list.some((x) => x[1]) ? { chapterNames: list.map((x) => x[1]) } : {}) };
+}
+
+function finish(durationMs: number | null, video: string | undefined, audio: string[], tracks: Track[] = [], chapters: Chapters = { ms: [], names: [] }): Info {
   const out: Info = { durationMs };
   if (video !== undefined) out.video = video;
   if (audio.length > 0) out.audio = audio;
   if (tracks.length > 0) out.tracks = tracks;
-  if (chapters.length > 0) out.chaptersMs = [...new Set(chapters)].sort((a, b) => a - b);
+  Object.assign(out, chapterList(chapters.ms, chapters.names));
   return out;
 }
 
@@ -76,6 +89,8 @@ const ID_CHAPTERS = 0x1043a770;
 const ID_EDITION = 0x45b9;
 const ID_CHAPTER_ATOM = 0xb6;
 const ID_CHAPTER_START = 0x91;
+const ID_CHAPTER_DISPLAY = 0x80;
+const ID_CHAP_STRING = 0x85;
 const ID_VIDEO = 0xe0;
 const ID_AUDIO = 0xe1;
 const ID_PIXEL_HEIGHT = 0xba;
@@ -165,6 +180,8 @@ interface MkvState {
   audio: string[];
   tracks: Track[];
   chapters: number[];
+  /** Chapter titles, parallel to chapters (one per top-level atom). */
+  names: string[];
   /** Where the Segment's payload starts (SeekHead positions count from here). */
   segStart?: number;
   /** Chapters' position per the SeekHead, relative to segStart. */
@@ -213,11 +230,24 @@ function mkvWalk(b: Uint8Array, start: number, end: number, st: MkvState): void 
         break;
       case ID_CHAPTER_ATOM: {
         // Only top-level atoms of each edition; nested atoms are sub-chapters.
-        const inner = { ...st, chapters: [] as number[], done: false };
+        const inner = { ...st, chapters: [] as number[], names: [] as string[], done: false };
         mkvWalk(b, dataStart, clipped, inner);
-        if (inner.chapters.length) st.chapters.push(inner.chapters[0]!);
+        if (inner.chapters.length) {
+          st.chapters.push(inner.chapters[0]!);
+          st.names.push(inner.names[0] ?? "");
+        }
         break;
       }
+      case ID_CHAPTER_DISPLAY:
+        mkvWalk(b, dataStart, clipped, st);
+        break;
+      case ID_CHAP_STRING:
+        if (dataEnd <= b.length && szr.size > 0 && szr.size < 512) {
+          let e = dataEnd;
+          while (e > dataStart && b[e - 1] === 0) e--;
+          st.names.push(new TextDecoder("utf-8").decode(b.subarray(dataStart, e)));
+        }
+        break;
       case ID_CHAPTER_START:
         if (dataEnd <= b.length && szr.size > 0 && szr.size <= 8) st.chapters.push(Math.round(readUint(b, dataStart, dataEnd) / 1_000_000));
         break;
@@ -309,7 +339,7 @@ function mkvWalk(b: Uint8Array, start: number, end: number, st: MkvState): void 
 }
 
 function mkvParse(head: Uint8Array): Info & { sawCluster: boolean; lateChaptersAt?: number } {
-  const st: MkvState = { scale: 1_000_000, duration: null, sawInfo: false, sawTracks: false, sawCluster: false, audio: [], tracks: [], chapters: [], done: false };
+  const st: MkvState = { scale: 1_000_000, duration: null, sawInfo: false, sawTracks: false, sawCluster: false, audio: [], tracks: [], chapters: [], names: [], done: false };
   try {
     mkvWalk(head, 0, head.length, st);
   } catch {
@@ -322,19 +352,19 @@ function mkvParse(head: Uint8Array): Info & { sawCluster: boolean; lateChaptersA
   // Without a Cluster in the buffer, Info and Tracks are still enough to stop reading.
   // Chapters that sit after the media (written last by some muxers) are found through the SeekHead.
   const late = st.chapters.length === 0 && st.segStart !== undefined && st.chaptersAt !== undefined ? st.segStart + st.chaptersAt : undefined;
-  return { ...finish(ms, st.video, st.audio, st.tracks, st.chapters), sawCluster: st.sawCluster || (st.sawInfo && st.sawTracks),
+  return { ...finish(ms, st.video, st.audio, st.tracks, { ms: st.chapters, names: st.names }), sawCluster: st.sawCluster || (st.sawInfo && st.sawTracks),
     ...(late !== undefined && late >= head.length ? { lateChaptersAt: late } : {}) };
 }
 
-/** Chapter starts from a lone Chapters element. */
-function mkvChapters(b: Uint8Array): number[] {
-  const st: MkvState = { scale: 1_000_000, duration: null, sawInfo: false, sawTracks: false, sawCluster: false, audio: [], tracks: [], chapters: [], done: false };
+/** Chapter starts (and titles) from a lone Chapters element. */
+function mkvChapters(b: Uint8Array): Pick<Info, "chaptersMs" | "chapterNames"> {
+  const st: MkvState = { scale: 1_000_000, duration: null, sawInfo: false, sawTracks: false, sawCluster: false, audio: [], tracks: [], chapters: [], names: [], done: false };
   try {
     mkvWalk(b, 0, b.length, st);
   } catch {
     /* tolerate */
   }
-  return [...new Set(st.chapters)].sort((a, c) => a - c);
+  return chapterList(st.chapters, st.names);
 }
 
 export function parseMatroska(head: Uint8Array): { durationMs: number | null; video?: string; audio?: string[] } {
@@ -397,8 +427,8 @@ interface Mp4State {
   audio: string[];
   tracks: Track[];
   traks: Trak[];
-  /** Nero chapter list (moov/udta/chpl), in ms. */
-  chpl: number[];
+  /** Nero chapter list (moov/udta/chpl), in ms, with titles. */
+  chpl: Chapters;
 }
 
 interface Trak {
@@ -476,7 +506,7 @@ function parseTrak(b: Uint8Array, box: Box, end: number, st: Mp4State): void {
 }
 
 /** Tracks become the track list; a track another one names as its chapters becomes chapter times instead. */
-function finishTraks(st: Mp4State): number[] {
+function finishTraks(st: Mp4State): Chapters {
   const chapterIds = new Set(st.traks.flatMap((t) => t.chap));
   for (const t of st.traks) {
     if (t.codec === "" || chapterIds.has(t.id)) continue;
@@ -485,9 +515,10 @@ function finishTraks(st: Mp4State): number[] {
     const kind = t.handler === "vide" ? "video" : t.handler === "soun" ? "audio" : ["sbtl", "subt", "text"].includes(t.handler) ? "subtitle" : null;
     if (kind) addTrack(st.tracks, kind, { codec: t.codec, lang: t.lang, ...t.extra });
   }
-  if (st.chpl.length) return st.chpl;
+  if (st.chpl.ms.length) return st.chpl;
   const ct = st.traks.find((t) => chapterIds.has(t.id) && t.timescale > 0);
-  if (!ct) return [];
+  // A QuickTime chapter track keeps its titles in the media data, which a header read never sees.
+  if (!ct) return { ms: [], names: [] };
   // Each sample is one chapter; its start is the sum of the durations before it.
   const out: number[] = [];
   let at = 0;
@@ -496,18 +527,20 @@ function finishTraks(st: Mp4State): number[] {
       out.push(Math.round((at * 1000) / ct.timescale));
       at += delta;
     }
-  return out;
+  return { ms: out, names: [] };
 }
 
 /** Nero chapters: version, flags, [4 reserved if v1], count, then (start in 100 ns, title length, title)… */
-function parseChpl(b: Uint8Array, body: number, end: number): number[] {
+function parseChpl(b: Uint8Array, body: number, end: number): Chapters {
   let p = body + 4 + (b[body] === 1 ? 4 : 0);
-  if (p >= end) return [];
+  const out: Chapters = { ms: [], names: [] };
+  if (p >= end) return out;
   const n = b[p++]!;
-  const out: number[] = [];
   for (let i = 0; i < n && p + 9 <= end; i++) {
-    out.push(Math.round(u64(b, p) / 10_000));
-    p += 9 + b[p + 8]!;
+    const len = b[p + 8]!;
+    out.ms.push(Math.round(u64(b, p) / 10_000));
+    out.names.push(p + 9 + len <= end ? new TextDecoder("utf-8").decode(b.subarray(p + 9, p + 9 + len)) : "");
+    p += 9 + len;
   }
   return out;
 }
@@ -553,7 +586,7 @@ function mp4Info(st: Mp4State): Info {
 
 /** `boxes` starts at a top-level box boundary located at `fileOffset` in the file. */
 export function parseMp4(boxes: Uint8Array, fileOffset: number): Info & { moovAt?: number } {
-  const st: Mp4State = { timescale: 0, duration: null, fragDuration: null, audio: [], tracks: [], traks: [], chpl: [] };
+  const st: Mp4State = { timescale: 0, duration: null, fragDuration: null, audio: [], tracks: [], traks: [], chpl: { ms: [], names: [] } };
   let moovAt: number | undefined;
   try {
     for (const box of children(boxes, 0, boxes.length)) {
@@ -610,7 +643,7 @@ export async function probe(read: RangeReader, fileSize: number): Promise<ProbeR
       if (idr?.id === ID_CHAPTERS && szr && szr.size > 0 && szr.size <= 256 * 1024) {
         const el = await get(lateChaptersAt, idr.len + szr.len + szr.size);
         const ch = mkvChapters(el);
-        if (ch.length) info.chaptersMs = ch;
+        if (ch.chaptersMs) Object.assign(info, ch);
       }
     }
     return { container: "matroska", ...info, bytesRead };

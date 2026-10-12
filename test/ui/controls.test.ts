@@ -130,7 +130,7 @@ describe("control bar", () => {
     const before = media.length;
     await page.mouse.move(box.x + box.width * 0.6, box.y + box.height / 2);
     await page.waitForSelector(".pb-tip:not([hidden])");
-    assert.match(await page.textContent(".pb-tip"), /0:54Chapter 3/);
+    assert.match(await page.textContent(".pb-tip"), /0:54Part 3/, "the chapter's own title from the file");
     assert.equal(media.length, before, "hovering the scrubber opens no media");
     await page.mouse.click(box.x + box.width * 0.6, box.y + box.height / 2);
     await page.waitForFunction(async () => {

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { parseName } from "../src/library/parse.ts";
 import { WatchLedger } from "../src/history/watched.ts";
 import type { LibItem } from "../app/library.ts";
-import { browse, continueWatching, nextUp, show, type OnDemandDeps } from "../app/ondemand.ts";
+import { after, browse, continueWatching, nextUp, show, type OnDemandDeps } from "../app/ondemand.ts";
 import { shapeRule, type ItemInfo, type Rule } from "../app/lineup.ts";
 
 const MIN = 60_000;
@@ -86,6 +86,18 @@ test("N-30: next up follows the last finished episode; the show page groups seas
   const page = show(d, alpha[0]!.parsed.kind === "episode" ? alpha[0]!.parsed.showKey : "")!;
   assert.deepEqual(page.seasons.map((s) => [s.season, s.episodes.length]), [[1, 5], [2, 1], [0, 1]]);
   assert.equal(show(d, "nope"), null);
+});
+
+test("Lean-back: Next episode is the one after this in season order, skipping locked copies; none after the last or for a film", () => {
+  const d = deps(new WatchLedger(), [id("Alpha.Show.S01E03.mkv")]);
+  assert.equal(after(d, id("Alpha.Show.S01E01.mkv"))?.id, id("Alpha.Show.S01E02.mkv"));
+  assert.equal(after(d, id("Alpha.Show.S01E02.mkv"))?.id, id("Alpha.Show.S01E04.mkv"), "a locked episode is skipped");
+  assert.equal(after(d, id("Alpha.Show.S01E05.mkv"))?.label, "S2 · E1", "on into the next season");
+  assert.equal(after(d, id("Alpha.Show.S02E01.mkv"))?.id, id("Alpha.Show.S00E01.mkv"), "specials last");
+  assert.equal(after(d, id("Alpha.Show.S00E01.mkv")), null);
+  assert.equal(after(d, id("Beta.Show.S01E03.mkv")), null);
+  assert.equal(after(d, id("Zed.Movie.1999.mkv")), null, "films have no next episode");
+  assert.equal(after(d, "nope"), null);
 });
 
 test("N-30: continue watching: in-progress programs and next episodes, one row per show, newest first", () => {

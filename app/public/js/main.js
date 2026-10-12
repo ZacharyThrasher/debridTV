@@ -3,6 +3,8 @@
 
 import "./spatial.js"; // first, so the remote's keys reach it before any other handler
 import "./controls.js"; // second: the control bar's keys (it replaces the old dock)
+import "./leanback.js"; // Skip intro / credits and Next episode; OK presses them before main.js opens the guide
+import "./remind.js";
 import { api, whereAmI } from "./api.js";
 import { html, raw, pref, setPref, applyPrefs, syncClock, toast } from "./util.js";
 import { tv, tune, channelStep, lastChannel, byNumber, togglePause, applyVolume } from "./player.js";

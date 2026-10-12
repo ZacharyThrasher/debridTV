@@ -10,6 +10,7 @@ import { formatChips, artOf, artImg } from "./ui.js";
 import { isLocked, isRedacted } from "./lock.js";
 import { openPanel } from "./panel.js";
 import { openOnDemand, watchFilm } from "./ondemand.js";
+import { reminderFor, setReminder, cycleReminder, sayReminder } from "./remind.js";
 
 const wordmark = (c) => (hasLogo(c) ? raw(logoHtml(c, "sm")) : null);
 
@@ -185,6 +186,8 @@ function render() {
         let sub = [a.episode, a.subtitle, a.year].filter(Boolean).join(" · ");
         const locked = isLocked(ch) || isRedacted(a); // a locked channel's listings stay hidden until the PIN is typed
         if (locked) cls.push("locked");
+        const rem = !locked && a.start > t ? reminderFor(ch.id, a.start) : null;
+        if (rem) cls.push("reminded");
         // A run of short episodes of one show: lead with the episode, not the same title again.
         if (locked) (head = "Locked"), (sub = "");
         else if (i > 0 && shown[i - 1].title === a.title && a.episode && right - left < 14) {
@@ -192,7 +195,7 @@ function render() {
           sub = a.subtitle ? a.episode : a.title;
         }
         return html`<div class="${cls.join(" ")}" style="left:calc(${left}% + 2px);width:calc(${right - left}% - 4px)${a.start <= t && t < a.end ? `;--p:${(((t - Math.max(a.start, viewFrom)) / (Math.min(a.end, viewTo) - Math.max(a.start, viewFrom))) * 100).toFixed(1)}%` : ""}" data-row="${ri}" data-start="${a.start}" role="gridcell"
-          aria-label="${locked ? "Locked program" : a.title}, ${fmtTime(a.start)}">
+          aria-label="${locked ? "Locked program" : a.title}, ${fmtTime(a.start)}${rem === "tune" ? ", tunes in by itself" : rem ? ", reminder set" : ""}">
           ${a.start < viewFrom ? raw('<span class="cont">◂</span>') : ""}
           ${a.watched ? raw('<span class="watched" title="Watched">✓</span>') : ""}
           ${raw(breakTail(a))}<div class="ct">${head}</div>${sub ? html`<div class="cs">${sub}</div>` : ""}</div>`;
@@ -290,8 +293,32 @@ function renderDetails(ch, a) {
     ${a.group ? html`<div class="gd-group"><b>${a.group.name}</b>${a.group.description ? html` · ${a.group.description}` : ""}</div>` : ""}
     <div class="desc">${a.subtitle ? html`“${a.subtitle}”. ` : ""}${state}.${pad ? ` Ends at ${fmtTime(pad.start)}, then a station break until ${fmtTime(pad.end)}.` : ""}</div>
     ${onNow ? raw(`<div class="prog"><i style="width:${pct.toFixed(1)}%"></i></div>`) : ""}
-    <div class="act"><kbd>OK</kbd> ${onNow ? (track ? "listen now" : "watch now") : "tune to this channel"}${a.trailerFor?.itemId ? raw(' <kbd>W</kbd> watch the film, it\'s in your library') : ""}</div>`;
+    <div class="act"><kbd>OK</kbd> ${onNow ? (track ? "listen now" : "watch now") : "tune to this channel"}${a.trailerFor?.itemId ? raw(' <kbd>W</kbd> watch the film, it\'s in your library') : ""}${remindable(ch, a) ? raw(` <kbd>R</kbd>${tvRemote()} ${remindHint(reminderFor(ch.id, a.start))}`) : ""}</div>
+    ${remindable(ch, a) ? remindButtons(reminderFor(ch.id, a.start)) : ""}`;
 }
+
+// ------------------------------------------------------------------ reminders (Lean-back pack)
+
+/** A program still to come on an ordinary channel (not locked, not a nonstop music or trailer row). */
+const remindable = (ch, a) => !!ch && !!a && a.start > now() && !isStream(ch) && !isLocked(ch) && !isRedacted(a);
+const tvRemote = () => (document.documentElement.classList.contains("tv") ? " or <kbd>Red</kbd>" : "");
+const remindHint = (mode) => (mode === "remind" ? "reminder set, press again to tune in by itself" : mode === "tune" ? "tunes in by itself, press again to clear" : "remind me");
+const remindButtons = (mode) => html`<div class="gd-remind" role="group" aria-label="Reminder">
+  <button class="gd-rbtn" data-remind="remind" aria-pressed="${mode === "remind"}">Remind me</button>
+  <button class="gd-rbtn" data-remind="tune" aria-pressed="${mode === "tune"}">Tune me</button></div>`;
+
+details.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-remind]");
+  if (!b || !data) return;
+  const ch = data.rows[row]?.channel;
+  const a = airingAt(row, at);
+  if (!remindable(ch, a)) return;
+  // Pressing the lit button clears it.
+  const mode = reminderFor(ch.id, a.start) === b.dataset.remind ? null : b.dataset.remind;
+  setReminder(ch, a, mode);
+  sayReminder(ch, a, mode);
+  render();
+});
 
 // ------------------------------------------------------------------ preview (N-14)
 // NostalgiaTV can change channel as you move through the guide ("hover tuning"). Here
@@ -385,6 +412,15 @@ export function guideKey(e) {
     if (!a?.trailerFor?.itemId || isRedacted(a)) return false;
     closeGuide();
     return watchFilm(a), true;
+  }
+  // R, or the remote's red button (the EPG convention for reminders and recordings).
+  if (k === "r" || k === "R" || k === "ColorF0Red") {
+    const ch = data.rows[row]?.channel;
+    const a = airingAt(row, at);
+    if (!remindable(ch, a)) return false;
+    cycleReminder(ch, a);
+    render();
+    return true;
   }
   const list = data.rows[row]?.airings ?? [];
   const cur = airingAt(row, at);

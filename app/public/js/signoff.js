@@ -46,6 +46,7 @@ function onActivity(e) {
   }
   const wasOff = state === "off";
   state = "on";
+  why = null;
   hide();
   if (wasOff) hooks?.resume();
   schedule();
@@ -84,6 +85,16 @@ function signOff() {
   state = "off";
   hooks?.stop();
   render();
+}
+
+let why = null; // "sleep" when the sleep timer signed off
+
+/** Sign off at once (the sleep timer). Any key or click comes back on the air, as usual. */
+export function signOffNow(reason = null) {
+  if (state === "off") return;
+  clearTimeout(timer);
+  why = reason;
+  signOff();
 }
 
 // ------------------------------------------------------------------ view
@@ -152,7 +163,7 @@ function render() {
       <div class="so-msg">
         <div class="so-kicker">Signed off at ${fmtTime(now())}</div>
         <div class="so-title" id="so-t">DebridTV has signed off</div>
-        <div class="so-why">Nothing is streaming, so no data is used while you're away.</div>
+        <div class="so-why">${why === "sleep" ? "The sleep timer ran out. " : ""}Nothing is streaming, so no data is used while you're away.</div>
         <div class="so-key">Press any key to come back on the air</div>
       </div>
     </div>`;
