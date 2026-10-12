@@ -38,6 +38,15 @@ export function syncClock(serverNow, sentAt) {
 }
 export const now = () => Date.now() + skew;
 
+/**
+ * Time shift (ADR-0006): how far the viewer has skipped ahead of (+) or back from (−)
+ * the station clock on the channel they're watching. 0 = live. The schedule itself
+ * never moves; the viewer just watches it at another point.
+ */
+export const shift = { ms: 0 };
+/** The station time the viewer is watching. */
+export const viewNow = () => now() + shift.ms;
+
 export function fmtTime(ms, { short = false } = {}) {
   const d = new Date(ms);
   let h = d.getHours();

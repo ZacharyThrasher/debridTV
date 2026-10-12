@@ -142,6 +142,19 @@ body.guide-open .rating-card { display: none; }
 }
 .paused-icon { font-size: calc(var(--u)*4); color: var(--amber); }
 
+/* Back to live (ADR-0006): shown while the viewer is behind or ahead of the station clock. */
+.live-pill {
+  position: absolute; top: calc(var(--u)*2.2); left: 50%; transform: translateX(-50%); z-index: 3;
+  display: flex; align-items: center; gap: .6em; padding: .45em 1em .45em .8em; border-radius: 99em;
+  background: rgba(0,0,0,.66); border: 1px solid rgba(255,255,255,.22); color: #fff; cursor: pointer;
+  font: 600 calc(var(--u)*.95) var(--body); backdrop-filter: blur(6px); animation: rise .3s var(--ease);
+}
+.live-pill i { width: .6em; height: .6em; border-radius: 50%; background: #ff4d4d; box-shadow: 0 0 .5em #ff4d4d; }
+.live-pill span { color: rgba(255,255,255,.66); font-weight: 400; }
+.live-pill:hover, .live-pill:focus-visible { background: rgba(0,0,0,.85); border-color: rgba(255,255,255,.5); }
+body.guide-open .live-pill, body.panel-open .live-pill { display: none; }
+.badge.shift { background: rgba(255,190,80,.18); color: #ffd28a; }
+
 /* ------------------------------------------------------------------ cards (breaks, off air, unavailable) */
 
 .card {

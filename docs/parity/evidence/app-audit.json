@@ -1,9 +1,9 @@
 {
-  "ranAt": "2026-10-11T16:28:18.035Z",
-  "commit": "4c24574",
+  "ranAt": "2026-10-12T00:18:48.783Z",
+  "commit": "1f4e425",
   "node": "v22.22.0",
-  "pass": 28,
-  "total": 28,
+  "pass": 29,
+  "total": 29,
   "results": [
     {
       "id": "A01",
@@ -34,9 +34,24 @@
           "30 Comedy",
           "31 Drama",
           "32 Sci-Fi",
-          "33 Crime",
-          "34 Family"
+          "33 Family",
+          "34 Crime",
+          "35 Mystery"
         ]
+      }
+    },
+    {
+      "id": "A29",
+      "rows": [
+        "N-21",
+        "N-22a",
+        "N-22b"
+      ],
+      "name": "station breaks are off by default: no padding or mid-program breaks in 6 h of guide",
+      "pass": true,
+      "detail": {
+        "breaks": false,
+        "breakSegments": 0
       }
     },
     {
@@ -69,7 +84,7 @@
       ],
       "name": "info banner shows title, times and what's next",
       "pass": true,
-      "detail": " 4Marathon Harbor Lights S2 · E5“Late Visitor”SitcomPG23 minStation break 4:25 PM 4:00 – 4:30 PM Next at 4:30 PMHarbor Lights "
+      "detail": " 4Marathon Harbor Lights S2 · E5“Late Visitor”SitcomPG23 minLIVEDemo picture 12:16 AM 11:55 – 12:18 AM Next at 12:18 AMPocket Planet "
     },
     {
       "id": "A05",
@@ -93,8 +108,8 @@
       "name": "guide grid has a row per channel and a now line",
       "pass": true,
       "detail": {
-        "rowsShown": 21,
-        "nowLine": 21
+        "rowsShown": 22,
+        "nowLine": 22
       }
     },
     {
@@ -163,7 +178,7 @@
       "pass": true,
       "detail": {
         "item": "Harbor Lights",
-        "offset": null
+        "offset": 80828
       }
     },
     {
@@ -211,7 +226,7 @@
       "rows": [
         "N-22a"
       ],
-      "name": "slot padding: programs start on the quarter hour, the rest is a break",
+      "name": "slot padding (breaks on): programs start on the quarter hour, the rest is a break",
       "pass": true,
       "detail": "program,break:padding"
     },
@@ -220,7 +235,7 @@
       "rows": [
         "N-22b"
       ],
-      "name": "files with chapters get mid-program breaks on a slotted channel",
+      "name": "files with chapters get mid-program breaks on a slotted channel (breaks on)",
       "pass": true,
       "detail": "Quarter Hour: S1 · E8 program,break:mid,program,break:padding"
     },
@@ -254,10 +269,10 @@
       "name": "tuning in joins the program at station time (direct play)",
       "pass": true,
       "detail": {
-        "videoMs": 81027,
-        "stationMs": 81127,
-        "item": "Audit Show S1 · E4",
-        "driftMs": -100
+        "videoMs": 273705,
+        "stationMs": 273825,
+        "item": "Audit Show S1 · E8",
+        "driftMs": -120
       }
     },
     {
@@ -265,15 +280,24 @@
       "rows": [
         "N-35"
       ],
-      "name": "pause for 5 s, resume returns to live (not where you paused)",
+      "name": "pause for 5 s, resume plays on from where you paused (ADR-0006), and L goes back to live",
       "pass": true,
       "detail": {
         "pausedShown": true,
-        "pausedAtMs": 5344,
-        "videoMs": 12878,
-        "stationMs": 12965,
-        "item": "Audit Show S1 · E5",
-        "driftMs": -87
+        "pausedAtMs": 273902,
+        "resumed": {
+          "videoMs": 276408,
+          "stationMs": 281541,
+          "item": "Audit Show S1 · E8",
+          "driftMs": -5133
+        },
+        "pill": true,
+        "live": {
+          "videoMs": 283943,
+          "stationMs": 284052,
+          "item": "Audit Show S1 · E8",
+          "driftMs": -109
+        }
       }
     },
     {
@@ -285,13 +309,13 @@
       "pass": true,
       "detail": [
         {
-          "title": "Audit Show · S01E05",
-          "seenMs": 13159,
+          "title": "Audit Show · S01E08",
+          "seenMs": 8566,
           "watched": false
         },
         {
-          "title": "Audit Show · S01E04",
-          "seenMs": 10369,
+          "title": "Harbor Lights · S02E05",
+          "seenMs": 40188,
           "watched": false
         }
       ]
@@ -304,7 +328,7 @@
       "name": "watched flag flips between 85% and 92% seen and shows in the guide",
       "pass": true,
       "detail": {
-        "seenAt85": 408007,
+        "seenAt85": 76507,
         "watchedAt85": false,
         "watchedAt92": true
       }
@@ -331,8 +355,8 @@
       "name": "fast surfing (6 presses, 120 ms apart) requests media only for the channel it lands on",
       "pass": true,
       "detail": {
-        "mediaRequests": 0,
-        "distinctFiles": 0,
+        "mediaRequests": 1,
+        "distinctFiles": 1,
         "landed": "10 AUDIT SHOW"
       }
     },
