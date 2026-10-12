@@ -1,0 +1,117 @@
+# Builds DebridTV.exe, starts it on a real Windows machine (including the
+# automatic ffmpeg download), and only then makes the GitHub release.
+#   Run it from Actions → Release → Run workflow (tick "publish" to publish right
+#   away; otherwise it's a draft), or push a tag like v0.1.0 for a draft.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the release now (unticked: save it as a draft)"
+        type: boolean
+        default: false
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.0
+      - run: npm ci
+      - run: npm run typecheck
+      - run: node --test test/ffmpeg-fetch.test.ts
+      - run: npm run build:exe
+      - id: v
+        run: echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debridtv-windows
+          path: |
+            dist/DebridTV.exe
+            dist/DebridTV-v*-win-x64.zip
+          if-no-files-found: error
+
+  windows-test:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: debridtv-windows
+      - name: Start DebridTV.exe like a first-time user
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Expand-Archive -Path (Get-Item "DebridTV-v*-win-x64.zip").FullName -DestinationPath unzipped
+          $env:DEBRIDTV_HOME = "$env:RUNNER_TEMP\dtv-home"
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP\dtv-local"
+          # Act like a PC without ffmpeg, so the automatic download is what's tested.
+          $env:DEBRIDTV_IGNORE_PATH_FFMPEG = "1"
+          $exe = "unzipped\DebridTV\DebridTV.exe"
+          $p = Start-Process $exe -ArgumentList "--no-browser" -PassThru -RedirectStandardOutput out.log -RedirectStandardError err.log
+          $base = "http://127.0.0.1:7337"
+          $up = $false
+          for ($i = 0; $i -lt 60 -and -not $up; $i++) {
+            try { $b = Invoke-RestMethod "$base/api/bootstrap"; $up = $true } catch { Start-Sleep 1 }
+          }
+          if (-not $up) { Get-Content out.log, err.log; throw "DebridTV didn't start" }
+          Write-Host "Started: version $($b.version), demo $($b.demo), $($b.channels.Count) channels"
+          $page = Invoke-WebRequest "$base/" -UseBasicParsing
+          if ($page.Content -notmatch "DebridTV") { throw "the guide page didn't load" }
+          Invoke-WebRequest "$base/styles.css" -UseBasicParsing | Out-Null
+          Invoke-WebRequest "$base/lan" -UseBasicParsing | Out-Null
+          # A second double-click must reopen, not fail.
+          $second = Start-Process $exe -ArgumentList "--no-browser" -PassThru -Wait -RedirectStandardOutput second.log
+          if ($second.ExitCode -ne 0) { Get-Content second.log; throw "second start failed" }
+          Get-Content second.log
+          # Compatibility mode turns itself on once ffmpeg is downloaded.
+          $ready = $false
+          for ($i = 0; $i -lt 120 -and -not $ready; $i++) {
+            $s = Invoke-RestMethod "$base/api/sources"
+            if ($s.ffmpeg) { $ready = $true } elseif ($s.ffmpegFetch.state -eq "failed") { break } else { Start-Sleep 5 }
+          }
+          Stop-Process -Id $p.Id
+          Get-Content out.log
+          if (-not $ready) { Get-Content err.log; throw "ffmpeg wasn't set up: $($s.ffmpegFetch | ConvertTo-Json)" }
+          $ff = "$env:LOCALAPPDATA\DebridTV\ffmpeg\bin\ffmpeg.exe"
+          $enc = & $ff -hide_banner -encoders
+          foreach ($e in "libx264", "libopus", " aac ") { if (-not ($enc -match $e)) { throw "downloaded ffmpeg lacks $e" } }
+          Write-Host "Windows check passed: starts, serves the guide, reopens, and sets up ffmpeg."
+
+  release:
+    needs: [build, windows-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: debridtv-windows
+          path: dist
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          tag="v$VERSION"
+          zip="dist/DebridTV-v$VERSION-win-x64.zip"
+          (cd dist && sha256sum DebridTV.exe "DebridTV-v$VERSION-win-x64.zip" > SHA256SUMS.txt)
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/DebridTV.exe "$zip" dist/SHA256SUMS.txt --clobber
+            gh release edit "$tag" --notes-file "docs/releases/$tag.md"
+          else
+            gh release create "$tag" dist/DebridTV.exe "$zip" dist/SHA256SUMS.txt \
+              --title "DebridTV $VERSION" --notes-file "docs/releases/$tag.md" --target "$GITHUB_SHA" --draft
+          fi
+          if [ "$PUBLISH" = "true" ]; then gh release edit "$tag" --draft=false --latest; fi
+          gh release view "$tag" --json url,isDraft

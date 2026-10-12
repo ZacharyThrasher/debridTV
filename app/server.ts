@@ -9,6 +9,7 @@
 // `createApp()` builds the whole thing without listening, so tests can run it
 // against the mock providers on a spare port.
 
+import { downloadedFfmpeg, ffmpegFetch } from "./ffmpeg-fetch.ts";
 import http from "node:http";
 import type { ExternalIds } from "../src/library/nfo.ts";
 import { readFileSync, existsSync, statSync, createReadStream, rmSync } from "node:fs";
@@ -112,9 +113,10 @@ const acquire = acquireRoutes({
 let lockSets: { gen: number; locked: Set<string>; open: Set<string> } | null = null;
 let lockGen = 0;
 let ledger = WatchLedger.import(historyFile.get().spans);
-const ffmpeg = opts.ffmpeg === false ? null : detectFfmpeg();
-const ffprobe = ffmpeg ? detectFfprobe(ffmpeg) : null;
-const silenceJob = new SilenceJob(ffmpeg);
+// `let`: the Windows app can download ffmpeg after starting (useFfmpeg below).
+let ffmpeg = opts.ffmpeg === false ? null : detectFfmpeg();
+let ffprobe = ffmpeg ? detectFfprobe(ffmpeg) : null;
+let silenceJob = new SilenceJob(ffmpeg);
 /**
  * Skip intro / Skip credits read chapter titles. Files scanned before titles were kept
  * get them from bytes already here: the file itself (local folders) or the two ends the
@@ -551,6 +553,7 @@ function sourcesView() {
       failed: library.items().filter((i) => isConnected(i.provider) && i.present && i.durationMs == null && i.probe?.error && i.probe.error !== "policy").length },
     dataDir: dataDir(),
     ffmpeg: !!ffmpeg,
+    ffmpegFetch: ffmpegFetch.status,
     version: VERSION,
   };
 }
@@ -1813,7 +1816,16 @@ return {
   },
   isDemo,
   lan,
-  ffmpeg: !!ffmpeg,
+  get ffmpeg() {
+    return !!ffmpeg;
+  },
+  /** Turn on compatibility mode with an ffmpeg downloaded after start (the Windows app). */
+  useFfmpeg(path: string) {
+    if (ffmpeg || silenceJob.state.running) return;
+    ffmpeg = path;
+    ffprobe = detectFfprobe(path);
+    silenceJob = new SilenceJob(ffmpeg);
+  },
 };
 }
 
@@ -1848,7 +1860,8 @@ function download(res: http.ServerResponse, name: string, body: unknown) {
 function detectFfmpeg(): string | null {
   // An ffmpeg.exe dropped next to DebridTV.exe counts too.
   const beside = process.env.DEBRIDTV_EXE_DIR ? join(process.env.DEBRIDTV_EXE_DIR, process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg") : null;
-  return detect([process.env.FFMPEG, beside && existsSync(beside) ? beside : null, "ffmpeg"]);
+  return detect([process.env.FFMPEG, beside && existsSync(beside) ? beside : null,
+    process.env.DEBRIDTV_IGNORE_PATH_FFMPEG === "1" ? null : "ffmpeg", downloadedFfmpeg()]);
 }
 function detectFfprobe(ffmpeg: string): string | null {
   // ffprobe ships next to ffmpeg in every common Windows/macOS/Linux build.

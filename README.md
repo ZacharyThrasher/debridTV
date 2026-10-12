@@ -25,13 +25,18 @@ the exe. Running from a git checkout (`npm start`) uses the same folder, so swit
 the exe, or replacing it with a newer one, keeps everything. Page files are unpacked once
 per version to `%LOCALAPPDATA%\DebridTV\app`.
 
-ffmpeg isn't bundled (it is large and GPL-licensed). Compatibility mode turns on when
-ffmpeg is on your PATH (`winget install Gyan.FFmpeg`) or when `ffmpeg.exe` and
-`ffprobe.exe` sit in the same folder as `DebridTV.exe`. Settings → Sources says which.
+Compatibility mode sets itself up. The first time DebridTV.exe starts on a PC without
+ffmpeg, it downloads the Windows build from gyan.dev in the background (about 110 MB),
+checks it against the published SHA-256, and keeps it in `%LOCALAPPDATA%\DebridTV\ffmpeg`.
+Settings → Sources shows the progress; reload the page when it says ready. Nothing else
+on the PC changes. An ffmpeg already on your PATH, or `ffmpeg.exe` and `ffprobe.exe` next
+to `DebridTV.exe`, is used instead. Set `DEBRIDTV_NO_FFMPEG_DOWNLOAD=1` to skip it.
 
 Options: `DebridTV.exe --no-browser`, and `set PORT=7340` before starting to change the port.
 
-Build it yourself with `npm ci && npm run build:exe` (needs `zip` and `unzip`; builds on
+Releases are made by the **Release** workflow (Actions → Release → Run workflow): it
+builds the exe, starts it on a real Windows machine (including the ffmpeg download),
+and only then creates the GitHub release. Build it yourself with `npm ci && npm run build:exe` (needs `zip` and `unzip`; builds on
 Linux, macOS or Windows with Git Bash). Output lands in `dist/`.
 
 ## Run from source (Windows, macOS or Linux)

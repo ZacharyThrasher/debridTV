@@ -183,14 +183,22 @@ async function sources() {
     <p class="muted">Your keys and library facts are stored in <code>${s.dataDir}</code>.${s.version ? html` DebridTV ${s.version}.` : ""}</p>`;
 }
 
-/** Compatibility mode needs ffmpeg on the PC. Say once, plainly, how to get it. */
+/** Compatibility mode needs ffmpeg. The Windows app fetches it itself; say where that stands. */
 function compatCard(s) {
-  if (s.ffmpeg !== false) return "";
-  return html`<h3>Compatibility mode</h3>
-    <div class="src">
-      <div class="src-head"><div class="src-name"><span class="src-dot"></span>ffmpeg isn't installed</div><span class="badge">Off</span></div>
-      <p class="lead">Most files play straight away without it. Files with sound or picture formats your browser can't decode, other audio tracks and subtitles need ffmpeg, a free program that converts them on this PC as you watch.</p>
-      <div class="muted">On Windows, open Command Prompt and run <code>winget install Gyan.FFmpeg</code>, or put <code>ffmpeg.exe</code> and <code>ffprobe.exe</code> in the same folder as DebridTV.exe. Then close DebridTV and start it again.</div>
+  const f = s.ffmpegFetch ?? { state: "idle" };
+  if (s.ffmpeg !== false && f.state !== "ready") return "";
+  const head = (title, badge) => html`<h3>Compatibility mode</h3>
+    <div class="src"><div class="src-head"><div class="src-name"><span class="src-dot ${badge === "On" ? "on" : ""}"></span>${title}</div><span class="badge ${badge === "On" ? "ok" : ""}">${badge}</span></div>`;
+  const why = html`<p class="lead">Most files play straight away without it. Files with sound or picture formats your browser can't decode, other audio tracks and subtitles need ffmpeg, a free program that converts them on this PC as you watch.</p>`;
+  if (f.state === "ready")
+    return html`${raw(head("ffmpeg is ready", "On"))}<div class="muted">Downloaded to this PC. Reload the page to use it.</div>
+      <div class="row-actions"><button class="btn primary" data-reload>Reload</button></div></div>`;
+  if (f.state === "downloading" || f.state === "unpacking")
+    return html`${raw(head(f.state === "unpacking" ? "Unpacking ffmpeg" : "Getting ffmpeg", "Setting up"))}${raw(why)}
+      ${f.state === "downloading" && f.pct != null ? html`<div class="progressbar"><i style="width:${f.pct}%"></i></div><div class="muted">${f.mb} MB of about 110 MB, from gyan.dev. Checked against its published checksum before use.</div>` : ""}</div>`;
+  return html`${raw(head("ffmpeg isn't installed", "Off"))}${raw(why)}
+      ${f.state === "failed" ? html`<div class="muted" style="color:var(--warn)">The automatic download didn't work: ${f.error}. DebridTV.exe tries again next time it starts.</div>` : ""}
+      <div class="muted">To install it yourself on Windows, open Command Prompt and run <code>winget install Gyan.FFmpeg</code>, or put <code>ffmpeg.exe</code> and <code>ffprobe.exe</code> in the same folder as DebridTV.exe. Then close DebridTV and start it again.</div>
     </div>`;
 }
 
@@ -274,6 +282,8 @@ body.addEventListener("click", async (e) => {
       const r = await api.post("/api/sources", { provider: "local", dirs });
       toast(`${r.files} files found in ${r.dirs.length} folder${r.dirs.length === 1 ? "" : "s"}.`);
       onChange();
+    } else if ("reload" in b.dataset) {
+      location.reload();
     } else if ("scanStart" in b.dataset) {
       await api.post("/api/scan/start", { perMinute: Number(document.getElementById("pace")?.value ?? 30) });
     } else if ("silenceStart" in b.dataset) {
