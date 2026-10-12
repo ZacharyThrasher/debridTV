@@ -839,7 +839,13 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
   const adRaw = url.searchParams.get("ad");
   const ad = adRaw == null || adRaw === "" ? 0 : Number(adRaw);
   if (!Number.isInteger(ad) || Math.abs(ad) > 10_000) return json(res, 400, { error: "ad is a whole number of ms between -10000 and 10000." });
-  const audioShift = ad > 0 ? ["-af", `adelay=${ad}:all=1`] : ad < 0 ? ["-af", `atrim=start=${(-ad / 1000).toFixed(3)},asetpts=PTS-STARTPTS`] : [];
+  // aresample=async closes gaps and overlaps in the source's audio timestamps (common after a
+  // seek into DTS, AC3 or FLAC) by stretching or padding a few samples, instead of passing them
+  // on as clicks and drift.
+  const audioFilter = ["-af", [
+    ...(ad > 0 ? [`adelay=${ad}:all=1`] : ad < 0 ? [`atrim=start=${(-ad / 1000).toFixed(3)}`, "asetpts=PTS-STARTPTS"] : []),
+    "aresample=async=1:first_pts=0",
+  ].join(",")];
   const subCodec = sub.index != null ? (sub as { track?: { codec: string } }).track?.codec : undefined;
   const textSub = sub.index != null && (!subCodec || TEXT_SUBS.has(subCodec));
   const burn = sub.index != null && !textSub && url.searchParams.get("burn") === "1" && IMAGE_SUBS.has(subCodec ?? "");
@@ -848,20 +854,28 @@ function serveLive(req: http.IncomingMessage, res: http.ServerResponse, id: stri
   const audioOnly = !!it.track || (!!it.tracks?.length && !it.tracks.some((t) => t.kind === "video"));
   const tok = url.searchParams.get("tok");
   const subsOut = textSub && tok ? 3 : null;
-  const input = it.provider === "local" ? it.ref : `http://${HOST}:${port}/media/${id}?internal=1`;
+  const remote = it.provider !== "local";
+  const input = remote ? `http://${HOST}:${port}/media/${id}?internal=1` : it.ref;
+  // A provider that drops the connection mid-show ends our proxy's response early; ffmpeg then
+  // asks again from the byte it had reached instead of ending the stream.
+  const reconnect = remote ? ["-reconnect", "1", "-reconnect_on_network_error", "1", "-reconnect_delay_max", "5"] : [];
   const encode = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p"];
   const args = [
     "-hide_banner", "-loglevel", "error", "-nostdin",
-    "-ss", start.toFixed(2), "-i", input,
+    // One second of analysis is enough (the track list is in the file header); the default five
+    // made every start read five seconds of the show first: 0.9 s of a 4.3 s start on Real-Debrid.
+    ...reconnect, "-analyzeduration", "1000000", "-ss", start.toFixed(2), "-i", input,
     ...(audioOnly
       ? []
       : burn
       ? ["-filter_complex", `[0:v:0][0:s:${sub.index}]overlay=eof_action=pass,${scale}[v]`, "-map", "[v]", ...encode]
       : ["-map", "0:v:0", ...(copyVideo ? ["-c:v", "copy"] : [...encode, "-vf", scale])]),
     // An index we couldn't check against the file's track list is optional, so a wrong guess plays without sound rather than failing.
-    "-map", a.index == null ? "0:a:0?" : `0:a:${a.index}${it.tracks?.length ? "" : "?"}`, "-sn", "-dn", "-map_chapters", "-1", ...audioShift,
+    "-map", a.index == null ? "0:a:0?" : `0:a:${a.index}${it.tracks?.length ? "" : "?"}`, "-sn", "-dn", "-map_chapters", "-1", ...audioFilter,
     ...(ac === "opus" ? ["-c:a", "libopus", "-ac", "2", "-b:a", "160k"] : ["-c:a", "aac", "-ac", "2", "-b:a", "192k"]),
-    "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "pipe:1",
+    // A fragment at each keyframe and at least every second: with a copied picture a keyframe
+    // can be 10 s away, and the browser can't play any of a fragment until all of it arrives.
+    "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-frag_duration", "1000000", "pipe:1",
     // Text subtitles ride along as a second output of the same process: no second read.
     // Shifted by the seek so cue times are file times; /api/livesubs makes them stream-relative.
     ...(subsOut ? ["-map", `0:s:${sub.index}`, "-c:s", "webvtt", "-output_ts_offset", start.toFixed(3), "-f", "webvtt", `pipe:${subsOut}`] : []),

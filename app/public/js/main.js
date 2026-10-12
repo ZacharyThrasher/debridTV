@@ -391,6 +391,12 @@ setInterval(() => !panelOpen() && !guideOpen() && api.get("/api/bootstrap").then
   const sig = (x) => x.channels.map((c) => c.id + c.number).join() + x.demo;
   if (boot && sig(b) !== sig(boot)) bootstrap();
 }).catch(() => {}), 60_000);
+// The Windows app fetches ffmpeg after it starts. A page opened before that finished
+// believed there was no compatibility mode until a reload; watch for it instead.
+const ffmpegWatch = setInterval(() => {
+  if (tv.ffmpeg) return clearInterval(ffmpegWatch);
+  if (boot) api.get("/api/bootstrap").then((b) => b.ffmpeg && player.ffmpegArrived()).catch(() => {});
+}, 5000);
 
 bootstrap()
   .then(() => pref("startup") === "guide" && pref("welcomed") && !guideOpen() && openGuide())
