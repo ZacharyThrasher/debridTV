@@ -1,12 +1,13 @@
 // DebridTV.exe starts here (see scripts/build-exe.mjs). It unpacks the page files
 // that are packed inside the exe, starts the same server `npm start` runs, and
-// opens the guide in the default browser. The first time, it also fetches ffmpeg
+// opens the guide in its own window (Edge's engine, see appWindow), or the default browser. The first time, it also fetches ffmpeg
 // for compatibility mode (ffmpeg-fetch.ts). Settings, keys and the library stay in
 // the usual data folder (%APPDATA%\DebridTV), never next to the exe, so moving
 // from a git checkout to the exe, or between versions, keeps everything.
 //
-//   DebridTV.exe               start and open the browser
-//   DebridTV.exe --no-browser  start without opening a browser
+//   DebridTV.exe               start and open the DebridTV window
+//   DebridTV.exe --browser     open the default browser instead of the window
+//   DebridTV.exe --no-browser  start without opening anything
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -87,8 +88,33 @@ async function replaceOther(other: { version: string }): Promise<void> {
   throw new Error(hint);
 }
 
+/**
+ * Windows: Edge, which every Windows 10/11 PC has, as an app window of its own (no
+ * address bar or tabs, its own taskbar entry and a separate profile). Edge decodes
+ * Dolby Digital (AC-3/E-AC-3) through Windows' own decoders where Firefox and Chrome
+ * can't, so those files play directly with sound whatever the viewer's usual browser
+ * is. The player still checks canPlayType, so a PC without the Dolby decoder falls
+ * back to compatibility mode as before. Returns false when Edge isn't found.
+ */
+function appWindow(url: string): boolean {
+  if (process.platform !== "win32" || process.argv.includes("--browser")) return false;
+  const roots = [process.env["ProgramFiles(x86)"], process.env.ProgramFiles, process.env.LOCALAPPDATA].filter(Boolean) as string[];
+  const edge = roots.map((r) => join(r, "Microsoft", "Edge", "Application", "msedge.exe")).find((p) => existsSync(p));
+  if (!edge) return false;
+  const profile = join(process.env.LOCALAPPDATA ?? homedir(), "DebridTV", "window");
+  try {
+    spawn(edge, [`--app=${url}`, `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check",
+      "--autoplay-policy=no-user-gesture-required", "--window-size=1280,760"],
+      { stdio: "ignore", detached: true, windowsHide: false }).on("error", () => {}).unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function openBrowser(url: string): void {
   if (process.argv.includes("--no-browser")) return;
+  if (appWindow(url)) return;
   const [cmd, args] = process.platform === "win32" ? ["cmd", ["/c", "start", "", url]]
     : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
   try {
