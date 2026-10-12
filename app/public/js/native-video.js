@@ -258,11 +258,14 @@ function install() {
     send(["seek", st.pos, "absolute+exact"]);
   }
 
-  /** Pick the file's audio and caption tracks by their stream number in the file. */
+  /**
+   * Pick the file's audio and caption tracks. The page counts them within their kind
+   * (a=1 is the file's second audio track), as the server's ffmpeg 0:a:N / 0:s:N do.
+   */
+  const byIndex = (type, i) => st.tracks.filter((t) => t.type === type && !t.external)[i];
   function pickTracks() {
     const L = st.loaded;
     if (!L) return;
-    const byIndex = (type, i) => st.tracks.find((t) => t.type === type && t["ff-index"] === i);
     if (L.a != null) {
       const t = byIndex("audio", L.a);
       if (t) setProp("aid", t.id);
@@ -384,7 +387,7 @@ function install() {
   // alone doesn't bring it back: picking the track again does.
   async function reopenSound() {
     if (!st.loaded) return;
-    const want = st.loaded.a != null ? st.tracks.find((t) => t.type === "audio" && t["ff-index"] === st.loaded.a)?.id : null;
+    const want = st.loaded.a != null ? byIndex("audio", st.loaded.a)?.id : null;
     await ask(["set_property", "aid", "no"]).catch(() => {});
     await ask(["set_property", "aid", want ?? "auto"]).catch(() => {});
   }
