@@ -1,6 +1,7 @@
 // DebridTV.exe starts here (see scripts/build-exe.mjs). It unpacks the page files
 // that are packed inside the exe, starts the same server `npm start` runs, and
-// opens the guide in the default browser. Settings, keys and the library stay in
+// opens the guide in the default browser. The first time, it also fetches ffmpeg
+// for compatibility mode (ffmpeg-fetch.ts). Settings, keys and the library stay in
 // the usual data folder (%APPDATA%\DebridTV), never next to the exe, so moving
 // from a git checkout to the exe, or between versions, keeps everything.
 //
@@ -13,6 +14,7 @@ import http from "node:http";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import sea from "node:sea";
+import { fetchFfmpeg } from "./ffmpeg-fetch.ts";
 
 const PORT = Number(process.env.PORT ?? 7337);
 const URL = `http://127.0.0.1:${PORT}/`;
@@ -82,9 +84,15 @@ async function start(): Promise<void> {
   }
   const { main } = await import("./server.ts");
   try {
-    const { port } = await main();
+    const { app, port } = await main();
     console.log("  Keep this window open while you watch. Closing it turns DebridTV off.\n");
     openBrowser(`http://127.0.0.1:${port}/`);
+    // One click: fetch ffmpeg in the background the first time, so compatibility mode just works.
+    if (process.platform === "win32" && !app.ffmpeg && process.env.DEBRIDTV_NO_FFMPEG_DOWNLOAD !== "1") {
+      fetchFfmpeg((line) => console.log(line)).then(
+        (exe) => (app.useFfmpeg(exe), console.log("  Compatibility mode is on. Reload the page to use it.\n")),
+        (e) => console.log(`  Couldn't get ffmpeg (${(e as Error).message}). DebridTV still works; it tries again next start.\n`));
+    }
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     fail(err.code === "EADDRINUSE" ? `another program is using port ${PORT}. Close it, or start DebridTV with a different PORT.` : err.message);

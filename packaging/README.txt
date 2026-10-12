@@ -15,12 +15,11 @@ Your settings
   ran DebridTV from a git checkout before, it uses the same folder, so nothing
   needs moving.
 
-Compatibility mode (optional)
-  Most files play without it. Files your browser can't decode, other audio
-  tracks and subtitles need ffmpeg. Either run this in Command Prompt:
-      winget install Gyan.FFmpeg
-  or put ffmpeg.exe and ffprobe.exe in the same folder as DebridTV.exe. Then
-  close DebridTV and start it again.
+Compatibility mode
+  Sets itself up. The first start downloads ffmpeg (about 110 MB, from gyan.dev,
+  checked against its published checksum) into %LOCALAPPDATA%\DebridTV\ffmpeg.
+  Settings > Sources shows progress; reload the page when it says ready. Most
+  files play before it finishes. An ffmpeg you already have is used instead.
 
 Options
   DebridTV.exe --no-browser    start without opening the browser
