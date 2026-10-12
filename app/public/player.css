@@ -235,3 +235,50 @@ html.tv .pb-text b, html.tv .pb-ch { display: none; }
   .pb-live small { display: none; }
   .pb-menu { right: 8px; left: 8px; width: auto; }
 }
+
+/* ------------------------------------------------------------------ Lean-back pack (leanback.js, sleep.js) */
+
+/* Skip intro / Skip credits / Next episode: plain labelled buttons in the bottom-right
+   corner of the picture, above the bar when it shows. The main one is white, like the
+   remote's focus, so OK obviously presses it. */
+.lean {
+  position: fixed; right: calc(var(--u) * 2 + var(--safe-x, 0px)); bottom: calc(var(--u) * 5 + var(--safe-y, 0px)); z-index: 13;
+  display: flex; gap: calc(var(--u) * .5); align-items: stretch; font-family: var(--pb-font);
+  animation: lean-in .22s var(--pb-ease);
+}
+body.pbar-on .lean { bottom: calc(var(--pb-h) + var(--u) * 1.2); }
+/* Above the info banner while it shows (its clock and title sit in that corner). */
+body.banner-open .lean { bottom: calc(var(--u) * 13 + var(--safe-y, 0px)); }
+body.banner-open.pbar-on .lean { bottom: calc(var(--pb-h) + var(--u) * 11.5); }
+body.guide-open .lean, body.panel-open .lean { display: none; }
+@keyframes lean-in { from { opacity: 0; transform: translateY(6px); } }
+.lean-btn {
+  display: grid; align-content: center; gap: .1em; min-height: calc(var(--pb-btn) * 1.05); padding: .45em 1.1em; text-align: left;
+  border: 1px solid var(--pb-surface-line); border-radius: var(--pb-radius); background: var(--pb-surface); color: var(--pb-ink);
+  font: inherit; font-size: max(14px, calc(var(--u) * 1)); cursor: pointer; box-shadow: var(--shadow-1, 0 8px 24px rgba(0, 0, 0, .35));
+}
+.lean-btn b { font-weight: 700; font-stretch: var(--display-wdth, 78%); font-size: 1.08em; line-height: 1.1; }
+.lean-btn small { color: var(--pb-dim); font-size: .82em; font-variant-numeric: tabular-nums; white-space: nowrap; max-width: 18em; overflow: hidden; text-overflow: ellipsis; }
+.lean-btn.main { background: var(--pb-ink); color: #0b0c0d; border-color: var(--pb-ink); }
+.lean-btn.main small { color: rgba(11, 12, 13, .68); }
+.lean-btn:hover { border-color: var(--pb-ink); }
+.lean-btn:focus-visible { outline: var(--ring, 3px) solid var(--pb-focus); outline-offset: 3px; }
+html.tv .lean-btn { font-size: calc(var(--u) * 1.15); }
+@media (max-width: 760px) {
+  .lean { right: 8px; bottom: 64px; }
+  body.pbar-on .lean { bottom: calc(var(--pb-h) + 12px); }
+  body.banner-open .lean { bottom: 128px; }
+  body.banner-open.pbar-on .lean { bottom: calc(var(--pb-h) + 112px); }
+  .lean-btn { padding: .4em .8em; }
+}
+
+/* The sleep timer's countdown beside the time; pressing it opens the timer's menu. */
+.pb-sleep {
+  flex: none; height: calc(var(--pb-btn) * .7); padding: 0 .65em; border: 1px solid var(--pb-surface-line); border-radius: var(--pb-radius);
+  background: transparent; color: var(--pb-ink); font: inherit; font-size: .86em; font-variant-numeric: tabular-nums; cursor: pointer; white-space: nowrap;
+}
+.pb-sleep:hover, html.remote .pb-sleep:focus-visible { background: var(--pb-hi); }
+@media (max-width: 760px) { .pb-sleep { padding: 0 .4em; } }
+
+/* The sleep timer's fade: the picture goes dark over the fade, then the sign-off screen takes over. */
+#sleepdim { position: fixed; inset: 0; z-index: 55; background: #000; opacity: 0; pointer-events: none; transition: opacity .25s linear; }

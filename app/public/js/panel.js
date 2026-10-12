@@ -652,7 +652,18 @@ function signOffOpt() {
     <select class="input" style="width:auto" data-pref-select="signOffHours" data-num="1" aria-label="Sign off after">${raw(opts.map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`).join(""))}</select></div>
     <div class="opt"><div><div class="ol">Get the next show ready</div><div class="od">A minute before the next program on the channel you're watching, fetch its first second or so (about 1.3 MB) so it starts without a wait. Never while you surf or browse the guide.</div></div>
       <label class="switch"><input type="checkbox" data-pref="preloadNext" aria-label="Get the next show ready" ${pref("preloadNext") !== false ? "checked" : ""}><i></i></label></div>
+    ${raw(leanBackOpts())}
     ${raw(compatQualityOpt())}`;
+}
+
+/** Lean-back pack: the skip buttons, and the two things that can happen without a press (both off). */
+function leanBackOpts() {
+  return html`<div class="opt"><div><div class="ol">Skip intro and credits buttons</div><div class="od">When a file's chapters are named Intro, Opening, Recap or Credits, a button in the corner skips that part. Files without named chapters get no button.</div></div>
+      <label class="switch"><input type="checkbox" data-pref="skipButtons" aria-label="Skip intro and credits buttons" ${pref("skipButtons") !== false ? "checked" : ""}><i></i></label></div>
+    <div class="opt"><div><div class="ol">Skip intros by themselves</div><div class="od">Jump past a named intro or recap without a press. Off unless you turn it on.</div></div>
+      <label class="switch"><input type="checkbox" data-pref="autoSkipIntro" aria-label="Skip intros by themselves" ${pref("autoSkipIntro") === true ? "checked" : ""}><i></i></label></div>
+    <div class="opt"><div><div class="ol">Play the next episode by itself</div><div class="od">In On Demand, when an episode ends, start the next one instead of going back to the channel. Off unless you turn it on.</div></div>
+      <label class="switch"><input type="checkbox" data-pref="autoNext" aria-label="Play the next episode by itself" ${pref("autoNext") === true ? "checked" : ""}><i></i></label></div>`;
 }
 
 /** N-19: when a file has to be converted for this browser, how big the picture may be (0 = as the file is, up to 1080p). */

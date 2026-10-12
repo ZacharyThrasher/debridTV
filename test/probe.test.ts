@@ -257,6 +257,7 @@ test("N-18a / N-22b: track list with languages and flags, and chapter starts (Ma
   assert.equal(r.tracks?.[2]?.name, "Español");
   assert.equal(r.tracks?.[3]?.forced, true);
   assert.deepEqual(r.chaptersMs, [0, 2000, 5000]);
+  assert.deepEqual(r.chapterNames, ["Cold open", "Act 1", "Act 2"], "chapter titles for Skip intro / Skip credits");
   assert.deepEqual(r.audio, ["aac", "aac"], "the old summary fields are unchanged");
 });
 
@@ -274,6 +275,8 @@ test("N-22b: MP4 chapters from a Nero chpl list, or from a QuickTime chapter tra
     const r = await probe(memoryReader(data).read, data.byteLength);
     assert.equal(r.container, "mp4");
     assert.deepEqual(r.chaptersMs, [0, 2000, 5000], name);
+    // Nero lists carry titles; a QuickTime chapter track keeps them in the media data, past a header read.
+    assert.deepEqual(r.chapterNames, name === "fixture-chapters.mp4" ? ["One", "Two", "Three"] : undefined, name);
     assert.deepEqual(r.tracks?.map((t) => t.kind), ["video", "audio"], `${name}: ffmpeg counts the chapter track as data, so 0:s:N stays right`);
     close(r.durationMs, 7500);
   }

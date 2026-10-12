@@ -39,7 +39,7 @@ import { OnlineMetadata } from "./metadata/tmdb.ts";
 import { allowedUnder } from "../src/clock/ratings.ts";
 import { SilenceJob, type SilenceTarget } from "./silence.ts";
 import { ShowIdentity, showRoutes } from "./shows.ts";
-import { browse as onDemandBrowse, continueWatching, show as onDemandShow, type OnDemandDeps } from "./ondemand.ts";
+import { after as onDemandAfter, browse as onDemandBrowse, continueWatching, show as onDemandShow, type OnDemandDeps } from "./ondemand.ts";
 import { LanAccess, type LanOptions } from "./lan/access.ts";
 import { showGaps } from "./missing.ts";
 import { acquireRoutes, type AcquireRouteDeps } from "./acquire-routes.ts";
@@ -112,6 +112,28 @@ let ledger = WatchLedger.import(historyFile.get().spans);
 const ffmpeg = opts.ffmpeg === false ? null : detectFfmpeg();
 const ffprobe = ffmpeg ? detectFfprobe(ffmpeg) : null;
 const silenceJob = new SilenceJob(ffmpeg);
+/**
+ * Skip intro / Skip credits read chapter titles. Files scanned before titles were kept
+ * get them from bytes already here: the file itself (local folders) or the two ends the
+ * edge cache holds once the file has been watched. Nothing is fetched for this.
+ */
+const chapterTries = new Map<string, number>(); // id → cached bytes at the last try
+async function learnChapterNames(it: LibItem): Promise<boolean> {
+  if (it.provider === "demo") return false;
+  const known = it.provider === "local" ? null : edge.get(it.id, it.bytes || undefined);
+  if (it.provider !== "local" && !known) return false;
+  const mark = known ? known.headLen + known.size - known.tailFrom : 1;
+  if (chapterTries.get(it.id) === mark) return false;
+  chapterTries.set(it.id, mark);
+  const cached = known ? async (start: number, length: number): Promise<Uint8Array> => {
+    const end = start + length - 1;
+    const b = start < known.headLen ? edge.read(it.id, start, Math.min(end, known.headLen - 1))
+      : start >= known.tailFrom ? edge.read(it.id, start, Math.min(end, known.size - 1)) : null;
+    return b ? new Uint8Array(b) : new Uint8Array(0);
+  } : undefined;
+  return library.learnChapterNames(it.id, cached);
+}
+
 /** Episodes on this PC with no chapters and no silence check yet (N-22c). Never debrid files. */
 function silenceTargets(all = false): SilenceTarget[] {
   return library.items().filter((i) => i.provider === "local" && isConnected("local") && i.present && !i.excluded && i.parsed.kind === "episode"
@@ -1041,12 +1063,13 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return;
   }
   if (p === "/api/item") {
-    const it = itemById(url.searchParams.get("id") ?? "");
+    let it = itemById(url.searchParams.get("id") ?? "");
     if (!it) return json(res, 404, {});
     if (refuseLocked(res, it.id)) return;
+    if (it.chaptersMs?.length && !it.chapterNames && (await learnChapterNames(it))) it = itemById(it.id) ?? it;
     return json(res, 200, {
       id: it.id, title: displayTitle(it), provider: it.provider, container: it.container, video: it.video, audio: it.audio,
-      tracks: it.tracks ?? [], chaptersMs: it.chaptersMs ?? [],
+      tracks: it.tracks ?? [], chaptersMs: it.chaptersMs ?? [], chapterNames: it.chapterNames ?? [],
       durationMs: it.durationMs, ...availabilityView(it), seenMs: ledger.seenMs(it.id), watched: isWatched(it.id, it.durationMs),
     });
   }
@@ -1384,6 +1407,11 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   if (p === "/api/ondemand/show" && m === "GET") {
     const v = onDemandShow(onDemandDeps(), url.searchParams.get("key") ?? "");
     return v ? json(res, 200, v) : json(res, 404, { error: "no such show" });
+  }
+  if (p === "/api/ondemand/after" && m === "GET") {
+    const id = url.searchParams.get("id") ?? "";
+    if (refuseLocked(res, id)) return;
+    return json(res, 200, { next: onDemandAfter(onDemandDeps(), id) });
   }
   if (p === "/api/continue" && m === "GET") {
     const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") ?? 20) || 20));

@@ -19,3 +19,12 @@ Owner thread: "Full-featured video player" (2026-10-12). Register: docs/parity/p
 - Pan while zoomed isn't built. Deinterlace isn't built (compat `yadif` if a real file needs it).
 - Picture subtitles (PGS) are burned in on the PC and can't be delayed.
 - Scrubbing thumbnails won't be built (they'd fetch unwatched media).
+
+## Lean-back pack (2026-10-12)
+
+- `skips.js` (pure, test/skips.test.ts): chapter title → intro / recap / credits / preview, and the parts to offer.
+- `leanback.js`: the Skip / Next episode buttons (`#lean`), OK presses the main one (capture-phase key, before main.js opens the guide). Next episode uses `/api/ondemand/after?id=` and `/api/now?at=<airing end>`. Owns `player.onOnDemandEnd()`.
+- `sleep.js`: `setSleep(15|30|60|"end"|0)`, `sleepState()`, event `debridtv:sleep`; fade on `#sleepdim`, then `signOffNow("sleep")` (signoff.js). Pref `sleepFadeSec` for tests.
+- `remind.js`: pref `reminders` [{ ch, start, end, title, episode, mode: remind|tune }]; guide.js calls `reminderFor/setReminder/cycleReminder`.
+- Chapter titles: `probe.ts` returns `chapterNames` (Matroska ChapString, MP4 Nero chpl; QuickTime chapter tracks keep titles in mdat, so none). `LibItem.chapterNames` ([] = none). Items scanned earlier get titles in `/api/item` from the local file or the edge cache, never from a provider (`learnChapterNames`).
+- Prefs: `skipButtons` (on), `autoSkipIntro` (off), `autoNext` (off).

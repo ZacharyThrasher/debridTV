@@ -19,7 +19,7 @@ inside the stream, so a seek restarts it at the new point.
 |---|---|---|---|
 | Play / pause (Space, K, click picture) | Y | Y | Bar button, Space/K, click on the picture, Play/Pause remote keys. |
 | Seek bar with drag (scrubbing) | N | Y | YouTube-style scrubber; drag, click, or arrow keys while it has focus. |
-| Hover time preview on the bar | N | Y | Time and chapter name tooltip. |
+| Hover time preview on the bar | N | Y | Time and chapter tooltip, with the file's own chapter title when it has one. |
 | Thumbnail preview while scrubbing | N | N | Would fetch media bytes for frames the viewer never watches; breaks the "no bytes for unwatched media" rule. |
 | Chapter marks on the bar | N | Y | From `/api/item` `chaptersMs` (already probed). |
 | Next / previous chapter | N | Y | Shift+←/→ (past the last chapter it skips to the next program). |
@@ -84,7 +84,10 @@ inside the stream, so a seek restarts it at the new point.
 | Touch: tap to show, double-tap to skip, swipe channels | Swipe only | Y | |
 | TV remote | Y (no bar) | Y | ←/→ seeks and shows the bar; Down then lands on it; ←/→ move, OK presses, Up or Back leaves. The menu is a remote layer (spatial.js). |
 | Remember settings | Some | Y | Volume and boost, night mode, tone, delays and picture adjustments are saved per device. Speed resets at Back to live. |
-| Sleep timer | Y | Y | Sign-off hours (N-17). |
+| Sleep timer | Sign-off hours | Y | Player menu "Sleep timer": 15, 30, 60 min or end of this program. The sound fades and the picture dims over 20 s, then the usual sign-off (nothing streams). A key during the fade cancels it. The bar shows "Sleep 23 min". Sign-off hours (N-17) stay as they were. |
+| Skip intro / Skip credits | N | Y | Only from the file's chapter titles (Intro, Opening, OP, Recap, Credits, Ending, Preview…, `skips.js`). An intro or recap must start in the first half and run under 6 min; credits in the second half. Settings: buttons on (default), "Skip intros by themselves" (off). No audio fingerprinting. |
+| Next episode | N | Y | In the credits, or the last 30 s without named credits. On Demand plays the next episode; on a channel it skips ahead when the next program is that episode, else plays it in On Demand. "Play the next episode by itself" (off) does it at the end of an On Demand file. |
+| Remind me / Tune me | N | Y | Guide: R (or the remote's red button) or the buttons in the details. At start time a notice with Watch now, or the set tunes in by itself. Kept on the device. |
 | Open a URL / network stream | N | N | Out of scope: DebridTV plays your library; live/M3U is a separate gate. |
 
 ## Rules that still hold

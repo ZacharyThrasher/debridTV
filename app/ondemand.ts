@@ -143,6 +143,22 @@ export function show(d: OnDemandDeps, key: string) {
 }
 
 /**
+ * GET /api/ondemand/after: the episode after this one in its show (season order, specials
+ * last), for the player's Next episode button. Locked and refused copies are skipped like
+ * everywhere in On Demand; null after the last episode or for a film.
+ */
+export function after(d: OnDemandDeps, id: string) {
+  const it = d.items.find((i) => i.id === id);
+  if (!it || it.parsed.kind !== "episode") return null;
+  const cur = it.parsed;
+  const same = (e: LibItem) => e.parsed.kind === "episode" && e.parsed.season === cur.season && e.parsed.episode === cur.episode;
+  const eps = byShow(offered(d)).get(cur.showKey) ?? [];
+  const list = sortEpisodes([it, ...eps.filter((e) => !same(e))]);
+  const next = list[list.indexOf(it) + 1];
+  return next ? itemView(d, next) : null;
+}
+
+/**
  * GET /api/continue: programs left part way (resume), and the next episode of a
  * show whose last-watched episode was finished (next). One row per show or film,
  * newest first.

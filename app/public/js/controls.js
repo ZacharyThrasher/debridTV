@@ -22,6 +22,7 @@ import { move, activeLayer } from "./spatial.js";
 import { pinPromptOpen } from "./cards.js";
 import * as fx from "./avfx.js";
 import { audioTracks, defaultAudio, trackLabel } from "./tracks.js";
+import { SLEEP_CHOICES, setSleep, sleepState } from "./sleep.js";
 
 const video = document.getElementById("video");
 const stage = document.getElementById("stage");
@@ -88,6 +89,7 @@ bar.innerHTML = html`
       </div>
       <button class="pb-time" data-act="time" aria-label="Elapsed time; press for time left"><span class="pb-now">0:00</span><span class="pb-dur"></span></button>
       <button class="pb-live" data-act="live" aria-label="Live">LIVE</button>
+      <button class="pb-sleep" data-act="sleep" hidden></button>
       <div class="pb-title"></div>
     </div>
     <div class="pb-right">
@@ -170,12 +172,12 @@ new MutationObserver(() => blocked() && barShown() && hideBar()).observe(documen
 
 // ------------------------------------------------------------------ drawing
 
-let chapters = { id: null, list: [], tracks: [] };
+let chapters = { id: null, list: [], tracks: [], names: new Map() };
 let showLeft = false; // time display: elapsed (default) or time left
 let lastId = null;
 
 async function loadChapters(id) {
-  chapters = { id, list: [], tracks: [] };
+  chapters = { id, list: [], tracks: [], names: new Map() };
   chapsEl.innerHTML = "";
   if (!id) return;
   try {
@@ -183,16 +185,19 @@ async function loadChapters(id) {
     if (chapters.id !== id) return;
     chapters.list = (it.chaptersMs ?? []).filter((c) => c > 0);
     chapters.tracks = it.tracks ?? [];
+    // Chapter titles from the file ("Opening", "Act 1"), keyed by start; 0 is the first chapter.
+    (it.chaptersMs ?? []).forEach((c, i) => it.chapterNames?.[i] && chapters.names.set(c, it.chapterNames[i]));
   } catch {}
 }
 
-/** The chapter a file time falls in: { n, of, start } or null. */
+/** The chapter a file time falls in: { n, of, start, name } or null. name is the file's title for it, else "Chapter n". */
 export function chapterAt(ms) {
   const l = chapters.list;
   if (!l.length) return null;
   let n = 0;
   while (n < l.length && l[n] <= ms) n++;
-  return { n: n + 1, of: l.length + 1, start: n ? l[n - 1] : 0 };
+  const start = n ? l[n - 1] : 0;
+  return { n: n + 1, of: l.length + 1, start, name: chapters.names.get(start) ?? `Chapter ${n + 1}` };
 }
 
 const narrow = matchMedia("(max-width: 760px)");
@@ -229,6 +234,7 @@ function draw() {
   const liveBtn = $('[data-act="live"]');
   const timeEl = $(".pb-time");
   if (!t) {
+    drawSleep();
     fill.style.width = buf.style.width = "0%";
     knob.style.left = "0%";
     liveMark.hidden = true;
@@ -268,14 +274,27 @@ function draw() {
   // Phones say LIVE either way, like YouTube: a grey dot means behind, and a tap goes back.
   liveBtn.innerHTML = atLive || narrow.matches ? "<i></i>LIVE" : html`<i></i>Back to live${sh ? html`<small>${sh < 0 ? "−" : "+"}${fmtClock(Math.abs(sh))}</small>` : ""}`.html;
   liveBtn.setAttribute("aria-label", atLive ? "Live" : "Back to live (L)");
+  drawSleep();
   const ch = chapterAt(t.posMs);
   const title = tv.onDemand?.title ?? tv.info?.airing?.title ?? "";
-  $(".pb-title").innerHTML = html`<span>${title}</span>${ch ? html`<em>Chapter ${ch.n}</em>` : ""}`.html;
+  $(".pb-title").innerHTML = html`<span>${title}</span>${ch ? html`<em>${ch.name}</em>` : ""}`.html;
 }
 setInterval(draw, 250);
 for (const ev of ["play", "pause", "volumechange", "loadedmetadata"]) video.addEventListener(ev, draw);
 addEventListener("debridtv:ondemand", () => setTimeout(draw, 0));
 addEventListener("debridtv:captions", draw);
+addEventListener("debridtv:sleep", draw);
+
+/** "Sleep 23 min" beside the time while the sleep timer runs; pressing it opens the timer's menu. */
+function drawSleep() {
+  const el = $(".pb-sleep");
+  const s = sleepState();
+  el.hidden = !s;
+  if (!s) return;
+  el.textContent = `Sleep ${sleepLeft(s)}`;
+  el.setAttribute("aria-label", `Sleep timer: ${sleepLeft(s)} left. Press to change it.`);
+}
+const sleepLeft = (s) => (s.leftMs == null ? "at the end" : s.leftMs < 60_000 ? `${Math.ceil(s.leftMs / 1000)} s` : `${Math.ceil(s.leftMs / 60_000)} min`);
 document.addEventListener("fullscreenchange", draw);
 
 // ------------------------------------------------------------------ seeking
@@ -311,7 +330,7 @@ function showTip(clientX, ms) {
   const ch = chapterAt(ms);
   tip.querySelector("b").textContent = fmtClock(ms);
   const ahead = t?.liveMs != null && ms > t.liveMs + 2000;
-  tip.querySelector("span").textContent = [ch && `Chapter ${ch.n}`, ahead && "ahead of live"].filter(Boolean).join(" · ");
+  tip.querySelector("span").textContent = [ch?.name, ahead && "ahead of live"].filter(Boolean).join(" · ");
   tip.hidden = false;
   tip.style.left = `${clamp(clientX - r.left, tip.offsetWidth / 2, r.width - tip.offsetWidth / 2)}px`;
 }
@@ -408,6 +427,7 @@ const ACTIONS = {
   down: () => channelStep(-1),
   mute: toggleMute,
   time: () => ((showLeft = !showLeft), draw()),
+  sleep: () => openMenu("sleep"),
   live: () => {
     const t = player.timeline?.();
     if (t?.mode === "live" && !tv.paused) return;
@@ -461,6 +481,7 @@ function rows() {
         ${row("sound", "Sound", [fx.level() > 1 && `${Math.round(fx.level() * 100)}%`, pref("nightMode") && "Night mode"].filter(Boolean).join(" · ") || "Normal")}
         ${row("picture", "Picture", [SHAPES[pref("aspect") ?? "auto"], fx.cropOn(p) && `Crop ${cropLabel(p)}`, tweaked && "adjusted"].filter(Boolean).join(" · "))}
         ${row("loop", "Loop", loop ? (loop.whole ? "This program" : loop.b == null ? "A set" : "A–B") : "Off")}
+        ${row("sleep", "Sleep timer", sleepState() ? sleepLeft(sleepState()) : "Off")}
         <div class="pm-sep"></div>
         ${act("shot", "Screenshot", "X")}
         ${act("stats", fx.statsOn() ? "Hide stats" : "Stats for nerds", "D")}
@@ -514,6 +535,11 @@ function rows() {
         ? html`${act("ab", !loop || loop.whole ? "Set A here" : loop.b == null ? "Set B here" : "Clear A–B loop")}
           ${toggle("loopfile", "Loop this program", !!loop?.whole)}`
         : html`<p class="pm-note">Nothing to loop right now.</p>`}`;
+    case "sleep": {
+      const s = sleepState();
+      return html`${head("Sleep timer")}${SLEEP_CHOICES.map(([v, label]) => pick(`sleep:${v}`, label, s ? s.mode === v : v === 0))}
+        <p class="pm-note">${s ? `Signs off in ${sleepLeft(s)}. ` : ""}The sound fades and the picture dims, then the station signs off and stops streaming. Press any key while it fades to keep watching.</p>`;
+    }
     case "audio":
       return html`${head("Audio track")}<div class="pm-tracks"><p class="pm-note">Looking up tracks…</p></div>`;
   }
@@ -612,6 +638,10 @@ menu.addEventListener("click", (e) => {
     case "odhere":
       closeMenu();
       return void (t && player.playOnDemand?.(t.itemId, { fromMs: t.posMs, item: { title: tv.info?.airing?.title } }));
+    case "sleep":
+      setSleep(v === "end" ? "end" : Number(v));
+      closeMenu();
+      return void draw();
     case "atrack":
       player.pickAudio?.(Number(v));
       page = "main";
@@ -724,7 +754,8 @@ addEventListener("pointerdown", (e) => {
 
 const KEYS = [
   ["Watching", [["Space / K", "Pause and play"], ["↑ ↓", "Change channel"], ["0–9", "Go to a channel number"], ["L / Backspace", "Back to live, else last channel"],
-    ["G / Enter", "Program guide"], ["O", "On Demand"], ["I", "What's on"], ["S", "DebridTV settings"]]],
+    ["G / Enter", "Program guide"], ["R", "In the guide: remind me, then tune me"], ["Enter", "Skip intro or credits, Next episode, when one shows"],
+    ["O", "On Demand"], ["I", "What's on"], ["S", "DebridTV settings"]]],
   ["Seeking", [["← →", "Back 10 s / forward 30 s"], ["Shift + ← →", "Previous / next chapter, then program"], ["[ ]", "Previous / next program"],
     ["Home", "Start of the program"], ["End", "Back to live (end of file in On Demand)"], [", .", "One frame back / forward (paused)"], ["< >", "Slower / faster (not at live)"]]],
   ["Sound", [["M", "Mute"], ["/ *", "Volume down / up (up to 200%)"], ["Mouse wheel", "Volume, over the picture"], ["A", "Next audio track"]]],
@@ -887,7 +918,8 @@ function chapterJump(dir) {
   const l = [0, ...chapters.list];
   const to = dir > 0 ? l.find((c) => c > t.posMs + 1000) : l.filter((c) => c < t.posMs - 3000).at(-1);
   if (to == null || !seekTo(to)) return false;
-  osd(`CHAPTER ${chapterAt(to)?.n ?? 1}`, "", 1200);
+  const c = chapterAt(to);
+  osd(`CHAPTER ${c?.n ?? 1}`, c && c.name !== `Chapter ${c.n}` ? c.name : "", 1200);
   showBar("key");
   return true;
 }

@@ -1504,3 +1504,40 @@ html.tv .cc-sheet { top: var(--safe-y); bottom: var(--safe-y); right: var(--safe
 @media (max-width: 560px) {
   .cc-sheet { left: 0; right: 0; bottom: 0; top: auto; width: auto; max-height: 78vh; border-radius: var(--r-3) var(--r-3) 0 0; }
 }
+
+/* ------------------------------------------------------------------ reminders (remind.js, Lean-back pack) */
+
+/* A program with a reminder: a bar of the colour-bar yellow down its left edge (the rare
+   second accent, as for favourites). The details panel says which kind it is. */
+.cell.reminded { box-shadow: inset 3px 0 0 var(--accent-2); }
+.cell.reminded.focus { box-shadow: inset 3px 0 0 var(--focus-ink); }
+.guide-details .gd-remind { display: flex; gap: calc(var(--u)*.4); margin-top: calc(var(--u)*.6); }
+.gd-rbtn {
+  border: 1px solid var(--rule-strong); border-radius: var(--r-2); background: transparent; color: var(--ink); font: inherit; font-size: var(--fs-sm);
+  font-weight: 600; padding: .35em .8em; cursor: pointer;
+}
+.gd-rbtn:hover { background: var(--surface-3); }
+.gd-rbtn[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+/* The notice at start time: bottom left of the picture, opaque, two plain buttons. */
+.remind {
+  position: fixed; left: calc(var(--u)*2 + var(--safe-x)); bottom: calc(var(--u)*5 + var(--safe-y)); z-index: 41; width: min(92vw, calc(var(--u)*24));
+  padding: calc(var(--u)*1) calc(var(--u)*1.2); border-radius: var(--r-3); background: var(--surface-1); color: var(--ink);
+  border: 1px solid var(--rule-strong); box-shadow: var(--shadow-2); animation: rise var(--dur-2) var(--ease);
+  font-size: max(14px, var(--fs-md));
+}
+.remind .rm-when { color: var(--ink-2); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.remind .rm-when b { color: var(--ink); }
+.remind .rm-t { margin-top: .15em; font-weight: var(--display-wght); font-stretch: var(--display-wdth); font-size: var(--fs-xl); line-height: 1.05; }
+.remind .rm-s { color: var(--ink-2); font-size: var(--fs-sm); margin-top: .2em; }
+.remind .rm-act { display: flex; gap: calc(var(--u)*.4); margin-top: calc(var(--u)*.8); }
+.rm-btn {
+  border: 1px solid var(--rule-strong); border-radius: var(--r-2); background: transparent; color: var(--ink); font: inherit; font-weight: 600;
+  padding: .45em 1em; cursor: pointer;
+}
+.rm-btn.main { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.rm-btn:hover { border-color: var(--ink); }
+body.pbar-on .remind { bottom: calc(var(--pb-h) + var(--u)*1.2); }
+body.banner-open .remind { bottom: calc(var(--u)*13 + var(--safe-y)); }
+body.banner-open.pbar-on .remind { bottom: calc(var(--pb-h) + var(--u)*11.5); }
+@media (max-width: 760px) { .remind, body.pbar-on .remind { left: 8px; right: 8px; width: auto; top: 64px; bottom: auto; } }

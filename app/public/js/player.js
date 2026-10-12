@@ -280,7 +280,7 @@ async function playMedia(ch, info, my, forced = null, hold = 0) {
     startWatch(a.itemId, info.onDemand ? "ondemand" : ch.id);
   };
   // At the end of an On Demand file, the station is still on the air: go back to it.
-  video.onended = info.onDemand ? () => my === token && media?.itemId === a.itemId && backToLive() : null;
+  video.onended = info.onDemand ? () => my === token && media?.itemId === a.itemId && onDemandEnded() : null;
   // A stall mid-program (Wi-Fi hiccup, slow provider). The browser re-requests on
   // its own, and reopening ourselves made a hung provider worse in testing, so we
   // only say what's happening after 7 s.
@@ -801,7 +801,17 @@ function demoRun() {
   synthStart(d.airing, d.pos);
   startWatch(d.airing.itemId, "ondemand");
   const left = (tv.onDemand?.durationMs || Infinity) - d.pos;
-  if (Number.isFinite(left)) d.endTimer = setTimeout(() => odDemo === d && backToLive(), Math.max(0, left));
+  if (Number.isFinite(left)) d.endTimer = setTimeout(() => odDemo === d && onDemandEnded(), Math.max(0, left));
+}
+
+// The end of an On Demand file goes back to the station, unless the Lean-back pack
+// (leanback.js) has something else asked for: the next episode, or the sleep timer.
+let odEndHook = null;
+/** fn() returns true when it has taken over the end of the file. */
+export const onOnDemandEnd = (fn) => (odEndHook = fn);
+function onDemandEnded() {
+  if (odEndHook?.()) return;
+  backToLive();
 }
 
 /** Back to the live airing: from On Demand, or from a time-shifted channel (ADR-0006). */

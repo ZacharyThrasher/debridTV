@@ -50,6 +50,8 @@ export interface LibItem {
   tracks?: Track[];
   /** Chapter starts from the file header, in file time. */
   chaptersMs?: number[];
+  /** Chapter titles, one per chaptersMs entry ("Opening", "End Credits"…). [] = the file names none. Missing = not read yet. */
+  chapterNames?: string[];
   probe?: { at: number; bytes: number; error?: string };
   availability: Availability;
   availabilityReason?: string;
@@ -762,6 +764,7 @@ export class Library {
       target.audio = r.audio;
       target.tracks = r.tracks;
       target.chaptersMs = r.chaptersMs;
+      target.chapterNames = r.chaptersMs ? (r.chapterNames ?? []) : undefined;
       target.probe = { at: Date.now(), bytes: r.bytesRead, ...(r.durationMs == null ? { error: "No running time in the file header" } : {}) };
       if (r.durationMs == null) outcome = "failed";
       this.meters.log("probe", `${r.container} ${r.durationMs ? Math.round(r.durationMs / 60000) + " min" : "no duration"}, ${Math.round(r.bytesRead / 1024)} KB`);
@@ -912,6 +915,33 @@ export class Library {
     });
     if (n) this.changed();
     return n;
+  }
+
+  /**
+   * Chapter titles for a file probed before titles were kept. They are read again only
+   * from bytes already on this PC: the file itself in a local folder, else `cached`
+   * (the edge cache's two ends). Never from a provider. True once titles are known.
+   */
+  async learnChapterNames(id: string, cached?: RangeReader): Promise<boolean> {
+    const it = this.get(id);
+    if (!it?.chaptersMs?.length) return false;
+    if (it.chapterNames) return true;
+    const read: RangeReader | undefined = it.provider === "local" ? async (start, length) => readLocal(it.ref, start, length) : cached;
+    if (!read) return false;
+    let r: Awaited<ReturnType<typeof probe>>;
+    try {
+      r = await probe(read, it.bytes);
+    } catch {
+      return false;
+    }
+    // Only trust a read that found the same chapters the scan did.
+    if (r.chaptersMs?.length !== it.chaptersMs.length) return false;
+    const names = r.chapterNames ?? [];
+    this.file.update((s) => {
+      const t = s.items[id];
+      if (t) t.chapterNames = names;
+    });
+    return true;
   }
 
   /** Record what the silence job found for one file (N-22c). */
