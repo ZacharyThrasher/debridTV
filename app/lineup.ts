@@ -936,6 +936,15 @@ function slug(s: string): string {
   return s.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 }
 
+/**
+ * Station breaks off (the default, ADR-0006): every program starts the moment the
+ * one before it ends. No padding out to the next half hour, no mid-program breaks,
+ * on any channel, custom ones included. Turning breaks on brings both back.
+ */
+export function withoutBreaks(rules: Rule[]): Rule[] {
+  return rules.map(({ slotMs: _s, midBreakMs: _m, ...r }) => r);
+}
+
 /** Longest break (2, 1.5 or 1 min) that keeps every program within the slots it takes anyway. */
 export function midBreakFor(items: LibItem[], slotMs: number): number | undefined {
   const withBps = items.map((i) => ({ d: i.durationMs!, n: breakpoints(i).length }));

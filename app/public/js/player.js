@@ -6,7 +6,7 @@
 // media bytes, and leaving a channel cancels its stream at once.
 
 import { api } from "./api.js";
-import { now, sleep, clamp, pref, setPref, syncClock, toast } from "./util.js";
+import { now, viewNow, shift, sleep, clamp, pref, setPref, syncClock, toast } from "./util.js";
 import { staticOn, staticOff, click } from "./static.js";
 import { synthStart, synthStop, synthPaused } from "./synth.js";
 import { breakCard, offAirCard, unavailableCard, messageCard, hideCard } from "./cards.js";
@@ -21,7 +21,8 @@ const synthEl = document.getElementById("synth");
 const pausedEl = document.getElementById("paused");
 
 // onDemand is { itemId, fromMs, durationMs, title, positionMs } while On Demand plays (parity N-30), else null.
-export const tv = { channels: [], current: null, last: null, info: null, route: "card", ffmpeg: false, paused: false, onDemand: null };
+// breaks: station breaks are on (ADR-0006: off unless the viewer turns them on); set from /api/bootstrap.
+export const tv = { channels: [], current: null, last: null, info: null, route: "card", ffmpeg: false, paused: false, onDemand: null, breaks: false };
 
 const MIN_WAIT = 150, MAX_WAIT = 1200; // EXP-006 adaptive bounds
 // EXP-008: a slow surfer (about one press a second) gets a paused "peek" of the
@@ -52,9 +53,19 @@ export function byNumber(n) {
   return tv.channels.find((c) => c.number === n);
 }
 
-export async function tune(ch, { silent = false } = {}) {
+/**
+ * opts.silent: a boundary, resume or seek on the channel already on screen (no click,
+ * static or OSD). Any other tune is a channel change, which goes back to live.
+ * opts.seek: reopen the picture at the (time-shifted) station position even if the
+ * same program is already playing.
+ */
+export async function tune(ch, { silent = false, seek = false } = {}) {
   if (!ch || signedOff()) return;
   const my = ++token;
+  if (!silent) {
+    clearTimeout(liveSeekTimer);
+    setShift(0);
+  }
   endOnDemand();
   clearTimeout(boundary);
   clearTimeout(stallTimer);
@@ -86,7 +97,7 @@ export async function tune(ch, { silent = false } = {}) {
   const sent = Date.now();
   let info;
   try {
-    info = await api.get(`/api/now?channel=${encodeURIComponent(ch.id)}${silent ? "" : "&count=1"}`);
+    info = await api.get(`/api/now?channel=${encodeURIComponent(ch.id)}${shift.ms ? `&at=${Math.round(viewNow())}` : ""}${silent ? "" : "&count=1"}`);
   } catch (e) {
     if (my !== token) return;
     staticOff();
@@ -119,17 +130,23 @@ export async function tune(ch, { silent = false } = {}) {
     } else if (wait > MIN_WAIT) await sleep(wait - MIN_WAIT);
     if (my !== token) return;
   }
-  render(ch, info, my, silent, hold);
+  render(ch, info, my, silent, hold, seek);
 }
 
 export function togglePause() {
   if (tv.onDemand) return toggleOnDemandPause();
   if (!tv.current) return;
   if (tv.paused) {
-    // Like real TV, resuming returns to live (parity C4): the station never waited.
+    // Resuming picks up where you paused (ADR-0006). The station kept going, so the
+    // viewer is now that much behind it, with Back to live one key away.
+    const away = performance.now() - pausedLiveAt;
+    setShift(shift.ms - away);
     setPaused(false);
-    tune(tv.current, { silent: true });
-  } else setPaused(true);
+    resumeLive(away);
+  } else {
+    pausedLiveAt = performance.now();
+    setPaused(true);
+  }
 }
 
 export function applyVolume() {
@@ -139,7 +156,7 @@ export function applyVolume() {
 
 // ------------------------------------------------------------------ render
 
-function render(ch, info, my, silent, hold = 0) {
+function render(ch, info, my, silent, hold = 0, seek = false) {
   const seg = info.segment;
   const a = info.airing;
   const newProgram = !media || media.itemId !== a?.itemId || seg?.kind !== "program";
@@ -154,6 +171,10 @@ function render(ch, info, my, silent, hold = 0) {
     tv.route = "card";
     staticOff();
     offAirCard(ch);
+  } else if (seg.kind === "break" && !tv.breaks) {
+    // Breaks are off (ADR-0006), but this one was already in the schedule (the program
+    // on air when they were turned off, or the gap before a time slot): skip over it.
+    return skipTo(ch, seg.end);
   } else if (seg.kind === "break") {
     tv.route = "card";
     stopMedia();
@@ -176,7 +197,7 @@ function render(ch, info, my, silent, hold = 0) {
     synthStart(a, info.fileOffsetMs + (now() - info.now));
     staticOff();
     startWatch(a.itemId, ch.id);
-  } else if (silent && media && media.itemId === a.itemId && !newProgram && !video.paused) {
+  } else if (silent && !seek && media && media.itemId === a.itemId && !newProgram && !video.paused) {
     // Same program continuing after a mid-break boundary we never left.
   } else {
     playMedia(ch, info, my, null, hold);
@@ -190,7 +211,7 @@ function scheduleBoundary(ch, at) {
   clearTimeout(boundary);
   boundary = setTimeout(() => {
     if (tv.current?.id === ch.id && !tv.paused) tune(ch, { silent: true });
-  }, Math.max(250, at - now() + 60));
+  }, Math.max(250, at - viewNow() + 60));
 }
 
 // ------------------------------------------------------------------ media
@@ -491,6 +512,130 @@ function flushWatch(end = false) {
 setInterval(() => flushWatch(false), 15_000);
 addEventListener("pagehide", () => flushWatch(true));
 
+// ------------------------------------------------------------------ time shift (ADR-0006)
+
+// Any channel can be skipped around like a recording: back and ahead within what's
+// on, and on to the next or previous program. The schedule never moves; the viewer
+// watches it at another point (shift.ms in util.js), and Back to live returns to
+// the station clock. Everything else still holds: the server answers /api/now?at=
+// with the same lock and refusal rules, a seek opens only the program being
+// watched, and the guide still loads nothing.
+//
+// For the player controls: seekBy(ms), skipProgram(±1), backToLive(), and the
+// "debridtv:timeshift" event ({ shiftMs }, 0 = live). The same three actions can be
+// asked for with events: "debridtv:seek" ({ by }), "debridtv:skip" ({ dir }) and
+// "debridtv:backtolive".
+
+const MAX_SHIFT = 7 * 24 * 3_600_000; // the station keeps about a week of schedule history
+let liveSeekTimer = 0;
+let pausedLiveAt = 0;
+let skipChain = Promise.resolve();
+
+/** Where the viewer is against the station clock, in ms: negative behind, positive ahead. */
+export const timeShift = () => shift.ms;
+
+function setShift(ms) {
+  const v = Math.round(clamp(ms, -MAX_SHIFT, MAX_SHIFT));
+  const next = Math.abs(v) < 1000 ? 0 : v; // within a second of the station is live
+  if (next === shift.ms) return;
+  shift.ms = next;
+  dispatchEvent(new CustomEvent("debridtv:timeshift", { detail: { shiftMs: next } }));
+}
+
+/** A paused channel counts the pause as time behind the station, then plays on. */
+function unpauseLive() {
+  if (!tv.paused) return false;
+  setShift(shift.ms - (performance.now() - pausedLiveAt));
+  setPaused(false, { quiet: true });
+  return true;
+}
+
+/** Play on after a pause. A direct file just continues; anything else reopens where the viewer was. */
+function resumeLive(away) {
+  const ch = tv.current;
+  const m = media;
+  const info = tv.info;
+  if (!ch) return;
+  if (m && m.my === token && m.route === "direct" && m.info === info && info?.segment?.kind === "program" && video.readyState >= 2) {
+    info.now += away; // the same file position now lines up with a later instant
+    scheduleBoundary(ch, info.segment.end);
+    startWatch(m.itemId, ch.id);
+    return void video.play().catch(() => autoplayHint());
+  }
+  tune(ch, { silent: true, seek: true });
+}
+
+/** Watch the channel from station time `atMs`. */
+function skipTo(ch, atMs) {
+  setShift(atMs - now());
+  return tune(ch, { silent: true, seek: true });
+}
+
+/**
+ * Left/Right on a channel. Inside the program on screen, a direct file seeks in
+ * place; anything else (a compatibility stream, the demo picture, a different
+ * program) reopens at the new point once the presses settle, so a run of presses
+ * costs one stream.
+ */
+function seekLive(deltaMs) {
+  const ch = tv.current;
+  if (!ch || signedOff()) return;
+  const wasPaused = unpauseLive();
+  const before = shift.ms;
+  setShift(before + deltaMs);
+  const d = shift.ms - before;
+  const m = media;
+  const info = tv.info;
+  const seg = info?.segment;
+  const target = viewNow();
+  if (!wasPaused && m && m.my === token && m.route === "direct" && m.info === info && seg?.kind === "program"
+    && info.fileOffsetMs != null && target >= seg.start && target < seg.end - 1000 && video.readyState >= 1) {
+    flushWatch(true);
+    info.fileOffsetMs += d;
+    video.onseeked = () => {
+      video.onseeked = null;
+      if (media === m && !tv.paused) startWatch(m.itemId, ch.id);
+    };
+    video.currentTime = Math.max(0, (info.fileOffsetMs + (now() - info.now)) / 1000);
+    scheduleBoundary(ch, seg.end);
+    return;
+  }
+  clearTimeout(liveSeekTimer);
+  liveSeekTimer = setTimeout(() => tv.current === ch && !tv.onDemand && tune(ch, { silent: true, seek: true }), 400);
+}
+
+/**
+ * Next (+1) or previous (−1) program on this channel. Previous goes to the start of
+ * the program on screen first, unless it started less than 15 s ago.
+ */
+export function skipProgram(dir) {
+  skipChain = skipChain.then(() => skipOnce(dir)).catch(() => {});
+  return skipChain;
+}
+
+async function skipOnce(dir) {
+  const ch = tv.current;
+  if (!ch || tv.onDemand || signedOff()) return;
+  unpauseLive();
+  clearTimeout(liveSeekTimer);
+  const a = tv.info?.airing;
+  if (!a) return void osd(dir > 0 ? "▶▶|" : "|◀◀", "Nothing on the air here", 1500);
+  let to = dir > 0 ? a.end : a.start;
+  if (dir < 0 && viewNow() - a.start < 15_000) {
+    let prev = null;
+    try {
+      prev = await api.get(`/api/now?channel=${encodeURIComponent(ch.id)}&at=${Math.round(a.start - 1)}`);
+    } catch {}
+    if (tv.current !== ch) return;
+    if (prev?.airing) to = prev.airing.start;
+  }
+  await skipTo(ch, to);
+}
+
+addEventListener("debridtv:seek", (e) => Number.isFinite(e.detail?.by) && seekBy(e.detail.by));
+addEventListener("debridtv:skip", (e) => skipProgram(e.detail?.dir < 0 ? -1 : 1));
+addEventListener("debridtv:backtolive", () => backToLive());
+
 // ------------------------------------------------------------------ On Demand
 
 // On Demand (parity N-30) plays one file from any point, off the station clock.
@@ -593,8 +738,13 @@ function demoRun() {
   if (Number.isFinite(left)) d.endTimer = setTimeout(() => odDemo === d && backToLive(), Math.max(0, left));
 }
 
-/** Back to the live airing on the channel we came from. */
+/** Back to the live airing: from On Demand, or from a time-shifted channel (ADR-0006). */
 export function backToLive() {
+  clearTimeout(liveSeekTimer);
+  if (!tv.onDemand && tv.current) {
+    setShift(0);
+    return tune(tv.current, { silent: true, seek: true });
+  }
   if (tv.current) return tune(tv.current);
   token++;
   endOnDemand();
@@ -609,7 +759,7 @@ export function backToLive() {
  */
 export function seekBy(deltaMs) {
   const m = media;
-  if (!tv.onDemand) return;
+  if (!tv.onDemand) return seekLive(deltaMs);
   const end = tv.onDemand.durationMs ? tv.onDemand.durationMs - 1000 : Infinity;
   const target = Math.round(clamp(tv.onDemand.positionMs + deltaMs, 0, Math.max(0, end)));
   if (odDemo) {
@@ -812,6 +962,8 @@ initSignOff({
   // Drop every stream and timer: nothing is fetched until the viewer is back.
   stop() {
     token++;
+    clearTimeout(liveSeekTimer);
+    setShift(0);
     endOnDemand();
     clearTimeout(boundary);
     clearTimeout(stallTimer);

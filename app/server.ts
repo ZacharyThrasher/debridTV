@@ -27,7 +27,7 @@ import { seasonState, validTimeZone } from "../src/clock/dayparts.ts";
 import { parseVttBlock } from "../src/library/vtt.ts";
 import { RATINGS, normalizeRating, ratingRank } from "../src/clock/ratings.ts";
 import { Library, ART_MAX_BYTES, type ArtKind, displayTitle, effectiveRating, mediaBadges, fileStatus, plainError, PROVIDER_NAMES, STATUS_ORDER, type Config, type LibItem, type ProviderBases, type RemoteProvider } from "./library.ts";
-import { Lineup, airable, autoRules, dedupeGroups, nfoIds, presetMatches, usableLibrary, SEASONAL_PRESETS, PRESET_MIN_HOURS, PRESET_MIN_TITLES, cleanGroup, cleanDates, cleanExclusions, cleanLogo, cleanRestricted, cleanSlots, cleanWeights, type ItemInfo, type StationChannel, type CustomChannel } from "./lineup.ts";
+import { Lineup, airable, autoRules, withoutBreaks, type Rule, dedupeGroups, nfoIds, presetMatches, usableLibrary, SEASONAL_PRESETS, PRESET_MIN_HOURS, PRESET_MIN_TITLES, cleanGroup, cleanDates, cleanExclusions, cleanLogo, cleanRestricted, cleanSlots, cleanWeights, type ItemInfo, type StationChannel, type CustomChannel } from "./lineup.ts";
 import { Meters } from "./meters.ts";
 import { ORDERINGS } from "../src/clock/ordering.ts";
 import { demoItems } from "./demo.ts";
@@ -179,9 +179,11 @@ function rebuild() {
   });
   meters.cache = { bytes: edge.bytes(), files: edge.entries() };
   const timeZone = stationTimeZone();
-  liveLineup.sync(liveClock, autoRules(liveItems, liveLineup.custom(), liveLineup.groups(), idsOf), now, { timeZone, info: itemInfo(liveItems, now) });
+  // Breaks are opt-in (ADR-0006); with them off, programs run back to back.
+  const shape = (rules: Rule[]) => (config.get().breaks ? rules : withoutBreaks(rules));
+  liveLineup.sync(liveClock, shape(autoRules(liveItems, liveLineup.custom(), liveLineup.groups(), idsOf)), now, { timeZone, info: itemInfo(liveItems, now) });
   const demoClock = new StationClock(demoMedia());
-  demoLineup.sync(demoClock, autoRules(demo, demoLineup.custom(), demoLineup.groups(), idsOf), now, { timeZone, info: itemInfo(demo, now) });
+  demoLineup.sync(demoClock, shape(autoRules(demo, demoLineup.custom(), demoLineup.groups(), idsOf)), now, { timeZone, info: itemInfo(demo, now) });
   clock = isDemo() ? demoClock : liveClock;
   refusedElsewhere = new Map(
     [...copiesById(liveItems).values()].flatMap((v) => {
@@ -213,6 +215,7 @@ function settingsExport() {
     note: "Settings only. API keys are never exported.",
     sources: { torbox: !!c.torboxKey, realdebrid: !!c.rdToken, localDirs: c.localDirs ?? [] },
     scanPerMinute: c.scanPerMinute ?? 30,
+    breaks: !!c.breaks,
     lineup: liveLineup.exportSettings(),
     ratings: library.manualRatings(),
   };
@@ -222,6 +225,10 @@ function importSettings(res: http.ServerResponse, body: Record<string, unknown>)
   if (!l || typeof l !== "object") return json(res, 400, { error: "That isn't a DebridTV settings file." });
   const n = liveLineup.importSettings(l as never);
   const ratings = library.importRatings((body as { ratings?: unknown }).ratings);
+  const breaks = (body as { breaks?: unknown }).breaks;
+  if (typeof breaks === "boolean") config.update((c) => {
+    c.breaks = breaks || undefined;
+  });
   rebuild();
   return json(res, 200, { ok: true, ...n, ratings });
 }
@@ -805,6 +812,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       demo: isDemo(),
       channels: lineup().channels().map(channelView),
       ffmpeg: !!ffmpeg,
+      breaks: !!config.get().breaks,
       connected: connected(),
       gates: { sharing: gates.isGranted("sharing"), cloudRelay: gates.isGranted("cloud-relay"), tunerExport: gates.isGranted("tuner-export") },
       version: VERSION,
@@ -837,6 +845,17 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       fileOffsetMs: hidden ? null : target.fileOffsetMs,
       next: next ? view(next) : null,
     });
+  }
+  if (p === "/api/station") {
+    // Station breaks (ADR-0006): off by default. A change reaches each channel at the end of what's on (C7).
+    if (m === "POST") {
+      if (typeof body.breaks !== "boolean") return json(res, 400, { error: "breaks is true or false." });
+      config.update((c) => {
+        c.breaks = body.breaks ? true : undefined;
+      });
+      rebuild();
+    }
+    return json(res, 200, { breaks: !!config.get().breaks });
   }
   if (p === "/api/prefetch" && m === "POST") {
     // Resolve the playback link early (EXP-006); no media is read here.

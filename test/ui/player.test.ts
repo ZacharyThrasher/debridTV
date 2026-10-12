@@ -150,6 +150,16 @@ async function drift(page: any, ch = direct!) {
   return { driftMs: Math.round(vt - n.fileOffsetMs), item: n.airing?.itemId };
 }
 
+/** Wait until the program on screen is at least `inMs` in, with at least `leftMs` to go. */
+async function wellInside(page: any, inMs: number, leftMs: number, ch = direct!) {
+  for (let i = 0; i < 120; i++) {
+    const n = await get(`/api/now?channel=${ch.id}`);
+    if (n.segment?.kind === "program" && n.fileOffsetMs >= inMs && n.airing.end - n.now > leftMs + 1000) break;
+    await sleep(500);
+  }
+  await playing(page);
+}
+
 describe("player", () => {
   it("joins the program at station time (A20)", async (t) => {
     if (skip) return t.skip(skip);
@@ -162,18 +172,11 @@ describe("player", () => {
     await closeQuietly(ctx);
   });
 
-  it("resuming from pause returns to live, not where it paused (A21)", async (t) => {
+  it("resuming from pause plays on from where it paused, and Back goes to live (ADR-0006)", async (t) => {
     if (skip) return t.skip(skip);
     const { page, ctx } = await open();
     await playing(page);
-    // Pause well inside a program, so a program change can't fake a pass.
-    for (let i = 0; i < 60; i++) {
-      const n = await get(`/api/now?channel=${direct!.id}`);
-      if (n.segment?.kind === "program" && n.airing.end - n.now > 12_000) break;
-      await sleep(500);
-    }
-    await sleep(500);
-    const before = await drift(page);
+    await wellInside(page, 0, 12_000);
     await page.keyboard.press(" ");
     await sleep(500);
     assert.ok(await page.locator("#paused").isVisible(), "paused overlay shows");
@@ -182,9 +185,52 @@ describe("player", () => {
     await playing(page);
     await sleep(800);
     const after = await drift(page);
-    assert.ok(Math.abs(after.driftMs) < 1500, `back on station time (drift ${after.driftMs} ms)`);
+    assert.ok(after.driftMs < -3500 && after.driftMs > -7000, `picks up where it paused, behind the station (drift ${after.driftMs} ms)`);
+    assert.ok(await page.locator("#live-pill").isVisible(), "Back to live shows");
+    await page.keyboard.press("l");
+    await page.waitForFunction(() => document.getElementById("live-pill")!.hidden);
+    await playing(page);
+    await sleep(800);
+    const live = await drift(page);
+    assert.ok(Math.abs(live.driftMs) < 1500, `back on station time (drift ${live.driftMs} ms)`);
     await closeQuietly(ctx);
-    void before;
+  });
+
+  it("skips back in place, jumps to the next program, and the pill goes back to live (ADR-0006)", async (t) => {
+    if (skip) return t.skip(skip);
+    const { page, ctx, media, errors } = await open();
+    await playing(page);
+    // 12 s into a program with time left, so a 10 s skip stays inside it.
+    await wellInside(page, 12_000, 8_000);
+    media.length = 0;
+    await page.keyboard.press("ArrowLeft");
+    await page.waitForFunction(() => !(document.getElementById("video") as HTMLVideoElement).seeking);
+    await sleep(600);
+    const back = await drift(page);
+    assert.ok(Math.abs(back.driftMs + 10_000) < 1500, `10 s behind (drift ${back.driftMs} ms)`);
+    assert.equal(media.length, 0, "a direct file seeks in place, no new request");
+    assert.match(await page.locator("#live-pill").innerText(), /Back to live[\s\S]*behind/);
+
+    const shown = () => page.evaluate(async () => {
+      const p = await import(location.origin + "/js/player.js");
+      return { start: p.tv.info?.airing?.start, end: p.tv.info?.airing?.end, shift: p.timeShift() };
+    });
+    const before = await shown();
+    await page.keyboard.press("]");
+    await page.waitForFunction(async (end: number) => (await import(location.origin + "/js/player.js")).tv.info?.airing?.start === end, before.end);
+    await playing(page);
+    const next = await shown();
+    assert.equal(next.start, before.end, "the next program in the schedule");
+    assert.ok(next.shift > 0, `ahead of the station (${next.shift} ms)`);
+    assert.match(await page.locator("#live-pill").innerText(), /ahead/);
+
+    await page.locator("#live-pill").click();
+    await page.waitForFunction(() => document.getElementById("live-pill")!.hidden);
+    await playing(page);
+    await sleep(800);
+    assert.ok(Math.abs((await drift(page)).driftMs) < 1500, "live again");
+    assert.deepEqual(errors, []);
+    await closeQuietly(ctx);
   });
 
   it("fast surfing opens media only for the channel it lands on (A25)", async (t) => {
