@@ -37,6 +37,7 @@ import { PinLock } from "./pinlock.ts";
 import { OnlineMetadata } from "./metadata/tmdb.ts";
 import { allowedUnder } from "../src/clock/ratings.ts";
 import { SilenceJob, type SilenceTarget } from "./silence.ts";
+import { ShowIdentity, showRoutes } from "./shows.ts";
 import { browse as onDemandBrowse, continueWatching, show as onDemandShow, type OnDemandDeps } from "./ondemand.ts";
 import { LanAccess, type LanOptions } from "./lan/access.ts";
 
@@ -85,6 +86,8 @@ const demo = demoItems();
 const pin = new PinLock();
 // Online posters and descriptions (off until the viewer enters a TMDB key). Reads its disk cache only, never waits on TMDB.
 const online = new OnlineMetadata({ ...opts.tmdb, log: (d) => meters.log("api", d) });
+/** One show, one name, whatever the files call it (show identity). */
+const shows = new ShowIdentity({ idsOf: (i) => idsOf(i), tmdbShow: (id) => online.show(id) });
 /** Which items only locked channels carry; recomputed after every rebuild or lock change. */
 let lockSets: { gen: number; locked: Set<string>; open: Set<string> } | null = null;
 let lockGen = 0;
@@ -109,7 +112,7 @@ function isConnected(provider: string): boolean {
 }
 /** Library items from sources that are still connected. A disconnected source leaves the air. */
 function liveLibrary(): LibItem[] {
-  return library.items().filter((i) => isConnected(i.provider));
+  return shows.apply(library.items().filter((i) => isConnected(i.provider)));
 }
 function isWatched(id: string, durationMs: number | null | undefined): boolean {
   const m = historyFile.get().manual?.[id];
@@ -148,7 +151,7 @@ function allItems(): LibItem[] {
   return isDemo() ? demo : liveLibrary();
 }
 function itemById(id: string): LibItem | undefined {
-  return id.startsWith("demo-") ? demo.find((d) => d.id === id) : library.get(id);
+  return id.startsWith("demo-") ? demo.find((d) => d.id === id) : shows.view(library.get(id));
 }
 function lineup(): Lineup {
   return isDemo() ? demoLineup : liveLineup;
@@ -171,7 +174,7 @@ function rebuild() {
   // Live channels are kept in sync even while the demo is showing, so the switch is seamless.
   const liveItems = liveLibrary();
   const ids = new Set(liveItems.map((i) => i.id));
-  const liveClock = new StationClock(library.mediaItems().filter((m) => ids.has(m.id)));
+  const liveClock = new StationClock(library.mediaItems(liveItems).filter((m) => ids.has(m.id)));
   // Edge cache keeps only files still in the library, present and not refused.
   edge.keepOnly((id) => {
     const it = library.get(id);
@@ -1197,6 +1200,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     rebuild();
     return json(res, 200, { ok: true });
   }
+  if (showRoutes(shows, () => (isDemo() ? demo : library.items().filter((i) => isConnected(i.provider))), p, m, body, url.searchParams, guarded, (s, b) => json(res, s, b), scheduleRebuild)) return;
   if (p === "/api/ondemand" && m === "GET") {
     const k = url.searchParams.get("kind");
     return json(res, 200, onDemandBrowse(onDemandDeps(), url.searchParams.get("q") ?? "", k === "show" || k === "movie" ? k : "all"));

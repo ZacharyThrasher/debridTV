@@ -1,7 +1,11 @@
 // Filename (+ folder context) -> media identity. Pure, no I/O.
 
 export type Parsed =
-  | { kind: "episode"; show: string; showKey: string; season: number; episode: number; episodeEnd?: number; year?: number; absolute?: boolean }
+  | {
+      kind: "episode"; show: string; showKey: string; season: number; episode: number; episodeEnd?: number; year?: number; absolute?: boolean;
+      /** Set by show identity (app/shows.ts): the name to look the show up by, and the parsed name+year it came from. */
+      searchAs?: { show: string; year?: number }; unit?: string;
+    }
   | { kind: "movie"; title: string; titleKey: string; year?: number }
   | { kind: "other"; reason: "not-video" | "sample" | "extra" | "unknown" };
 
