@@ -13,6 +13,7 @@
 // bytes to learn exact durations — each step metered, and the scan runs only when
 // the viewer starts it.
 
+import type { Indexer } from "../src/acquire/search.ts";
 import { createHash } from "node:crypto";
 import { readdirSync, statSync, openSync, readSync, closeSync, readFileSync } from "node:fs";
 import { join, relative, extname, dirname, basename } from "node:path";
@@ -139,6 +140,16 @@ export interface Config {
   backupKeep?: number;
   /** Station breaks: slot padding and mid-program breaks. Off unless the viewer turns them on (ADR-0006). */
   breaks?: boolean;
+  /** The acquisition gate (Settings → Add): off unless the viewer turns it on. */
+  allowAdding?: boolean;
+  /** Where Add sends things by default. */
+  addTo?: "torbox" | "realdebrid";
+  /** A folder whose .torrent/.magnet/.nzb files are added (only while adding is allowed). */
+  watchDir?: string;
+  /** Search sources the viewer added themselves (Torznab/Newznab). Keys never leave this PC. */
+  indexers?: Indexer[];
+  /** Search the Internet Archive too. Default on. */
+  archiveSearch?: boolean;
 }
 
 /** Files timed before any pack is opened, so a first scan shows real channels early. */
