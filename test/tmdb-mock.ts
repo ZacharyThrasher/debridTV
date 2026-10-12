@@ -10,7 +10,8 @@ export const TEST_KEY = "0123456789abcdef0123456789abcdef";
 const RESPONSES = JSON.parse(readFileSync(new URL("./fixtures/tmdb/responses.json", import.meta.url), "utf8")) as Record<string, unknown>;
 export const PNG = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000000", "hex");
 
-export async function startTmdbMock(opts: { tooMany?: number } = {}) {
+/** `extra` adds or replaces answers by path (e.g. "/tv/4242"), for tests that need dates relative to today. */
+export async function startTmdbMock(opts: { tooMany?: number; extra?: Record<string, unknown> } = {}) {
   const requests: Array<{ url: string; auth?: string; referer?: string }> = [];
   let tooMany = opts.tooMany ?? 0;
   const server = http.createServer((req, res) => {
@@ -34,7 +35,7 @@ export async function startTmdbMock(opts: { tooMany?: number } = {}) {
     const q = url.searchParams.get("query");
     const y = url.searchParams.get("year");
     const k = q ? `${path}?query=${q}${y ? `&year=${y}` : ""}` : path;
-    const body = RESPONSES[k] ?? (path.startsWith("/search/") ? { page: 1, results: [], total_results: 0 } : undefined);
+    const body = opts.extra?.[k] ?? RESPONSES[k] ?? (path.startsWith("/search/") ? { page: 1, results: [], total_results: 0 } : undefined);
     if (!body) {
       res.writeHead(404, { "content-type": "application/json" });
       return res.end(JSON.stringify({ status_code: 34, status_message: "The resource you requested could not be found." }));

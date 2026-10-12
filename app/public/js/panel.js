@@ -1,6 +1,8 @@
 // Settings. Every account action here is explicit and says what it will cost:
 // connecting reads your account status and library list, scanning reads a few KB
-// per file, and nothing ever adds, removes or downloads anything in your accounts.
+// per file, and nothing removes or downloads anything in your accounts. Adding
+// happens only in the Add tab (add.js): off until you allow it, then only when you
+// press Add or drop a file in your watched folder.
 // The Library tab shows where each file stands (listed, finished at the provider,
 // timed, playable, refused) without making any provider request.
 
@@ -9,6 +11,7 @@ import { html, raw, esc, fmtBytes, fmtDur, ago, pref, setPref, toast, fmtTime } 
 import { tv, applyVolume } from "./player.js";
 import { keepFocus } from "./spatial.js";
 import { onlineCard, onlinePrivacyLine } from "./online.js";
+import { addTab, initAdd } from "./add.js";
 
 const panel = document.getElementById("panel");
 const body = document.getElementById("panel-body");
@@ -29,6 +32,16 @@ export function initPanel(changed) {
     b.textContent = "Library";
     panel.querySelector('[data-tab="sources"]')?.after(b);
   }
+  // Add (search and add to your accounts) is PC only, like Sources.
+  if (!panel.querySelector('[data-tab="add"]')) {
+    const b = document.createElement("button");
+    b.setAttribute("role", "tab");
+    b.dataset.tab = "add";
+    b.textContent = "Add";
+    const tabs = panel.querySelectorAll("[data-tab]");
+    tabs[tabs.length - 1]?.after(b);
+  }
+  initAdd(body, render);
   panel.querySelectorAll("[data-tab]").forEach((b) => {
     b.addEventListener("click", () => showTab(b.dataset.tab));
     // A remote moving along the tabs shows each one, like a TV settings menu.
@@ -42,7 +55,7 @@ let tabTimer = 0;
 
 /** `section` picks a part of a tab: openPanel("library", "ratings") opens the age ratings and focuses its search. */
 export function openPanel(which = tab, section) {
-  if (which === "sources" && document.documentElement.dataset.where === "device") which = "look"; // Sources is PC only
+  if ((which === "sources" || which === "add") && document.documentElement.dataset.where === "device") which = "look"; // Sources and Add are PC only
   if (which === "library" && (section === "ratings" || section === "files")) lib = { ...lib, view: section };
   panel.hidden = false;
   document.body.classList.add("panel-open");
@@ -77,7 +90,7 @@ const editing = () => body.contains(document.activeElement) && document.activeEl
 
 async function render() {
   try {
-    const fn = { sources, library, channels, history, meters, look, privacy }[tab];
+    const fn = { sources, library, add: addTab, channels, history, meters, look, privacy }[tab];
     const out = await fn();
     if (out != null) {
       const y = body.scrollTop;

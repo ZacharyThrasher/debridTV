@@ -180,6 +180,9 @@ const PC_ONLY: Array<[string | RegExp, string?]> = [
   ["/api/backups/restore"],
   ["/api/lock/pin"],
   [/^\/api\/lan(\/|$)/],
+  // Adding to the viewer's accounts, and their search sources, stay on the PC.
+  [/^\/api\/acquire(\/|$)/],
+  [/^\/api\/indexers(\/|$)/],
 ];
 
 /** What an unpaired device on the home network can load: the pairing page and its fonts. */

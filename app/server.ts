@@ -39,6 +39,8 @@ import { allowedUnder } from "../src/clock/ratings.ts";
 import { SilenceJob, type SilenceTarget } from "./silence.ts";
 import { browse as onDemandBrowse, continueWatching, show as onDemandShow, type OnDemandDeps } from "./ondemand.ts";
 import { LanAccess, type LanOptions } from "./lan/access.ts";
+import { showGaps } from "./missing.ts";
+import { acquireRoutes, type AcquireRouteDeps } from "./acquire-routes.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(HERE, "public");
@@ -59,6 +61,8 @@ export interface AppOptions {
   tmdb?: { apiBase?: string; imageBase?: string; spacingMs?: number };
   /** Home network access options (tests simulate a TV's address with `peer`). */
   lan?: Pick<LanOptions, "peer" | "addresses" | "listen" | "now">;
+  /** Settings → Add: the Internet Archive's address and shorter waits (tests). */
+  acquire?: Pick<AcquireRouteDeps, "archiveBase" | "timing">;
 }
 
 interface HistoryState {
@@ -85,6 +89,16 @@ const demo = demoItems();
 const pin = new PinLock();
 // Online posters and descriptions (off until the viewer enters a TMDB key). Reads its disk cache only, never waits on TMDB.
 const online = new OnlineMetadata({ ...opts.tmdb, log: (d) => meters.log("api", d) });
+// Search and Add (off until the viewer allows adding; PC only).
+const acquire = acquireRoutes({
+  config,
+  bases: { realdebrid: "https://api.real-debrid.com", torbox: "https://api.torbox.app", ...opts.bases },
+  counter: meters.api,
+  log: (d) => meters.log("api", d),
+  onAdded: (provider) => void library.refresh(provider).then(() => scheduleRebuild(), (e) => meters.log("error", `After adding: ${plainError(e)}`)),
+  timers: opts.timers,
+  ...opts.acquire,
+});
 /** Which items only locked channels carry; recomputed after every rebuild or lock change. */
 let lockSets: { gen: number; locked: Set<string>; open: Set<string> } | null = null;
 let lockGen = 0;
@@ -800,6 +814,10 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   const m = req.method ?? "GET";
   const body = m === "POST" || m === "PUT" ? await readJson(req) : {};
 
+  if (p.startsWith("/api/acquire/") || p === "/api/indexers" || p.startsWith("/api/indexers/")) {
+    const r = await acquire.handle(p, m, url, body);
+    if (r) return json(res, r.status, r.body);
+  }
   if (p === "/api/bootstrap") {
     return json(res, 200, {
       now: Date.now(),
@@ -965,6 +983,17 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   if (p === "/api/livestart") {
     const v = liveStarts.get(url.searchParams.get("tok") ?? "");
     return v == null ? json(res, 404, { pending: true }) : json(res, 200, { startMs: v });
+  }
+  if (p === "/api/missing" && m === "GET") {
+    // What's missing / New this week for one show (TMDB air dates; information only, nothing is added).
+    const g = isDemo() ? null : await showGaps(url.searchParams.get("showKey") ?? "", {
+      items: liveLibrary(),
+      locked: lockedItem,
+      showOf: usableLibrary(liveLibrary(), idsOf).showOf,
+      online,
+      timeZone: stationTimeZone(),
+    });
+    return g ? json(res, 200, g) : json(res, 404, { error: "Missing episodes can't be checked for this show." });
   }
   if (p === "/api/meters") return json(res, 200, meters.snapshot());
   if (p === "/api/metadata" && m === "GET") return json(res, 200, online.status());
@@ -1600,6 +1629,7 @@ return {
     library.stopScan("Shutting down");
     silenceJob.halt();
     online.stop();
+    acquire.stop();
     return lan.stop().then(() => new Promise((r) => {
       server.closeAllConnections();
       server.close(() => r());
