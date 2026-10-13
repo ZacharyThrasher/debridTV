@@ -8,7 +8,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,6 +44,7 @@ let skip: string | false =
   process.platform === "win32" ? "uses a Unix socket for mpv" : !chromium ? "Playwright isn't installed" : !has("ffmpeg", "-version") ? "ffmpeg isn't installed" : !has("mpv") ? "mpv isn't installed" : false;
 let dts: { id: string; number: number } | null = null;
 let ac3: { id: string; number: number } | null = null;
+let cc: { id: string; number: number } | null = null;
 
 const get = async (p: string) => (await fetch(BASE + p)).json();
 const post = async (p: string, body: unknown) =>
@@ -69,26 +70,38 @@ before(async () => {
       "-c:a", codec, "-strict", "-2", "-ac", "2", "-ar", "48000", "-b:a", codec === "dca" ? "768k" : "192k", join(media, name)]);
   for (let i = 1; i <= 6; i++) make(`Native Harbor Test S01E0${i}.mkv`, "dca", i);
   for (let i = 1; i <= 6; i++) make(`Native Dolby Test S01E0${i}.mkv`, "ac3", i);
+  // Two caption tracks, French then English, as text all the way through.
+  const srt = (word: string) => Array.from({ length: 20 }, (_, k) => `${k + 1}\n00:00:${String(k * 2).padStart(2, "0")},000 --> 00:00:${String(k * 2 + 1).padStart(2, "0")},900\n${word} line ${k + 1}\n`).join("\n");
+  writeFileSync(join(home, "fr.srt"), srt("French"));
+  writeFileSync(join(home, "en.srt"), srt("English"));
+  for (let i = 1; i <= 6; i++)
+    execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=24:duration=40", "-f", "lavfi", "-i", `sine=frequency=${500 + i * 40}:duration=40`,
+      "-i", join(home, "fr.srt"), "-i", join(home, "en.srt"), "-map", "0:v", "-map", "1:a", "-map", "2:s", "-map", "3:s", "-c:v", "mpeg4", "-q:v", "8", "-g", "24", "-c:a", "aac", "-c:s", "subrip",
+      "-metadata:s:s:0", "language=fre", "-metadata:s:s:1", "language=eng", join(media, `Native Caption Test S01E0${i}.mkv`)]);
   ({ server, base: BASE } = await startServer({ DEBRIDTV_HOME: home }));
   await post("/api/sources", { provider: "local", dirs: [media] });
   await post("/api/scan/start", { perMinute: 600 });
   let dtsKey: string | undefined;
   let ac3Key: string | undefined;
-  for (let i = 0; i < 150 && !(dtsKey && ac3Key); i++) {
+  let ccKey: string | undefined;
+  for (let i = 0; i < 150 && !(dtsKey && ac3Key && ccKey); i++) {
     await sleep(200);
     const lib = await get("/api/library");
     dtsKey = lib.shows.find((s: any) => s.name === "Native Harbor Test" && s.timed === 6)?.key;
     ac3Key = lib.shows.find((s: any) => s.name === "Native Dolby Test" && s.timed === 6)?.key;
+    ccKey = lib.shows.find((s: any) => s.name === "Native Caption Test" && s.timed === 6)?.key;
   }
   await post("/api/channels/custom", { name: "Native DTS", showKeys: [dtsKey], movieIds: [], ordering: "cyclic", slotMinutes: 0 });
   await post("/api/channels/custom", { name: "Native AC3", showKeys: [ac3Key], movieIds: [], ordering: "cyclic", slotMinutes: 0 });
-  for (let i = 0; i < 30 && !(dts && ac3); i++) {
+  await post("/api/channels/custom", { name: "Native CC", showKeys: [ccKey], movieIds: [], ordering: "cyclic", slotMinutes: 0 });
+  for (let i = 0; i < 30 && !(dts && ac3 && cc); i++) {
     await sleep(200);
     const chs = (await get("/api/bootstrap")).channels;
     dts = chs.find((c: any) => c.name === "Native DTS") ?? null;
     ac3 = chs.find((c: any) => c.name === "Native AC3") ?? null;
+    cc = chs.find((c: any) => c.name === "Native CC") ?? null;
   }
-  if (!dts || !ac3) skip = `the test channels didn't go on air (${JSON.stringify((await get("/api/library")).shows?.map((s: any) => [s.name, s.timed]))})`;
+  if (!dts || !ac3 || !cc) skip = `the test channels didn't go on air (${JSON.stringify((await get("/api/library")).shows?.map((s: any) => [s.name, s.timed]))})`;
 });
 
 after(async () => {
@@ -98,9 +111,9 @@ after(async () => {
 });
 
 /** A real mpv plus the page, wired the way the app window wires them. */
-async function open(ch: { id: string }) {
+async function open(ch: { id: string }, mpvArgs = ["--ao=null"], env: Record<string, string> = {}, prefs: Record<string, unknown> = {}) {
   const sock = join(home, `mpv-${Math.random().toString(36).slice(2)}.sock`);
-  const mpv = spawn("mpv", ["--idle=yes", "--vo=null", "--ao=null", "--no-config", "--keep-open=no", "--msg-level=all=error", `--input-ipc-server=${sock}`], { stdio: "ignore" });
+  const mpv = spawn("mpv", ["--idle=yes", "--vo=null", ...mpvArgs, "--no-config", "--keep-open=no", "--msg-level=all=error", `--input-ipc-server=${sock}`], { stdio: "ignore", env: { ...process.env, ...env } });
   let conn: Socket | null = null;
   for (let i = 0; i < 100 && !conn; i++) {
     conn = await new Promise<Socket | null>((r) => {
@@ -112,7 +125,7 @@ async function open(ch: { id: string }) {
   }
   assert.ok(conn, "mpv's IPC socket opened");
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
-  await ctx.addInitScript(`localStorage.getItem("debridtv.prefs") || localStorage.setItem("debridtv.prefs", ${JSON.stringify(JSON.stringify({ welcomed: true, startup: `ch:${ch.id}` }))})`);
+  await ctx.addInitScript(`localStorage.getItem("debridtv.prefs") || localStorage.setItem("debridtv.prefs", ${JSON.stringify(JSON.stringify({ welcomed: true, startup: `ch:${ch.id}`, ...prefs }))})`);
   const page = await ctx.newPage();
   const sent: any[] = [];
   await page.exposeFunction("__dtvTestSend", (s: string) => {
@@ -235,6 +248,62 @@ describe("native player (desktop app)", () => {
       const t1 = await s.prop("time-pos");
       assert.ok(t1 < t0, `went back (${t0.toFixed(1)} → ${t1.toFixed(1)})`);
       assert.equal(loads(), n0, "a seek, not a reload");
+      assert.deepEqual(s.errors, []);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("moves the sound to another output when the speakers won't open", async (t) => {
+    if (skip) return t.skip(skip);
+    // Stands in for speakers another app holds to itself (VoiceMeeter on Windows):
+    // the device mpv starts on can't open. SDL's silent driver is the one that works.
+    const s = await open(dts!, ["--audio-device=alsa/held-by-another-app"], { SDL_AUDIODRIVER: "dummy", JACK_NO_START_SERVER: "1", ALSA_CONFIG_PATH: "/dev/null" });
+    try {
+      await playing(s.page);
+      // The page tries the outputs in turn; the last one works.
+      for (let i = 0; i < 80 && !(await s.prop("current-ao").catch(() => null)); i++) await sleep(250);
+      assert.equal(await s.prop("current-ao"), "sdl", "sound reached an output that opens");
+      assert.equal(await s.prop("audio-device"), "sdl");
+      assert.ok((await s.prop("audio-params"))?.samplerate > 0, "mpv is playing the sound");
+      await s.page.waitForFunction(() => /speakers are busy/.test(document.getElementById("toast")?.textContent ?? ""), null, { timeout: 5000 }).catch(() => {});
+      const note = await s.page.locator("#toast").textContent();
+      assert.match(note ?? "", /speakers are busy in another app/);
+      assert.equal(await s.page.evaluate(() => localStorage.getItem("debridtv.soundOutput")), "sdl", "remembered for next time");
+      // Sound → Output lists mpv's outputs and moves the sound on a click.
+      await s.page.mouse.move(640, 600);
+      await s.page.locator('[data-act="menu"]').click();
+      await s.page.locator('[data-m="page:sound"]').click();
+      await s.page.locator('[data-m="page:aout"]').click();
+      const picks = s.page.locator(".pm-outs .pm-pick");
+      await picks.first().waitFor();
+      assert.match((await s.page.locator(".pm-outs .pm-pick.on").textContent()) ?? "", /sdl/i, "the output playing now is ticked");
+      await s.page.locator(".pm-outs .pm-pick", { hasText: "Windows default" }).click();
+      for (let i = 0; i < 20 && (await s.prop("audio-device")) !== "auto"; i++) await sleep(250);
+      assert.equal(await s.prop("audio-device"), "auto");
+      assert.equal(await s.page.evaluate(() => localStorage.getItem("debridtv.soundOutputPick")), null, "Windows default is no pick at all");
+      assert.deepEqual(s.errors, []);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("shows the chosen subtitles, drawn by mpv from the file", async (t) => {
+    if (skip) return t.skip(skip);
+    // English is the file's second caption track: the page asks for s=1.
+    const s = await open(cc!, ["--ao=null"], {}, { subLang: "eng" });
+    try {
+      await playing(s.page);
+      let text = "";
+      for (let i = 0; i < 40 && !text; i++) {
+        text = (await s.prop("sub-text").catch(() => "")) ?? "";
+        if (!text) await sleep(250);
+      }
+      assert.match(text, /^English line \d+$/, `mpv shows the English captions (got ${JSON.stringify(text)})`);
+      const tracks = (await s.prop("track-list")) as any[];
+      const on = tracks.find((x) => x.type === "sub" && x.selected);
+      assert.equal(on?.lang, "eng");
+      assert.equal(await s.page.locator("#toast").isVisible() ? await s.page.locator("#toast").textContent() : "", "", "no warning about captions");
       assert.deepEqual(s.errors, []);
     } finally {
       await s.close();

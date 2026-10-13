@@ -12,6 +12,9 @@
 // The host relays mpv's JSON IPC both ways: send() takes one mpv command object,
 // and the host calls window.__dtvMpv(message) for each reply or event.
 
+import { rankOutputs, AUDIO_FAILED } from "./audio-output.js";
+import { toast } from "./util.js";
+
 const host = window.__DTV_NATIVE;
 const video = document.getElementById("video");
 
@@ -255,11 +258,14 @@ function install() {
     send(["seek", st.pos, "absolute+exact"]);
   }
 
-  /** Pick the file's audio and caption tracks by their stream number in the file. */
+  /**
+   * Pick the file's audio and caption tracks. The page counts them within their kind
+   * (a=1 is the file's second audio track), as the server's ffmpeg 0:a:N / 0:s:N do.
+   */
+  const byIndex = (type, i) => st.tracks.filter((t) => t.type === type && !t.external)[i];
   function pickTracks() {
     const L = st.loaded;
     if (!L) return;
-    const byIndex = (type, i) => st.tracks.find((t) => t.type === type && t["ff-index"] === i);
     if (L.a != null) {
       const t = byIndex("audio", L.a);
       if (t) setProp("aid", t.id);
@@ -316,9 +322,93 @@ function install() {
           fire("error");
         }
         return;
+      case "log-message":
+        // "In use" is certain: mpv may still be retrying that device, but it won't open.
+        if (AUDIO_FAILED.test(msg.text ?? "")) soundFailed(/DEVICE_IN_USE/.test(msg.text));
+        return;
       case "shutdown":
         return;
     }
+  };
+
+  // ---------------------------------------------------------------- sound output
+
+  // mpv plays to Windows' default output. When another app holds that device to
+  // itself (VoiceMeeter does), mpv can't open it and the show plays silent while the
+  // page's own sounds still work. Then try the other outputs, mixers first, and say
+  // which one is playing. The one that worked is tried first next time.
+  const OUT_KEY = "debridtv.soundOutput"; // the output the fallback found last
+  const PICK_KEY = "debridtv.soundOutputPick"; // the output the viewer picked (Sound → Output)
+  const failedOutputs = [];
+  let switching = false;
+  let toldNone = false;
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const soundOut = () => ask(["get_property", "current-ao"]).then((v) => (typeof v === "string" && v ? v : null), () => null);
+  async function soundFailed(held = false) {
+    if (switching) return;
+    switching = true;
+    try {
+      let moved = null;
+      // One driver failing while another took over still leaves sound playing.
+      while (held || !(await wait(moved ? 800 : 300), await soundOut())) {
+        held = false;
+        const [now, list] = await Promise.all([ask(["get_property", "audio-device"]), ask(["get_property", "audio-device-list"])]);
+        if (typeof now === "string" && !failedOutputs.includes(now)) failedOutputs.push(now);
+        let remembered = null;
+        try {
+          remembered = localStorage.getItem(PICK_KEY) || localStorage.getItem(OUT_KEY);
+        } catch {}
+        const next = rankOutputs(list, failedOutputs, remembered)[0];
+        if (!next) {
+          if (!toldNone) toast("No sound: another app has your speakers to itself. Pick another output under Sound in the player, or in Windows' sound settings.", 9000);
+          toldNone = true;
+          return;
+        }
+        failedOutputs.push(next.name);
+        moved = next;
+        await ask(["set_property", "audio-device", next.name]);
+        await reopenSound();
+      }
+      if (moved) {
+        try {
+          localStorage.setItem(OUT_KEY, moved.name);
+        } catch {}
+        toast(`Your speakers are busy in another app, so sound plays through ${moved.description || moved.name}.`, 6000);
+        window.dispatchEvent(new CustomEvent("debridtv:soundoutput"));
+      }
+    } catch {
+      // mpv went away; the next file tries again.
+    } finally {
+      switching = false;
+    }
+  }
+
+  // Once mpv gave up on sound for a file it drops the audio track, and a new output
+  // alone doesn't bring it back: picking the track again does.
+  async function reopenSound() {
+    if (!st.loaded) return;
+    const want = st.loaded.a != null ? byIndex("audio", st.loaded.a)?.id : null;
+    await ask(["set_property", "aid", "no"]).catch(() => {});
+    await ask(["set_property", "aid", want ?? "auto"]).catch(() => {});
+  }
+
+  // The player's Sound → Output menu (controls.js) lists and picks outputs here.
+  window.__dtvSound = {
+    list: () => ask(["get_property", "audio-device-list"]).then((l) => (Array.isArray(l) ? l : []), () => []),
+    current: () => ask(["get_property", "audio-device"]).catch(() => "auto"),
+    async set(name) {
+      const n = name && name !== "auto" ? String(name) : "auto";
+      try {
+        if (n === "auto") localStorage.removeItem(PICK_KEY);
+        else localStorage.setItem(PICK_KEY, n);
+      } catch {}
+      // A fresh pick gets a fresh chance, and so does everything else after it.
+      failedOutputs.length = 0;
+      toldNone = false;
+      await ask(["set_property", "audio-device", n]).catch(() => {});
+      await wait(300);
+      if (!(await soundOut())) await reopenSound();
+    },
   };
 
   function restarted() {
@@ -436,6 +526,11 @@ function install() {
   // A reload starts clean: the page has forgotten what mpv was playing.
   send(["stop"]);
   OBSERVED.forEach((name, i) => send(["observe_property", 1000 + i, name]));
+  send(["request_log_messages", "warn"]);
+  try {
+    const picked = localStorage.getItem(PICK_KEY);
+    if (picked) setProp("audio-device", picked);
+  } catch {}
   setProp("volume", 100);
   requestAnimationFrame(placePicture);
 

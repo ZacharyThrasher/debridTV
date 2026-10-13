@@ -114,6 +114,8 @@ export class Captions {
 
   start(tok, label, lang) {
     this.stop();
+    // In the app window mpv draws the subtitles itself, from the file.
+    if (window.__DTV_NATIVE) return;
     if (!this.track) {
       this.track = this.video.addTextTrack("captions", label, lang || "");
     }

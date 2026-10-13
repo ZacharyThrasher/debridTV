@@ -1,6 +1,6 @@
 // Serves the window check (page.html) on 127.0.0.1:<port>: the page, the real
-// native-video.js, one media file with byte ranges (so mpv can seek), and a
-// /report endpoint that writes what the page saw to <report>.
+// native-video.js and the modules it imports, one media file with byte ranges (so
+// mpv can seek), and a /report endpoint that writes what the page saw to <report>.
 //   node test/desktop/serve.mjs <port> <media file> <report.json>
 import { createReadStream, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -18,8 +18,17 @@ createServer((req, res) => {
     return;
   }
   if (p === "/") return res.writeHead(200, { "content-type": "text/html" }).end(readFileSync(join(here, "page.html")));
-  if (p === "/js/native-video.js")
-    return res.writeHead(200, { "content-type": "text/javascript" }).end(readFileSync(join(here, "../../app/public/js/native-video.js")));
+  // native-video.js and the modules it imports, from the app itself.
+  const js = /^\/js\/([a-z0-9-]+\.js)$/.exec(p);
+  if (js) {
+    let body;
+    try {
+      body = readFileSync(join(here, "../../app/public/js", js[1]));
+    } catch {
+      return res.writeHead(404).end();
+    }
+    return res.writeHead(200, { "content-type": "text/javascript" }).end(body);
+  }
   if (p === "/media/test") {
     const size = statSync(media).size;
     const m = /bytes=(\d*)-(\d*)/.exec(req.headers.range ?? "");
